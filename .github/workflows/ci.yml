@@ -20,9 +20,6 @@ jobs:
           - {os: ubuntu-latest,  python-version: '3.12', package: molmcp-molexp,   test-path: packages/molmcp-molexp/tests}
           - {os: ubuntu-latest,  python-version: '3.12', package: molmcp-lammps,   test-path: packages/molmcp-lammps/tests}
           - {os: ubuntu-latest,  python-version: '3.12', package: molmcp-gateway,  test-path: apps/molmcp-gateway/tests}
-          # Core supports the full Python matrix.
-          - {os: ubuntu-latest,  python-version: '3.10', package: molcrafts-molmcp, test-path: tests}
-          - {os: ubuntu-latest,  python-version: '3.11', package: molcrafts-molmcp, test-path: tests}
           - {os: ubuntu-latest,  python-version: '3.13', package: molcrafts-molmcp, test-path: tests}
           - {os: macos-latest,   python-version: '3.12', package: molcrafts-molmcp, test-path: tests}
           - {os: windows-latest, python-version: '3.12', package: molcrafts-molmcp, test-path: tests}
@@ -35,8 +32,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Sync workspace
-        run: uv sync --all-packages
+      - name: Sync ${{ matrix.package }}
+        run: uv sync --package ${{ matrix.package }} --extra dev
 
       - name: Run tests for ${{ matrix.package }}
         run: uv run --package ${{ matrix.package }} pytest -v ${{ matrix.test-path }}

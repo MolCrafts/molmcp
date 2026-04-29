@@ -196,8 +196,7 @@ def doc_map(version: str = DEFAULT_VERSION) -> dict:
         },
         "guidance": (
             "Use this map to plan navigation. For specific names use "
-            "where_to_read_lammps_command / where_to_read_lammps_style "
-            "/ where_to_read_lammps_howto."
+            "get_command_doc / get_style_doc / get_howto_doc."
         ),
     }
 

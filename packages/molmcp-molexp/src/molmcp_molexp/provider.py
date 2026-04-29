@@ -11,7 +11,7 @@ Tools (all read-only):
 * ``list_runs`` — query runs by scope (workspace / project / experiment),
   joining catalog rows with per-run parameters.
 * ``get_run`` — full metadata for one run.
-* ``read_metrics`` — latest values (or full series) for a run's metrics.
+* ``get_metrics`` — latest values (or full series) for a run's metrics.
 * ``get_asset_text`` — fetch the UTF-8 contents of a file under a run
   directory.
 
@@ -266,7 +266,7 @@ class MolexpProvider:
             }
 
         @mcp.tool(annotations=read_only)
-        def read_metrics(
+        def get_metrics(
             project_id: str,
             experiment_id: str,
             run_id: str,

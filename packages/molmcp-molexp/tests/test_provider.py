@@ -116,10 +116,10 @@ def test_get_run_unknown_returns_error(populated_ws):
     assert "error" in out
 
 
-def test_read_metrics_no_data_returns_empty(populated_ws):
+def test_get_metrics_no_data_returns_empty(populated_ws):
     server = _build_server(populated_ws.root)
     runs = list(populated_ws.get_project("proj-x").get_experiment("exp-x").list_runs())
-    out = _tool(server, "read_metrics")(
+    out = _tool(server, "get_metrics")(
         project_id="proj-x", experiment_id="exp-x", run_id=runs[0].id
     )
     assert out["run_id"] == runs[0].id

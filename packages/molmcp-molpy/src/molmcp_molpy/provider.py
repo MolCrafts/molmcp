@@ -5,9 +5,9 @@ MCP code; installing ``molcrafts-mcp-suite`` is the supported path.
 
 Tools (all read-only):
 
-* ``list_molpy_readers`` — enumerate the structure / trajectory readers
+* ``list_readers`` — enumerate the structure / trajectory readers
   ``molpy.io`` exposes, with file-extension hints.
-* ``inspect_structure_file`` — open a single-frame structure file via
+* ``inspect_structure`` — open a single-frame structure file via
   ``molpy.io`` and return a summary (format, block names, atom/bond
   counts, metadata).
 
@@ -128,14 +128,14 @@ class MolPyProvider:
         ro = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 
         @mcp.tool(annotations=ro)
-        def list_molpy_readers() -> dict:
+        def list_readers() -> dict:
             """List the molpy file-reader catalog.
 
             Returns:
                 Dict with ``readers`` (each entry has ``format``,
                 ``reader_class``, ``extensions``, ``kind``, ``summary``)
                 and ``guidance`` text. Use ``format`` as the explicit
-                argument to ``inspect_structure_file`` when the file
+                argument to ``inspect_structure`` when the file
                 extension is ambiguous.
             """
             return {
@@ -150,14 +150,14 @@ class MolPyProvider:
                     for key, info in _READERS.items()
                 ],
                 "guidance": (
-                    "Pass `format=<key>` to inspect_structure_file when "
+                    "Pass `format=<key>` to inspect_structure when "
                     "extension auto-detection is ambiguous (e.g. an .xyz "
                     "trajectory vs a single-frame .xyz)."
                 ),
             }
 
         @mcp.tool(annotations=ro)
-        def inspect_structure_file(
+        def inspect_structure(
             path: str, format: str | None = None
         ) -> dict:
             """Read a single-frame structure file via molpy and summarise it.
@@ -191,7 +191,7 @@ class MolPyProvider:
                     "error": (
                         f"could not auto-detect a structure format from "
                         f"extension {p.suffix!r}; pass an explicit format "
-                        f"or use list_molpy_readers."
+                        f"or use list_readers."
                     ),
                     "path": str(p),
                     "available_formats": structure_keys,

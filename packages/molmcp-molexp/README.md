@@ -3,7 +3,7 @@
 MCP plugin exposing a workspace catalog reader for molexp projects.
 
 Six read-only tools: `list_projects`, `list_experiments`, `list_runs`,
-`get_run`, `read_metrics`, `get_asset_text`.
+`get_run`, `get_metrics`, `get_asset_text`.
 
 Workspace resolution order: constructor arg → `MOLEXP_WORKSPACE` env var
 → cwd detection.

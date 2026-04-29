@@ -174,8 +174,8 @@ def list_categories() -> dict:
             for name in CATEGORY_DESCRIPTIONS
         ],
         "guidance": (
-            "Use find_lammps_howto(query, category=...) to search; "
-            "get_lammps_howto(category, slug) for full content."
+            "Use search_howtos(query, category=...) to search; "
+            "get_howto(category, slug) for full content."
         ),
     }
 

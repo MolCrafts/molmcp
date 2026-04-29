@@ -86,19 +86,19 @@ def test_thirteen_tools_registered():
     tools = _list_tools(server)
     names = {t.name for t in tools}
     expected = {
-        "lammps_doc_map",
-        "where_to_read_lammps_command",
-        "where_to_read_lammps_style",
-        "where_to_read_lammps_howto_topic",
-        "plan_lammps_task",
-        "lammps_workflow_outline",
-        "parse_lammps_script",
-        "check_lammps_script",
-        "explain_lammps_command",
-        "list_lammps_howtos",
-        "find_lammps_howto",
-        "get_lammps_howto",
-        "lookup_lammps_error",
+        "get_doc_index",
+        "get_command_doc",
+        "get_style_doc",
+        "get_howto_doc",
+        "plan_task",
+        "get_workflow_outline",
+        "parse_script",
+        "validate_script",
+        "explain_command",
+        "list_howtos",
+        "search_howtos",
+        "get_howto",
+        "explain_error",
     }
     assert names == expected
 
@@ -554,40 +554,40 @@ def test_explain_falls_back_to_command_index_on_unknown():
 # ---------------------------------------------------------------------------
 
 
-def test_tool_lammps_doc_map_callable():
+def test_tool_get_doc_index_callable():
     server = _build_server()
-    fn = _get_tool(server, "lammps_doc_map")
+    fn = _get_tool(server, "get_doc_index")
     out = fn()
     assert "doc_root" in out
 
 
-def test_tool_where_to_read_lammps_command():
+def test_tool_get_command_doc():
     server = _build_server()
-    fn = _get_tool(server, "where_to_read_lammps_command")
+    fn = _get_tool(server, "get_command_doc")
     out = fn(name="read_data")
     assert out["candidates"][0]["url"].endswith("read_data.html")
 
 
-def test_tool_check_lammps_script_returns_diagnostics():
+def test_tool_validate_script_returns_diagnostics():
     server = _build_server()
-    fn = _get_tool(server, "check_lammps_script")
+    fn = _get_tool(server, "validate_script")
     out = fn(content="pair_coeff * * 0.1 3.5\n")
     assert "diagnostics" in out
     assert out["summary"]["errors"] >= 1
 
 
-def test_tool_get_lammps_howto_full_content():
+def test_tool_get_howto_full_content():
     server = _build_server()
-    fn = _get_tool(server, "get_lammps_howto")
+    fn = _get_tool(server, "get_howto")
     out = fn(category="debug", slug="setup_crash")
     assert out["slug"] == "setup_crash"
     assert "user_steps" in out
     assert out["user_steps"]
 
 
-def test_tool_lookup_lammps_error():
+def test_tool_explain_error():
     server = _build_server()
-    fn = _get_tool(server, "lookup_lammps_error")
+    fn = _get_tool(server, "explain_error")
     out = fn(message="Lost atoms during run")
     assert out["matches"]
 

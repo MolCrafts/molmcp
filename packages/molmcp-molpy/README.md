@@ -4,9 +4,9 @@ MCP plugin exposing molpy's read-only structure-file inspector.
 
 Two tools:
 
-- `list_molpy_readers` — enumerate the structure / trajectory readers
+- `list_readers` — enumerate the structure / trajectory readers
   `molpy.io` exposes, with file-extension hints.
-- `inspect_structure_file` — open a single-frame structure file via
+- `inspect_structure` — open a single-frame structure file via
   `molpy.io` and return a summary (format, block names, atom/bond
   counts, metadata).
 

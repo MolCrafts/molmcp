@@ -64,7 +64,7 @@ def test_provider_implements_molmcp_protocol():
 def test_two_tools_registered():
     server = _build_server()
     names = {t.name for t in _list_tools(server)}
-    assert names == {"list_molpy_readers", "inspect_structure_file"}
+    assert names == {"list_readers", "inspect_structure"}
 
 
 def test_all_tools_have_read_only_annotation():
@@ -76,9 +76,9 @@ def test_all_tools_have_read_only_annotation():
         assert getattr(annotations, "openWorldHint", True) is False
 
 
-def test_list_molpy_readers_returns_known_formats():
+def test_list_readers_returns_known_formats():
     server = _build_server()
-    fn = _get_tool(server, "list_molpy_readers")
+    fn = _get_tool(server, "list_readers")
     out = fn()
     formats = {r["format"] for r in out["readers"]}
     assert {"lammps", "xyz", "pdb", "gro", "mol2"}.issubset(formats)
@@ -87,61 +87,61 @@ def test_list_molpy_readers_returns_known_formats():
         assert entry["extensions"], f"reader {entry['format']!r} missing extensions"
 
 
-def test_inspect_structure_file_xyz_autodetect(tmp_path):
+def test_inspect_structure_xyz_autodetect(tmp_path):
     path = _write_xyz(
         tmp_path / "water.xyz",
         [("H", 0.0, 0.0, 0.0), ("H", 0.0, 0.0, 1.0), ("O", 0.0, 0.0, 0.5)],
     )
     server = _build_server()
-    fn = _get_tool(server, "inspect_structure_file")
+    fn = _get_tool(server, "inspect_structure")
     out = fn(str(path))
     assert out["format"] == "xyz"
     assert out["num_atoms"] == 3
     assert "atoms" in out["blocks"]
 
 
-def test_inspect_structure_file_explicit_format(tmp_path):
+def test_inspect_structure_explicit_format(tmp_path):
     path = _write_xyz(
         tmp_path / "no_ext", [("C", 0.0, 0.0, 0.0)]
     )
     server = _build_server()
-    fn = _get_tool(server, "inspect_structure_file")
+    fn = _get_tool(server, "inspect_structure")
     out = fn(str(path), format="xyz")
     assert out["format"] == "xyz"
     assert out["num_atoms"] == 1
 
 
-def test_inspect_structure_file_missing_path(tmp_path):
+def test_inspect_structure_missing_path(tmp_path):
     server = _build_server()
-    fn = _get_tool(server, "inspect_structure_file")
+    fn = _get_tool(server, "inspect_structure")
     out = fn(str(tmp_path / "does_not_exist.xyz"))
     assert "error" in out
     assert "not found" in out["error"]
 
 
-def test_inspect_structure_file_directory_path(tmp_path):
+def test_inspect_structure_directory_path(tmp_path):
     server = _build_server()
-    fn = _get_tool(server, "inspect_structure_file")
+    fn = _get_tool(server, "inspect_structure")
     out = fn(str(tmp_path))
     assert "error" in out
     assert "not a file" in out["error"]
 
 
-def test_inspect_structure_file_unknown_extension(tmp_path):
+def test_inspect_structure_unknown_extension(tmp_path):
     p = tmp_path / "structure.unknown"
     p.write_text("garbage")
     server = _build_server()
-    fn = _get_tool(server, "inspect_structure_file")
+    fn = _get_tool(server, "inspect_structure")
     out = fn(str(p))
     assert "error" in out
     assert "auto-detect" in out["error"]
     assert "available_formats" in out
 
 
-def test_inspect_structure_file_unknown_explicit_format(tmp_path):
+def test_inspect_structure_unknown_explicit_format(tmp_path):
     path = _write_xyz(tmp_path / "x.xyz", [("C", 0.0, 0.0, 0.0)])
     server = _build_server()
-    fn = _get_tool(server, "inspect_structure_file")
+    fn = _get_tool(server, "inspect_structure")
     out = fn(str(path), format="not_a_format")
     assert "error" in out
     assert "unknown structure format" in out["error"]

@@ -291,6 +291,6 @@ def plan(description: str, version: str = urls.DEFAULT_VERSION) -> dict:
         "unmatched_keywords": _unmatched_keywords(description, matched_kws),
         "next_action": (
             "Fetch the doc URLs in order; if matched_workflow is set, "
-            "combine with lammps_workflow_outline(matched_workflow)."
+            "combine with get_workflow_outline(matched_workflow)."
         ),
     }

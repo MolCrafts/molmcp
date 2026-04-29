@@ -5,11 +5,11 @@ provider does **not** invoke `lmp`, **not** fetch docs over the network,
 and **not** read the local filesystem outside its own Python modules.
 Every tool is a pure function over small in-memory tables.
 
-Thirteen tools spanning doc routing (`lammps_doc_map`,
-`where_to_read_*`), task planning (`plan_lammps_task`,
-`lammps_workflow_outline`), script tooling (`parse_lammps_script`,
-`check_lammps_script`, `explain_lammps_command`), howto registry, and
-error matcher.
+Thirteen tools spanning doc routing (`get_doc_index`,
+`get_command_doc` / `get_style_doc` / `get_howto_doc`), task planning
+(`plan_task`, `get_workflow_outline`), script tooling (`parse_script`,
+`validate_script`, `explain_command`), howto registry (`list_howtos`,
+`search_howtos`, `get_howto`), and error matcher (`explain_error`).
 
 ## Run standalone
 

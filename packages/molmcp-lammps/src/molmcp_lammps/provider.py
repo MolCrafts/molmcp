@@ -69,7 +69,7 @@ class LammpsProvider:
         default_version = self._resolve_default_version()
 
         @mcp.tool(annotations=ro)
-        def lammps_doc_map(version: str = default_version) -> dict:
+        def get_doc_index(version: str = default_version) -> dict:
             """Return the structural map of docs.lammps.org for the requested version.
 
             Args:
@@ -87,7 +87,7 @@ class LammpsProvider:
             return urls.doc_map(version)
 
         @mcp.tool(annotations=ro)
-        def where_to_read_lammps_command(
+        def get_command_doc(
             name: str, version: str = default_version
         ) -> dict:
             """Resolve a top-level LAMMPS command to its doc URL + sections to read.
@@ -106,7 +106,7 @@ class LammpsProvider:
             return urls.command_url(name, version)
 
         @mcp.tool(annotations=ro)
-        def where_to_read_lammps_style(
+        def get_style_doc(
             category: str, name: str, version: str = default_version
         ) -> dict:
             """Resolve a LAMMPS style (fix npt, pair_style lj/cut, ...) to its doc URL.
@@ -128,7 +128,7 @@ class LammpsProvider:
             return urls.style_url(category, name, version)
 
         @mcp.tool(annotations=ro)
-        def where_to_read_lammps_howto_topic(
+        def get_howto_doc(
             topic: str, version: str = default_version
         ) -> dict:
             """Resolve a LAMMPS howto topic to its ``Howto_<topic>.html`` doc URL.
@@ -145,7 +145,7 @@ class LammpsProvider:
             return urls.howto_url(topic, version)
 
         @mcp.tool(annotations=ro)
-        def plan_lammps_task(
+        def plan_task(
             description: str, version: str = default_version
         ) -> dict:
             """Plan a free-text LAMMPS task into doc URLs + workflow tag.
@@ -164,7 +164,7 @@ class LammpsProvider:
             return router.plan(description, version)
 
         @mcp.tool(annotations=ro)
-        def lammps_workflow_outline(
+        def get_workflow_outline(
             kind: str, version: str = default_version
         ) -> dict:
             """Return a canonical command-sequence outline for a workflow kind.
@@ -183,7 +183,7 @@ class LammpsProvider:
             return workflows.get(kind, version)
 
         @mcp.tool(annotations=ro)
-        def parse_lammps_script(content: str) -> dict:
+        def parse_script(content: str) -> dict:
             """Tokenise a LAMMPS input script into structured commands.
 
             Args:
@@ -198,7 +198,7 @@ class LammpsProvider:
             return parser.tokenize(content)
 
         @mcp.tool(annotations=ro)
-        def check_lammps_script(
+        def validate_script(
             content: str, version: str = default_version
         ) -> dict:
             """Lint a LAMMPS input script for structural issues.
@@ -222,7 +222,7 @@ class LammpsProvider:
             return linter.lint(content, version)
 
         @mcp.tool(annotations=ro)
-        def explain_lammps_command(
+        def explain_command(
             line: str, version: str = default_version
         ) -> dict:
             """Explain one LAMMPS command line by parsing + linking the docs.
@@ -241,18 +241,18 @@ class LammpsProvider:
             return explain_mod.explain(line, version)
 
         @mcp.tool(annotations=ro)
-        def list_lammps_howtos() -> dict:
+        def list_howtos() -> dict:
             """List howto categories with counts and descriptions.
 
             Returns:
                 Dict with ``categories`` (list of {name, count,
                 description}) and ``guidance`` text explaining the
-                ``find_lammps_howto`` / ``get_lammps_howto`` flow.
+                ``search_howtos`` / ``get_howto`` flow.
             """
             return howto.list_categories()
 
         @mcp.tool(annotations=ro)
-        def find_lammps_howto(
+        def search_howtos(
             query: str,
             category: str | None = None,
             limit: int = 25,
@@ -268,12 +268,12 @@ class LammpsProvider:
 
             Returns:
                 Dict with short ``matches`` (category, slug, title,
-                summary, tags). Use ``get_lammps_howto`` for full content.
+                summary, tags). Use ``get_howto`` for full content.
             """
             return howto.find(query, category, min(limit, 50))
 
         @mcp.tool(annotations=ro)
-        def get_lammps_howto(
+        def get_howto(
             category: str, slug: str, version: str = default_version
         ) -> dict:
             """Return one howto in full.
@@ -292,7 +292,7 @@ class LammpsProvider:
             return howto.get(category, slug, version)
 
         @mcp.tool(annotations=ro)
-        def lookup_lammps_error(
+        def explain_error(
             message: str, version: str = default_version
         ) -> dict:
             """Match a LAMMPS error string against curated cause hints.
