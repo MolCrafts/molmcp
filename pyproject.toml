@@ -68,9 +68,26 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.uv.workspace]
+members = ["packages/*", "apps/*"]
+
+[tool.uv.sources]
+molmcp-molpy   = { workspace = true }
+molmcp-molexp  = { workspace = true }
+molmcp-lammps  = { workspace = true }
+molmcp-gateway = { workspace = true }
+
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]
+testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "integration: tests that exercise the full server",
 ]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
