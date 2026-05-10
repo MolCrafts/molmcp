@@ -5,10 +5,16 @@ Walkthrough: take any MolCrafts package and expose its source via MCP.
 ## The minimal case
 
 ```bash
-python -m molmcp --import-root molpy --name molpy
+python -m molmcp
 ```
 
-That's enough to start serving. The same shape works for `molcfg`, `molexp`, `molpack`, `mollog`, `molq`, `molrec`, `molvis`. Below we walk through what the agent actually sees, using `molpy` as the running example.
+That's enough — molmcp auto-detects every installed MolCrafts package and exposes them all through the seven introspection tools. Below we walk through what the agent actually sees, using `molpy` as the running example.
+
+If you want a server scoped to one package only, narrow with `--import-root`:
+
+```bash
+python -m molmcp --import-root molpy
+```
 
 ## The seven tools, by example
 
@@ -49,7 +55,9 @@ The whole package tree, walked once. With `prefix="molpy.core"`, only that subtr
 ### `list_symbols`
 
 ```python
-await server.call_tool("list_symbols", {"module": "molpy.core.atomistic"})
+await server.call_tool("list_symbols", {"symbol": "molpy.core.atomistic"})
+# Pass a class instead of a module to discover instance methods, properties, etc.
+await server.call_tool("list_symbols", {"symbol": "molpy.core.atomistic.Atomistic"})
 ```
 
 Output (excerpt):
@@ -136,18 +144,16 @@ Case-insensitive substring match, with file/line/text dicts. Capped at 50 result
 
 ## Multi-package setups
 
-Pass `--import-root` more than once to expose several MolCrafts packages from one server:
+The default already exposes every installed MolCrafts package — `list_modules()` returns the union; `get_source` works for any symbol in any root. Useful when an agent is doing comparative work across the ecosystem — e.g., wiring up a `molexp` experiment that calls into `molpack`.
+
+Pass `--import-root` explicitly only when you need to *narrow* (one package) or *extend beyond MolCrafts* (e.g. add `rdkit` to the introspection set):
 
 ```bash
-python -m molmcp \
-    --import-root molpy \
-    --import-root molpack \
-    --import-root molexp \
-    --name molcrafts
+python -m molmcp --import-root molpy --import-root rdkit
 ```
-
-`list_modules()` returns the union; `get_source` works for any symbol in any root. Useful when an agent is doing comparative work across the ecosystem — e.g., wiring up a `molexp` experiment that calls into `molpack`.
 
 ## When introspection isn't enough
 
-The seven tools tell the agent *what's in the source*, not *what the source can compute*. For domain capabilities — "build a polymer in molpy", "pack a box with molpack", "submit a job through molq" — each MolCrafts package needs a Provider. See **[Write a Provider](write-a-provider.md)**.
+The seven tools tell the agent *what's in the source*. For domain capabilities — "build a polymer in molpy", "pack a box with molpack", "submit a job through molq" — the agent reads the source and runs the upstream API/CLI itself; that's the introspection-first loop molmcp is built around.
+
+A Provider only enters the picture when the question depends on local runtime state introspection genuinely cannot see — a jobs DB, a workspace catalog, an OS-level config. The two first-party providers (`MolqProvider`, `MolexpProvider`) are the canonical examples. Read **[Provider design](../concepts/provider-design.md)** for the four-condition rule, then **[Write a Provider](write-a-provider.md)** for the mechanics.

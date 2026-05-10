@@ -48,7 +48,8 @@ def validate_tool_annotations(mcp: FastMCP, *, strict: bool = True) -> list[str]
         ann = getattr(tool, "annotations", None)
         if ann is None:
             warnings.append(
-                f"Tool {tool.name!r} has no ToolAnnotations — set at least readOnlyHint."
+                f"Tool {tool.name!r} has no ToolAnnotations — "
+                f"set at least readOnlyHint."
             )
             continue
         read_only = getattr(ann, "readOnlyHint", None)

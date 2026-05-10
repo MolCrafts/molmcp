@@ -1,6 +1,8 @@
 # Providers
 
-A **Provider** is the unit of MCP functionality contributed by a MolCrafts package. Each package — `molpy`, `molpack`, `molexp`, `molq`, ... — that wants to expose tools over MCP ships a Provider class plus an entry point. molmcp discovers them at startup and mounts them onto a single server.
+A **Provider** is the unit of MCP functionality contributed for stateful queries that introspection cannot answer. Each MolCrafts package whose runtime state lives outside its source (a local DB, ssh config, on-disk workspace) ships a Provider class plus an entry point. molmcp discovers them at startup and mounts them onto a single server.
+
+> **Read [provider-design.md](provider-design.md) first.** That doc defines the four-condition rule that every tool must satisfy before earning a slot. Most ideas for new tools fail one of the four — the answer is usually "let the agent introspect and script it" instead of adding a tool.
 
 ## The contract
 
@@ -103,21 +105,28 @@ Auto-discovery is a security boundary: any package the user has installed *and* 
 
 For locked-down environments, prefer explicit `providers=[...]` injection.
 
-## MolCrafts Provider naming convention
+## First-party providers
 
-By convention, each MolCrafts package's Provider lives in a sibling package named `<pkg>_mcp`:
+molmcp ships two Providers in-tree, both for stateful queries that
+introspection cannot answer:
 
-| MolCrafts package | Provider package | Provider class |
-|-------------------|------------------|----------------|
-| `molpy` | `molpy_mcp` | `MolPyProvider` |
-| `molpack` | `molpack_mcp` | `MolpackProvider` |
-| `molexp` | `molexp_mcp` | `MolexpProvider` |
-| `molq` | `molq_mcp` | `MolqProvider` |
-| `mollog` | `mollog_mcp` | `MollogProvider` |
+| Provider class | Name | Reason it exists |
+|----------------|------|-----|
+| `MolqProvider` | `molq` | Reads `~/.molq/jobs.db` runtime state. |
+| `MolexpProvider` | `molexp` | Reads a workspace catalog rooted at `workspace.json`. |
 
-The sibling-package layout keeps the MCP integration optional: `pip install molpy` does not pull in molmcp; `pip install molpy[mcp]` does.
+For everything else (`molpy`, `molpack`, `molrs`) the agent uses
+`IntrospectionProvider`, which auto-detects the installed MolCrafts
+packages — see [provider-design.md](provider-design.md) for the
+philosophy.
+
+Third parties writing their own MCP plugins should still use the
+`molmcp.providers` entry-point group; the same four-condition rule
+applies — providers that re-export an upstream API as MCP tools will be
+flagged in review.
 
 ## Read next
 
-- **[Middleware](middleware.md)** — what wraps your Provider's tools
-- **[Write a Provider](../guides/write-a-provider.md)** — step-by-step tutorial
+- **[Provider design](provider-design.md)** — the four-condition rule and what *not* to ship.
+- **[Middleware](middleware.md)** — what wraps your Provider's tools.
+- **[Write a Provider](../guides/write-a-provider.md)** — step-by-step tutorial.

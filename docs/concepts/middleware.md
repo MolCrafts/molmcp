@@ -28,7 +28,7 @@ Plus a one-shot validator that runs at server-build time — not a middleware in
 
 **What it does:** rejects tool calls whose path-shaped arguments contain `..` (path traversal) or NUL bytes.
 
-**Which arguments it inspects:** a fixed set of common parameter names — `path`, `filepath`, `file_path`, `filename`, `relative_path`, `rel_path`, `src`, `dst`, `input_file`, `output_file`. Tools using non-standard names are unaffected; if a MolCrafts Provider declares a path arg called `target`, this middleware won't help (use the [`safe_subprocess`](../guides/security.md) helper or your own validation, or rename to a recognized key).
+**Which arguments it inspects:** a fixed set of common parameter names — `path`, `filepath`, `file_path`, `filename`, `relative_path`, `rel_path`, `src`, `dst`, `input_file`, `output_file`. Tools using non-standard names are unaffected; if a MolCrafts Provider declares a path arg called `target`, this middleware won't help (use the [`run_safe`](../guides/security.md) helper for subprocess args, or do your own validation, or rename to a recognized key).
 
 **On rejection:** raises `fastmcp.exceptions.ToolError` with a message like `"Refusing path-traversal in argument 'file_path': '../etc/passwd'"`. The MCP client sees a clean error, the tool body never runs.
 

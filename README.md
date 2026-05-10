@@ -16,7 +16,7 @@
   &middot;
   <a href="https://molcrafts.github.io/molmcp/get-started/quickstart/"><strong>Quickstart</strong></a>
   &middot;
-  <a href="https://molcrafts.github.io/molmcp/guides/write-a-provider/"><strong>Write a Provider</strong></a>
+  <a href="https://molcrafts.github.io/molmcp/concepts/provider-design/"><strong>Provider design</strong></a>
   &middot;
   <a href="https://github.com/MolCrafts/molmcp/issues"><strong>Issues</strong></a>
 </p>
@@ -30,16 +30,33 @@ The MolCrafts ecosystem ships many packages — `molpy`, `molcfg`, `molexp`, `mo
 It does two things:
 
 1. Exposes seven read-only **source-introspection tools** for any MolCrafts package, so an agent can ask "what does `molpy.core.atomistic` contain?" and get an exact answer from the live source.
-2. Defines a **Provider** plugin contract so each MolCrafts package can ship its own *domain* tools (`molpack` exposes "pack a box", `molq` exposes "submit a job", `molexp` exposes "run an experiment") under a single coordinated MCP server with shared security defaults.
+2. Defines a **Provider** plugin contract for the narrow class of capabilities introspection cannot answer — stateful queries against local runtime state (a jobs DB, a workspace catalog) — under a single coordinated MCP server with shared security defaults.
 
 molmcp itself imports nothing from the MolCrafts packages. That's the point — it's pure infrastructure, and any MolCrafts package can adopt it without dragging in the others.
+
+## Design contract: introspection-first
+
+molmcp is **not** a tool-registration mirror of upstream packages. The primary
+mechanism for an agent to use a MolCrafts package is introspection: read the
+source via `IntrospectionProvider`, then call the API from a Python snippet or
+the package's CLI. A Provider earns a slot only when **all four** conditions
+hold: stable signature, read-only/idempotent, every-session frequency,
+single-shot answer — *and* the answer depends on runtime state introspection
+cannot see. Everything else is a 3-line introspection script.
+
+See [`docs/concepts/provider-design.md`](docs/concepts/provider-design.md) for
+the full rule and the list of capabilities that were deliberately *not*
+shipped.
 
 ## Features
 
 - **Seven introspection tools** — `list_modules`, `list_symbols`, `get_source`, `get_docstring`, `get_signature`, `read_file`, `search_source` — pointed at any MolCrafts import root.
-- **Provider plugin contract** — MolCrafts packages contribute domain tools via a `Provider` class plus an entry point. Auto-discovered, namespaced, version-able.
+- **Two first-party providers** for stateful queries:
+  - `MolqProvider` — `molq_list_jobs` (reads `~/.molq/jobs.db`).
+  - `MolexpProvider` — `molexp_list_projects`, `molexp_list_runs` (reads a `workspace.json` catalog).
+- **Provider plugin contract** — third-party MolCrafts packages contribute their own stateful-query tools via a `Provider` class plus an entry point. Auto-discovered, namespaced, version-able.
 - **Security middleware** that's on by default — path-traversal guard, response-size cap (256 KB), and a startup-time check that refuses to serve any tool missing a `readOnlyHint`/`destructiveHint` annotation.
-- **`safe_subprocess` helper** — for MolCrafts packages that wrap external CLIs (Packmol, LAMMPS, AmberTools): forced list args, no `shell=True`, mandatory timeout.
+- **`run_safe` helper** — for Provider authors who shell out to external CLIs (Packmol, LAMMPS, AmberTools): forced list args, no `shell=True`, mandatory timeout.
 - **Three transports** — `stdio`, `streamable-http`, `sse`.
 
 ## Install
@@ -48,28 +65,42 @@ molmcp itself imports nothing from the MolCrafts packages. That's the point — 
 pip install molcrafts-molmcp
 ```
 
-Requires Python ≥ 3.10. The PyPI distribution is `molcrafts-molmcp`; the import name is `molmcp`.
+Requires Python ≥ 3.12. The PyPI distribution is `molcrafts-molmcp`; the import name is `molmcp`.
 
 ## 60-second quickstart
 
-Expose a MolCrafts package as a set of MCP introspection tools:
+Expose the installed MolCrafts packages as a set of MCP introspection tools:
 
 ```bash
-python -m molmcp --import-root molpy --name molpy
+python -m molmcp
 ```
+
+molmcp auto-detects whichever of `{molpy, molpack, molrs, molq, molexp}` are
+importable in the active environment and registers introspection over them.
+Auto-discovered providers (`MolqProvider`, `MolexpProvider`, plus any
+third-party entry point) load on top.
 
 Wire it into Claude Code:
 
 ```bash
-claude mcp add molpy -- python -m molmcp --import-root molpy --name molpy
+claude mcp add molcrafts -- python -m molmcp
 ```
 
-The agent now has `mcp__molpy__list_modules`, `mcp__molpy__get_source`, etc.
+The agent now has `mcp__molmcp__list_modules`, `mcp__molmcp__get_source`,
+plus `molq_list_jobs` / `molexp_list_projects` etc. for whichever first-party
+providers register successfully against the user's environment.
 
 ## Adding domain tools (for MolCrafts packages)
 
+Before adding a tool, check it against the four-condition rule in
+[`docs/concepts/provider-design.md`](docs/concepts/provider-design.md). Most
+ideas don't pass — and if introspection plus a 3-line script can answer the
+question, that's the right answer.
+
+If a tool *does* earn a slot:
+
 ```python
-# in your MolCrafts package, e.g. src/molpack_mcp/__init__.py
+# in a sibling package, e.g. src/molpack_mcp/__init__.py
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
@@ -77,21 +108,21 @@ class MolpackProvider:
     name = "molpack"
 
     def register(self, mcp: FastMCP) -> None:
-        @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
-        def pack_box(spec: dict, workdir: str) -> dict:
-            """Pack a simulation box from a MolCrafts pack spec."""
-            from molpack import pack
-            return pack(spec, workdir).to_dict()
+        @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+        def list_pack_targets(workdir: str) -> list[dict]:
+            """Return the in-progress pack targets cached under workdir."""
+            from molpack import workspace
+            return [t.to_dict() for t in workspace.scan(workdir).targets]
 ```
 
-Declare the entry point in your package's `pyproject.toml`:
+Declare the entry point in the package's `pyproject.toml`:
 
 ```toml
 [project.entry-points."molmcp.providers"]
 molpack = "molpack_mcp:MolpackProvider"
 ```
 
-Now `python -m molmcp` discovers it automatically. The new tool joins the introspection tools in the same server.
+`python -m molmcp` discovers it automatically.
 
 ## Architecture
 
@@ -104,19 +135,23 @@ Now `python -m molmcp` discovers it automatically. The new tool joins the intros
                                ▼
                 ┌────────────────────────────────────┐
                 │  molmcp                            │
-                │  • Provider contract               │
                 │  • IntrospectionProvider           │
+                │  • Provider contract + discovery   │
                 │  • PathSafety / ResponseLimit      │
+                │  • Annotations validator           │
                 │  • run_safe / fence_untrusted      │
                 └──────────────┬─────────────────────┘
                                │
-       ┌───────────┬───────────┼───────────┬───────────┐
-       ▼           ▼           ▼           ▼           ▼
-   molpy_mcp   molpack_mcp  molexp_mcp  molq_mcp   mollog_mcp
-   (domain)    (domain)     (domain)    (domain)   (domain)
+            ┌──────────────────┼──────────────────────┐
+            ▼                  ▼                      ▼
+      MolqProvider      MolexpProvider     third-party providers
+      (jobs.db)         (workspace.json     (entry-point group
+                         catalog)            molmcp.providers)
 ```
 
-molmcp itself is library code — no MolCrafts package depends on any other through molmcp. Each package writes its Provider against the molmcp contract and ships the entry point; the host process composes them at runtime.
+molmcp itself is a single Python package — no MolCrafts package depends on any
+other through it. First-party providers ship in-tree and are entry-point
+discovered like any third-party Provider.
 
 ## Documentation
 
@@ -124,6 +159,7 @@ Full documentation lives at **[molcrafts.github.io/molmcp](https://molcrafts.git
 
 - [Installation & quickstart](https://molcrafts.github.io/molmcp/get-started/installation/)
 - [Architecture](https://molcrafts.github.io/molmcp/concepts/architecture/)
+- [Provider design contract](https://molcrafts.github.io/molmcp/concepts/provider-design/)
 - [Writing a Provider](https://molcrafts.github.io/molmcp/guides/write-a-provider/)
 - [Security model](https://molcrafts.github.io/molmcp/guides/security/)
 - [CLI reference](https://molcrafts.github.io/molmcp/reference/cli/)
@@ -137,7 +173,7 @@ zensical serve
 
 ## Status
 
-Alpha. The Provider contract and middleware surface may shift before 1.0. Pin to `molcrafts-molmcp >= 0.1, < 0.2`.
+Alpha. The Provider contract and middleware surface may shift before 1.0. Pin to `molcrafts-molmcp >= 0.2, < 0.3`.
 
 ## Contributing
 
@@ -147,6 +183,14 @@ cd molmcp
 pip install -e ".[dev]"
 pytest
 ```
+
+## Releasing
+
+1. Bump `version` in `pyproject.toml` and `__version__` in `src/molmcp/__init__.py`.
+2. Update `CHANGELOG.md`.
+3. `git tag v<X.Y.Z> && git push origin v<X.Y.Z>`.
+
+The tag push fires `release.yml`, which builds and publishes to PyPI via [Trusted Publisher](https://docs.pypi.org/trusted-publishers/) OIDC.
 
 ## License
 

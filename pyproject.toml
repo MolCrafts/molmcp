@@ -1,6 +1,6 @@
 [project]
 name = "molcrafts-molmcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "The MCP foundation for the MolCrafts ecosystem"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -41,6 +41,7 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.23.0",
+    "ruff>=0.6",
 ]
 docs = [
     "zensical>=0.0.37",
@@ -48,6 +49,10 @@ docs = [
 
 [project.scripts]
 molmcp = "molmcp.cli:main"
+
+[project.entry-points."molmcp.providers"]
+molexp = "molmcp.providers.molexp:MolexpProvider"
+molq   = "molmcp.providers.molq:MolqProvider"
 
 [project.urls]
 Homepage = "https://github.com/MolCrafts/molmcp"
@@ -65,15 +70,6 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.uv.workspace]
-members = ["packages/*", "apps/*"]
-
-[tool.uv.sources]
-molmcp-molpy   = { workspace = true }
-molmcp-molexp  = { workspace = true }
-molmcp-lammps  = { workspace = true }
-molmcp-gateway = { workspace = true }
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]

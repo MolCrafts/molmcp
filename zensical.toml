@@ -15,9 +15,11 @@ nav = [
     { "Get started" = [
         { "Installation" = "get-started/installation.md" },
         { "Quickstart" = "get-started/quickstart.md" },
+        { "Deploy" = "get-started/deploy.md" },
     ] },
     { "Concepts" = [
         { "Architecture" = "concepts/architecture.md" },
+        { "Provider design" = "concepts/provider-design.md" },
         { "Providers" = "concepts/providers.md" },
         { "Middleware" = "concepts/middleware.md" },
     ] },

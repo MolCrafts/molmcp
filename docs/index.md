@@ -4,6 +4,8 @@
 
 molmcp is the Model Context Protocol layer that MolCrafts packages share. Instead of every package — `molpy`, `molcfg`, `molexp`, `molpack`, `mollog`, `molq`, `molrec`, `molvis` — authoring its own MCP server, they all build on molmcp: same source-introspection tools, same security defaults, same Provider plugin contract. molmcp itself is pure infrastructure — it imports nothing from MolCrafts packages, so any of them can adopt it without dragging in the others.
 
+The design contract is **introspection-first**: agents discover the MolCrafts API by reading source through generic introspection tools, then call it from Python or the package's CLI. molmcp adds a curated Provider only when the answer depends on runtime state introspection cannot see. See [Provider design](concepts/provider-design.md) for the four-condition rule that gates every tool.
+
 ## What molmcp gives the MolCrafts ecosystem
 
 <div class="grid cards" markdown>
@@ -16,19 +18,19 @@ molmcp is the Model Context Protocol layer that MolCrafts packages share. Instea
 
 - :material-puzzle: **Provider plugin contract**
 
-    Each MolCrafts package contributes domain tools via a `Provider` class plus an entry point. The host server discovers them at startup, mounts them under a namespace, and validates their tool annotations.
+    A Provider may register a tool only when introspection cannot answer the question — typically a stateful query against a local DB or workspace. Two providers ship in-tree (`MolqProvider`, `MolexpProvider`); third-party packages plug in via the `molmcp.providers` entry-point group.
 
-    [→ Writing a Provider](guides/write-a-provider.md)
+    [→ Provider design](concepts/provider-design.md)
 
 - :material-shield-check: **Security defaults**
 
-    `..` traversal blocked. Responses capped at 256 KB. Tools without `readOnlyHint`/`destructiveHint` refuse to start. `safe_subprocess` for shelling out to Packmol / LAMMPS / AmberTools.
+    `..` traversal blocked. Responses capped at 256 KB. Tools without `readOnlyHint`/`destructiveHint` refuse to start. `run_safe` for shelling out to Packmol / LAMMPS / AmberTools.
 
     [→ Security model](guides/security.md)
 
 - :material-layers: **Composition without coupling**
 
-    Mount many Providers in one server with `mcp.mount(prefix=...)`. molmcp itself depends on no MolCrafts package — they each adopt molmcp on their own schedule.
+    Auto-discovered Providers register through the `molmcp.providers` entry-point group; mount many in one server with `mcp.mount(prefix=...)`. molmcp itself depends on no MolCrafts package — they each adopt molmcp on their own schedule.
 
     [→ Architecture](concepts/architecture.md)
 
@@ -38,12 +40,12 @@ molmcp is the Model Context Protocol layer that MolCrafts packages share. Instea
 
 ```bash
 pip install molcrafts-molmcp
-python -m molmcp --import-root molpy --name molpy
+python -m molmcp
 ```
 
-That's enough — seven tools online over MCP stdio, ready to wire into Claude Code or any MCP client.
+That's enough — seven introspection tools online over MCP stdio against whichever of `{molpy, molpack, molrs, molq, molexp}` are installed in the active environment, plus the first-party `MolqProvider` / `MolexpProvider` tools when their packages are present. For the one-line `claude mcp add` recipe, multi-server setups, and per-client wiring, see [Deploy](get-started/deploy.md).
 
-When `molpack`, `molq`, or any other MolCrafts package wants to expose its own domain tools (pack a box, submit a job, run an experiment), it ships a Provider. See [Writing a Provider](guides/write-a-provider.md).
+When a MolCrafts package has a stateful query that introspection genuinely cannot answer, it ships a Provider — see [Provider design](concepts/provider-design.md) for the rule and [Writing a Provider](guides/write-a-provider.md) for the mechanics.
 
 ## Why this exists
 

@@ -30,11 +30,22 @@ def get_signature_of(symbol: str) -> str:
     obj = resolve_symbol(symbol)
     if obj is None:
         return f"Symbol not found: {symbol}"
+    # Try with ``eval_str=True`` so PEP 563 (``from __future__ import
+    # annotations``) stringified annotations resolve to real classes —
+    # otherwise an agent reading ``def read_pdb(...) -> 'Frame'`` only
+    # sees the string ``'Frame'`` (or worse, ``Any`` after re-export).
+    # Fall back to the raw, unevaluated signature when forward refs are
+    # unresolvable in the target module's namespace.
     try:
-        sig = inspect.signature(obj)
-        return f"{symbol}{sig}"
+        sig = inspect.signature(obj, eval_str=True)
+    except (NameError, AttributeError):
+        try:
+            sig = inspect.signature(obj)
+        except (ValueError, TypeError):
+            return f"No signature available for: {symbol}"
     except (ValueError, TypeError):
         return f"No signature available for: {symbol}"
+    return f"{symbol}{sig}"
 
 
 def read_package_file(
