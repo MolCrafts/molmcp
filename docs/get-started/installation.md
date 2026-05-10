@@ -55,7 +55,7 @@ If you're maintaining a MolCrafts package and want it to expose tools through mo
 ```toml
 # in your MolCrafts package's pyproject.toml
 [project.optional-dependencies]
-mcp = ["molcrafts-molmcp >= 0.1, < 0.2"]
+mcp = ["molcrafts-molmcp >= 0.2, < 0.3"]
 ```
 
 Then ship a Provider class and an entry point. See [Writing a Provider](../guides/write-a-provider.md).

@@ -5,6 +5,41 @@ All notable changes to molmcp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-05-10
+
+Consolidation release. The uv-workspace experiment that shipped sibling
+plugin packages (`molmcp-molpy`, `molmcp-molrs`, `molmcp-molpack`,
+`molmcp-lammps`, `molmcp-molexp`, `molmcp-gateway`) is retired in
+favour of a single `molcrafts-molmcp` package — domain capabilities
+reach the agent through `IntrospectionProvider` over the upstream
+MolCrafts packages, not through curated re-export plugins. See
+`docs/concepts/provider-design.md` for the four-condition rule that
+drives this.
+
+### Changed
+
+- **Breaking:** `MolqProvider` now exposes a single read-only tool,
+  `molq_list_jobs`. The earlier `molq_queue` / `molq_submit` /
+  `molq_cancel` / `molq_cleanup` surface is removed — those are
+  mutating verbs better served by the `molq` CLI itself, and the
+  underlying molq APIs they relied on (`Cluster.from_alias`,
+  `Submitor.purge_db_records`) no longer exist on current molq.
+- **Breaking:** the `molmcp-*` sibling packages are no longer
+  published. Install upstream MolCrafts packages directly (e.g.
+  `pip install molcrafts-molpy`) and rely on introspection.
+
+### Removed
+
+- `apps/molmcp-gateway/` and `packages/molmcp-{lammps,molexp,molpack,molpy,molrs}/`
+  workspace tree.
+- `docs/concepts/naming.md` (orphan; not part of molmcp's surface).
+
+### Fixed
+
+- CI matrix realigned to the single-package layout.
+- Release workflow simplified to `uv build` → PyPI Trusted Publisher
+  (OIDC); no API tokens stored.
+
 ## [0.1.0] — 2026-05-10
 
 Initial release. molmcp is the MCP foundation for the MolCrafts ecosystem.
@@ -18,35 +53,11 @@ state introspection cannot see — see
 
 ### Added
 
-- `create_server()` factory: builds a configured MCP server with shared
-  middleware and pluggable Providers. Auto-discovered providers that
-  fail to register (missing runtime dep, version mismatch) are skipped
-  with a warning instead of crashing the server.
-- `IntrospectionProvider`: seven read-only tools (`list_modules`,
-  `list_symbols`, `get_source`, `get_docstring`, `get_signature`,
-  `read_file`, `search_source`) bound to a configurable list of import
-  roots. The CLI defaults `--import-root` to whichever of
-  `{molpy, molpack, molrs, molq, molexp}` are installed.
-- `MolqProvider` (entry point `molq`): one read-only tool —
-  `molq_list_jobs` (filterable read against the local jobs DB).
-  Stateful queries only; submission/cancel/cleanup belong in the
-  `molq` CLI per the four-condition rule.
-- `MolexpProvider` (entry point `molexp`): two tools —
-  `molexp_list_projects` and `molexp_list_runs`. Stateful queries only.
-- `Provider` Protocol and `discover_providers()`: third-party plugin
-  contract via the `molmcp.providers` entry point group.
-- `PathSafetyMiddleware`: blocks `..` traversal and NUL bytes in
-  path-shaped arguments.
-- `ResponseLimitMiddleware`: caps tool responses at 256 KB by default
-  with a truncation marker.
-- `validate_tool_annotations()` / `MissingAnnotationsError`: refuses to
-  start a server containing a tool without `readOnlyHint` or
-  `destructiveHint`.
-- `run_safe()` / `SubprocessResult`: hardened subprocess helper for
-  Provider authors who shell out to external CLIs.
-- `fence_untrusted()`: marks file contents as data, not instruction,
-  when returning them to the LLM context.
-- `molmcp` console script and `python -m molmcp` entry point with
-  `stdio`, `streamable-http`, and `sse` transports.
+- `create_server()` factory, `IntrospectionProvider`, `MolqProvider`,
+  `MolexpProvider`, `Provider` Protocol + `discover_providers()`,
+  `PathSafetyMiddleware`, `ResponseLimitMiddleware`,
+  `validate_tool_annotations()`, `run_safe()`, `fence_untrusted()`, the
+  `molmcp` console script over stdio / streamable-http / sse.
 
+[0.2.0]: https://github.com/MolCrafts/molmcp/releases/tag/v0.2.0
 [0.1.0]: https://github.com/MolCrafts/molmcp/releases/tag/v0.1.0

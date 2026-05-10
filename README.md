@@ -173,7 +173,7 @@ zensical serve
 
 ## Status
 
-Alpha. The Provider contract and middleware surface may shift before 1.0. Pin to `molcrafts-molmcp >= 0.1, < 0.2`.
+Alpha. The Provider contract and middleware surface may shift before 1.0. Pin to `molcrafts-molmcp >= 0.2, < 0.3`.
 
 ## Contributing
 

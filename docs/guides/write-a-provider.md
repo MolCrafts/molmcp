@@ -12,7 +12,7 @@ In `molpack/pyproject.toml`:
 
 ```toml
 [project.optional-dependencies]
-mcp = ["molmcp >= 0.1, < 0.2"]
+mcp = ["molcrafts-molmcp >= 0.2, < 0.3"]
 ```
 
 Don't make molmcp a hard dependency — users who don't need MCP shouldn't pull in the server framework.
