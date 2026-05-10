@@ -1,26 +1,30 @@
 # Quickstart
 
-Expose a MolCrafts package over MCP, in 60 seconds.
+Stand up an MCP server that exposes the MolCrafts ecosystem to an agent, in 60 seconds.
 
 ## 1. Run the server
 
 ```bash
-python -m molmcp --import-root molpy --name molpy
+python -m molmcp
 ```
 
-This starts an MCP server over **stdio** that knows how to read `molpy`'s source code. The same shape works for any MolCrafts package: substitute `--import-root molcfg`, `--import-root molexp`, `--import-root molpack`, etc.
+That's it — no flags needed. molmcp auto-detects whichever of
+`{molpy, molpack, molrs, molq, molexp}` are importable in the active
+environment and registers introspection over them. Auto-discovered providers
+(`MolqProvider`, `MolexpProvider`, and any third-party `molmcp.providers`
+entry point) load on top.
 
-The server stays in the foreground waiting for an MCP client to connect over stdin/stdout. To stop it, press `Ctrl+C`.
+The server stays in the foreground, talking MCP over stdin/stdout. `Ctrl+C` to stop.
 
 ## 2. Connect from Claude Code
 
 In another terminal:
 
 ```bash
-claude mcp add molpy -- python -m molmcp --import-root molpy --name molpy
+claude mcp add molcrafts -- python -m molmcp
 ```
 
-The `--` separates Claude Code's args from molmcp's args; everything after `--` is the command Claude Code spawns each session.
+The `--` separates Claude Code's args from molmcp's; everything after `--` is the command Claude Code spawns each session.
 
 After this, ask Claude:
 
@@ -28,17 +32,19 @@ After this, ask Claude:
 
 Behind the scenes Claude calls:
 
-- `mcp__molpy__list_modules`
-- `mcp__molpy__get_source`
+- `mcp__molcrafts__list_modules`
+- `mcp__molcrafts__get_source`
 
-For the full local-stdio walkthrough — including the curated plugin servers (`molmcp-molpy`, `molmcp-molrs`, `molmcp-molpack`), verifying with `claude mcp list`, multi-server setup, and per-client wiring — see [Deploy](deploy.md).
+The `mcp__<name>__<tool>` prefix tracks the name you registered with (`molcrafts` here).
 
-## 3. The seven tools
+For the full local-stdio walkthrough — verifying with `claude mcp list`, the in-tree `MolqProvider` / `MolexpProvider` tools, and per-client wiring — see [Deploy](deploy.md).
+
+## 3. The seven introspection tools
 
 | Tool | What it does |
 |------|--------------|
 | `list_modules(prefix=None)` | Walks the import tree and returns all module names. |
-| `list_symbols(module)` | Lists public symbols in a module with one-line summaries. |
+| `list_symbols(symbol)` | Lists public symbols of a module **or** members of a class (kind-tagged) with one-line summaries. |
 | `get_source(symbol)` | Returns full source for a module / class / method. |
 | `get_docstring(symbol)` | Returns the cleaned docstring. |
 | `get_signature(symbol)` | Returns the call signature with type hints. |
@@ -52,23 +58,8 @@ Every tool is marked `readOnlyHint=True`, so MCP clients can auto-approve them s
 For sharing the server across processes or machines:
 
 ```bash
-python -m molmcp --import-root molpy --name molpy \
-    --transport streamable-http --host 127.0.0.1 --port 8787
+python -m molmcp --transport streamable-http --host 127.0.0.1 --port 8787
 ```
-
-## 5. Multi-package server
-
-Pass `--import-root` more than once to expose several MolCrafts packages from one server:
-
-```bash
-python -m molmcp \
-    --import-root molpy \
-    --import-root molpack \
-    --import-root molexp \
-    --name molcrafts
-```
-
-All seven introspection tools now operate over the union of those packages' source. Useful when an agent is doing comparative work across the ecosystem.
 
 ## What's next?
 

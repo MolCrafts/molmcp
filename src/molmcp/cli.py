@@ -3,9 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import sys
 
 from .server import create_server
+
+# Default introspection roots: every first-party MolCrafts Python package
+# the suite knows about. Filtered down at start time to whatever is
+# actually importable, so unused packages don't crash startup.
+_DEFAULT_IMPORT_ROOTS = ("molpy", "molpack", "molrs", "molq", "molexp")
+
+
+def _available_default_roots() -> list[str]:
+    return [r for r in _DEFAULT_IMPORT_ROOTS if importlib.util.find_spec(r)]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,6 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Python package whose source to expose. Repeatable. "
+        "When omitted, defaults to whichever of "
+        "{molpy, molpack, molrs, molq, molexp} are installed. "
         "Example: --import-root molpy --import-root rdkit",
     )
     p.add_argument(
@@ -52,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     server = create_server(
         name=args.name,
-        import_roots=args.import_root or None,
+        import_roots=args.import_root or _available_default_roots() or ["molmcp"],
         discover_entry_points=not args.no_discover,
         validate_annotations=not args.no_validate_annotations,
     )

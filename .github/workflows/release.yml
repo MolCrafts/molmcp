@@ -3,63 +3,26 @@ name: Release
 on:
   push:
     tags: ['v*']
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version tag (e.g., v0.1.0)'
-        required: true
-        type: string
 
 jobs:
-  release:
+  publish:
+    name: Publish to PyPI
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/p/molcrafts-molmcp
     permissions:
-      contents: read
       id-token: write
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v5
         with:
           python-version: '3.12'
 
-      - name: Extract version
-        id: get_version
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${{ github.ref }}"
-          fi
-          VERSION="${VERSION#refs/tags/}"
-          VERSION="${VERSION#v}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      - name: Build sdist + wheel
+        run: uv build
 
-      - name: Sync workspace
-        run: uv sync --all-packages
-
-      - name: Verify version match
-        run: |
-          VERSION="${{ steps.get_version.outputs.version }}"
-          PACKAGE_VERSION=$(uv run --package molcrafts-molmcp python -c "import molmcp; print(molmcp.__version__)")
-          if [ "$VERSION" != "$PACKAGE_VERSION" ]; then
-            echo "::error::Tag version ($VERSION) != package version ($PACKAGE_VERSION)"
-            exit 1
-          fi
-
-      - name: Build core package
-        run: uv build --package molcrafts-molmcp
-
-      - name: Publish to PyPI
+      - name: Publish via Trusted Publisher
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist/
-          print-hash: true

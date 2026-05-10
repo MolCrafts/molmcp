@@ -6,38 +6,44 @@ MCP server that an MCP client (Claude Code, Claude Desktop, Continue,
 infrastructure — the client talks to molmcp over stdin/stdout the way a
 shell pipes two processes together.
 
-The first half of the page is **client-agnostic**: pick which servers
-to run, install the dependencies, decide which packages to expose. The
-second half is the **per-client wiring** — currently Claude Code; more
-clients land here as we get to them.
+The first half of the page is **client-agnostic**: install the
+dependencies, decide which packages to expose. The second half is the
+**per-client wiring** — currently Claude Code; more clients land here
+as we get to them.
 
 ---
 
-## Pick your servers
+## What `molmcp` actually serves
 
-There are two server flavours. You'll typically want one of each.
+One server, one CLI (`molmcp` / `python -m molmcp`), three layers of
+tooling — all on stdio by default:
 
-| Flavour | What it gives the agent | When to use |
-|---------|-------------------------|-------------|
-| **Foundation** (`molmcp` CLI) | Seven generic source-introspection tools (`list_modules`, `get_source`, `get_signature`, …) pointed at any MolCrafts import root. | "Show me the source of `molpy.compute.RDF`." |
-| **Plugin** (`molmcp-molpy`, `molmcp-molrs`, `molmcp-molpack` CLIs) | Curated *domain* tools: per-package catalogs, file-format readers, structure inspectors. | "What restraint types does molpack support? Inspect this `.inp` file." |
+| Layer | What the agent sees | When to use |
+|-------|---------------------|-------------|
+| **Introspection tools** (`IntrospectionProvider`) | Seven generic tools — `list_modules`, `list_symbols`, `get_source`, `get_docstring`, `get_signature`, `read_file`, `search_source` — pointed at any MolCrafts import root. | "Show me the source of `molpy.compute.RDF`. What does `molpack.pack` accept?" — the default loop. |
+| **First-party Provider tools** | Stateful queries that introspection cannot answer: `molq_list_jobs`, `molexp_list_projects`, `molexp_list_runs`. | "What's running right now? What experiments are in this workspace?" |
+| **Third-party Providers** | Whatever any installed package contributes via the `molmcp.providers` entry-point group, gated on the four-condition rule in [Provider design](../concepts/provider-design.md). | When a downstream package legitimately needs to expose a stateful query. |
 
-You can run both in parallel — clients mount each under its own
-namespace, so tool names never collide.
+There is no separate plugin-server CLI — historical `molmcp-molpy` /
+`molmcp-molrs` / `molmcp-molpack` packages have been removed in favour
+of the introspection-first loop.
 
 ## Prerequisites
 
-- **Python ≥ 3.10** with the molmcp foundation:
+- **Python ≥ 3.12** with the molmcp foundation:
   ```bash
   pip install molcrafts-molmcp
   ```
-- One or more MolCrafts packages you want to expose:
+- One or more MolCrafts packages you want introspection over:
   ```bash
   pip install molcrafts-molpy molcrafts-molrs molcrafts-molpack
   ```
-- (Optional) The matching plugin packages for curated domain tools:
+- For the first-party Provider tools, install the matching MolCrafts
+  package — providers are lazy facades and skip themselves cleanly when
+  their dep is missing:
   ```bash
-  pip install molmcp-molpy molmcp-molrs molmcp-molpack
+  pip install molq      # enables MolqProvider
+  pip install molexp    # enables MolexpProvider
   ```
 
 !!! tip "Use a venv"
@@ -47,41 +53,44 @@ namespace, so tool names never collide.
     dependency tree predictable. With `uv`:
     ```bash
     uv venv && source .venv/bin/activate
-    uv pip install molcrafts-molmcp molcrafts-molpy molmcp-molpy
+    uv pip install molcrafts-molmcp molcrafts-molpy molq molexp
     ```
 
-## What each plugin server exposes
+## What the first-party providers expose
 
-=== "molpy plugin (`molmcp-molpy`)"
+Both register through the `molmcp.providers` entry-point group and are
+auto-discovered when their upstream dep is importable. Each provider's
+existence is justified against the four-condition rule — see
+[Provider design](../concepts/provider-design.md).
 
-    All read-only:
+=== "molq (`MolqProvider`)"
 
-    - `list_readers` — file-reader catalog (XYZ, PDB, GRO, LAMMPS, Mol2, XSF)
-    - `list_compute_ops` — compute-operator catalog (`NeighborList`, `RDF`, `MCDCompute`, `PMSDCompute`)
-    - `inspect_structure` — open a structure file via `molpy.io` and summarise it
+    Reads `~/.molq/jobs.db`. One read-only tool:
 
-=== "molrs plugin (`molmcp-molrs`)"
+    - `molq_list_jobs` — local-DB job query, with optional cluster
+      filter and a switch for including terminal-state records.
 
-    All read-only:
+    Anything else (`molq_submit`, `molq_cancel`, `molq_cleanup`,
+    `register_cluster`, `refresh_cluster`, `get_job_transitions`, …) is
+    deliberately omitted — those mutate state and belong in the `molq`
+    CLI itself, which the agent can invoke directly after introspecting
+    `molq`.
 
-    - `list_compute_ops` — molrs analysis catalog (`RDF`, `MSD`, `Cluster`, `GyrationTensor`, `InertiaTensor`, `RadiusOfGyration`, `CenterOfMass`, `Pca2`, `KMeans`)
-    - `list_neighbor_algos` — `NeighborQuery`, `LinkedCell`, `NeighborList`
-    - `list_readers` — molrs I/O readers (XYZ, PDB, LAMMPS, CHGCAR, Cube, SMILES, …)
-    - `list_writers` — molrs I/O writers
-    - `inspect_structure` — open a structure file via `molrs.io` and summarise it
+=== "molexp (`MolexpProvider`)"
 
-=== "molpack plugin (`molmcp-molpack`)"
+    Reads a `workspace.json`-rooted molexp workspace catalog. Two
+    read-only tools:
 
-    All read-only:
+    - `molexp_list_projects` — top-level workspace navigation.
+    - `molexp_list_runs` — per-project / per-experiment run query,
+      with a stable filter set and flat output.
 
-    - `list_restraints` — `InsideBoxRestraint`, `InsideSphereRestraint`, `OutsideSphereRestraint`, `AbovePlaneRestraint`, `BelowPlaneRestraint`
-    - `list_formats` — structure-file format support
-    - `inspect_script` — parse a Packmol-compatible `.inp` script and summarise it (targets, atom counts, output path)
+    Per-run details (`get_run`, `get_metrics`, `get_asset_text`) are
+    derivable from `molexp_list_runs` plus introspection over
+    `molexp.workspace`.
 
-The foundation server's seven tools (`list_modules`, `list_symbols`,
-`get_source`, `get_docstring`, `get_signature`, `read_file`,
-`search_source`) come from any `--import-root` you point it at — see
-[Quickstart](quickstart.md#3-the-seven-tools).
+The seven introspection tools cover every installed MolCrafts package
+by default — see [Quickstart](quickstart.md#3-the-seven-introspection-tools).
 
 ---
 
@@ -91,21 +100,23 @@ The foundation server's seven tools (`list_modules`, `list_symbols`,
 
 Reference: [Claude Code MCP docs](https://docs.claude.com/en/docs/claude-code/overview).
 
-#### Foundation server (introspection)
+#### One server for the whole MolCrafts environment
 
 ```bash
-claude mcp add molpy -- python -m molmcp --import-root molpy --name molpy
+claude mcp add molcrafts -- python -m molmcp
 ```
 
 What this command does:
 
-- `claude mcp add molpy` — register an MCP server under the local
-  Claude Code config with the friendly name `molpy`.
+- `claude mcp add molcrafts` — register an MCP server under the local
+  Claude Code config with the friendly name `molcrafts`. This name
+  becomes the `mcp__<name>__<tool>` prefix the agent sees.
 - `--` — boundary between Claude Code's args and the spawn command.
   Everything after `--` is what Claude Code runs each session.
-- `python -m molmcp --import-root molpy --name molpy` — the molmcp
-  foundation, told to introspect the `molpy` import root and to
-  advertise itself as `molpy` to MCP clients.
+- `python -m molmcp` — the molmcp foundation. Auto-detects whichever of
+  `{molpy, molpack, molrs, molq, molexp}` are installed and registers
+  introspection over them. Auto-discovered Providers (`MolqProvider`,
+  `MolexpProvider`, plus any third-party entry-point) register on top.
 
 Verify:
 
@@ -116,29 +127,8 @@ claude mcp list
 You should see:
 
 ```
-molpy: python -m molmcp --import-root molpy --name molpy - ✓ Connected
+molcrafts: python -m molmcp - ✓ Connected
 ```
-
-#### Plugin servers (curated domain tools)
-
-```bash
-claude mcp add molpy-tools   -- molmcp-molpy   --transport stdio
-claude mcp add molrs-tools   -- molmcp-molrs   --transport stdio
-claude mcp add molpack-tools -- molmcp-molpack --transport stdio
-```
-
-After registration, `claude mcp list` should show:
-
-```
-molpy:          python -m molmcp --import-root molpy --name molpy - ✓ Connected
-molpy-tools:    molmcp-molpy --transport stdio                    - ✓ Connected
-molrs-tools:    molmcp-molrs --transport stdio                    - ✓ Connected
-molpack-tools:  molmcp-molpack --transport stdio                  - ✓ Connected
-```
-
-The foundation `molpy` server (introspection) and the plugin
-`molpy-tools` server (curated domain tools) coexist — they just publish
-non-overlapping tool names under different namespaces.
 
 #### Use it
 
@@ -149,33 +139,31 @@ Open a Claude Code session. Ask:
 
 Behind the scenes Claude calls:
 
-- `mcp__molpy__list_modules` → returns every module under `molpy.*`
-- `mcp__molpy__get_signature` with `symbol="molpy.compute.RDF"`
+- `mcp__molcrafts__list_modules` → every module under the registered
+  import roots.
+- `mcp__molcrafts__get_signature` with `symbol="molpy.compute.RDF"`.
 
-The `mcp__<name>__<tool>` prefix comes from the `--name molpy` you
-passed: change `--name foo` and you'd see `mcp__foo__list_modules`.
+The `mcp__<name>__<tool>` prefix is the `<name>` you passed to
+`claude mcp add`.
 
-#### Multi-package introspection in one server
+#### Narrow to one package (optional)
 
-If you want a single foundation server that introspects *several*
-MolCrafts packages, repeat `--import-root`:
+If you want a server scoped to a single MolCrafts package — say, when
+you're juggling multiple projects and want distinct MCP servers per
+project root — pass `--import-root` explicitly:
 
 ```bash
-claude mcp add molcrafts -- python -m molmcp \
-    --import-root molpy \
-    --import-root molrs \
-    --import-root molpack \
-    --name molcrafts
+claude mcp add molpy -- python -m molmcp --import-root molpy
 ```
 
-Tools become `mcp__molcrafts__list_modules`, etc.; the prefix tree
-returned spans all three packages. Useful for cross-package
-comparative work.
+The seven tools now operate over `molpy` only. Most users don't need
+this; the default serves every installed package and the agent simply
+filters by module prefix when it asks.
 
 #### Removing a server
 
 ```bash
-claude mcp remove molpy
+claude mcp remove molcrafts
 ```
 
 To rewire (e.g. point at a different venv), remove and re-add.
@@ -186,21 +174,26 @@ To rewire (e.g. point at a different venv), remove and re-add.
 the traceback:
 
 ```bash
-python -m molmcp --import-root molpy --name molpy
+python -m molmcp
 ```
 
 The server should print nothing and wait for stdin (because that's
 where Claude Code would normally talk to it). `Ctrl+C` to exit. Common
-causes: wrong Python on PATH, `molpy` not installed in that venv,
-`molcrafts-molmcp` missing.
+causes: wrong Python on PATH, no MolCrafts packages installed in that
+venv, `molcrafts-molmcp` missing.
 
 **Tools not showing up after `claude mcp add`** — restart the Claude
 Code session. Tool registration is read at session start.
 
+**A first-party Provider isn't loaded** — molmcp logs auto-discovered
+Providers at startup and *skips* (with a warning) any whose dep is
+missing or whose runtime state isn't reachable. Check the logs by
+running the spawn command interactively. Install the upstream package
+(`pip install molq` / `pip install molexp`) and restart the client.
+
 **"Tool name collision"** — happens if two servers expose tools under
-the same `--name`. Use distinct names (`molpy` for foundation,
-`molpy-tools` for the plugin) and the `mcp__<name>__<tool>` prefix
-keeps them apart.
+the same name. The `<name>` you pass to `claude mcp add` is the prefix;
+use distinct names per server.
 
 ### Other clients
 
@@ -222,10 +215,11 @@ Open your client and ask:
 
 The agent will typically:
 
-1. Call `mcp__molrs-tools__inspect_structure` with `path=/tmp/water.xyz`
-   to see how many atoms / which simbox.
-2. Call `mcp__molpy-tools__list_compute_ops` to confirm `RDF` and
-   `NeighborList` exist and learn their signatures.
+1. Call `mcp__molcrafts__list_symbols` with `module="molpy.compute"` to
+   confirm `RDF` and `NeighborList` exist.
+2. Call `mcp__molcrafts__get_signature` on
+   `molpy.compute.RDF` and `molpy.compute.NeighborList` to learn the
+   exact call shapes.
 3. Write the snippet using the verified signatures.
 
 That's the loop molmcp is built for: the agent verifies the API
@@ -238,10 +232,14 @@ training data.
 
 - **[CLI reference](../reference/cli.md)** — every flag the `molmcp`
   CLI accepts.
-- **[Architecture](../concepts/architecture.md)** — how the foundation
-  and plugin layers compose.
+- **[Architecture](../concepts/architecture.md)** — how the
+  introspection layer and the Provider layer compose.
+- **[Provider design](../concepts/provider-design.md)** — the
+  four-condition rule that decides which capabilities earn a tool slot
+  vs. stay in introspection-driven scripts.
 - **[Write a Provider](../guides/write-a-provider.md)** — author a
-  curated plugin for your own MolCrafts package.
+  Provider for your own MolCrafts package after checking it against
+  the design contract.
 - Want stdout logs from the server? molmcp keeps stdout silent because
   that's the MCP wire. Use `--transport streamable-http` and run the
   server in another terminal if you need to watch what it does.

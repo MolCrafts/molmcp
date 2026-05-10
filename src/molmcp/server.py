@@ -76,7 +76,15 @@ def create_server(
             logger.warning("Skipping duplicate provider %r", prov.name)
             continue
         seen.add(prov.name)
-        prov.register(mcp)
+        try:
+            prov.register(mcp)
+        except Exception as exc:
+            if prov in explicit:
+                raise
+            logger.warning(
+                "Skipping auto-discovered provider %r: %s: %s",
+                prov.name, type(exc).__name__, exc,
+            )
 
     if validate_annotations:
         warnings = validate_tool_annotations(mcp, strict=False)

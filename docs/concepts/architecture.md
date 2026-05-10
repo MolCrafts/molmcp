@@ -1,6 +1,6 @@
 # Architecture
 
-molmcp is the central piece of MCP infrastructure for the MolCrafts ecosystem. Each MolCrafts package contributes its domain tools through molmcp, and clients see one coordinated server.
+molmcp is the central piece of MCP infrastructure for the MolCrafts ecosystem. The default loop is **introspection-first**: agents read the upstream MolCrafts API through generic introspection tools and call it via Python or the package CLI. A Provider only joins the picture when there's a stateful query introspection cannot answer (see [Provider design](provider-design.md) for the four-condition rule).
 
 ```
                 ┌────────────────────────────────────┐
@@ -11,17 +11,18 @@ molmcp is the central piece of MCP infrastructure for the MolCrafts ecosystem. E
                                ▼
                 ┌────────────────────────────────────┐
                 │  molmcp                            │
-                │  • Provider contract               │
                 │  • IntrospectionProvider           │
+                │  • Provider contract + discovery   │
                 │  • PathSafety / ResponseLimit      │
                 │  • Annotations validator           │
                 │  • run_safe / fence_untrusted      │
                 └──────────────┬─────────────────────┘
                                │
-       ┌───────────┬───────────┼───────────┬───────────┐
-       ▼           ▼           ▼           ▼           ▼
-   molpy_mcp   molpack_mcp  molexp_mcp   molq_mcp  mollog_mcp
-   (domain)    (domain)     (domain)    (domain)   (domain)
+            ┌──────────────────┼──────────────────────┐
+            ▼                  ▼                      ▼
+      MolqProvider      MolexpProvider     third-party providers
+      (jobs.db)         (workspace.json     (entry-point group
+                         catalog)            molmcp.providers)
 ```
 
 ## Three responsibilities
@@ -30,17 +31,13 @@ molmcp is the central piece of MCP infrastructure for the MolCrafts ecosystem. E
 
 molmcp delegates the wire-level work — JSON-RPC framing, transport adapters (stdio, streamable-http, sse), tool/resource/prompt decorators, the middleware pipeline — to its underlying server library. molmcp doesn't reinvent any of that, and you generally don't have to think about it: when you call `create_server(...)` you get a working server back.
 
-### 2. The MolCrafts Provider contract
+### 2. Source introspection
 
-This is what molmcp adds:
+`IntrospectionProvider` exposes seven read-only tools that work against any MolCrafts import root. This is the primary capability molmcp provides — most agent questions about a MolCrafts package are answered from its source via these tools, not from a pre-curated tool catalog.
 
-1. **Source introspection** — the `IntrospectionProvider` exposes seven read-only tools that work against any MolCrafts package's source.
-2. **A plugin contract** — `Provider` Protocol + `molmcp.providers` entry point group, so each MolCrafts package can ship domain tools that the host server discovers automatically.
-3. **Default safety middleware** — path traversal guards, response-size limits, startup-time annotation validation. Mounted automatically when `create_server(...)` is called.
+### 3. The Provider contract (kept narrow)
 
-### 3. MolCrafts packages
-
-Where the *actual chemistry / physics / workflow* lives. molmcp doesn't know what `molpy` does or what `molpack` does — it just hands each downstream package an empty server instance and lets it register tools. This is what keeps molmcp generic across the ecosystem.
+Every other tool molmcp registers is a Provider tool, gated by `Provider` Protocol + `molmcp.providers` entry-point auto-discovery + the four-condition design rule. Two providers ship in-tree (`MolqProvider`, `MolexpProvider`); third-party packages plug in identically. Default safety middleware — path-traversal guards, response-size limits, startup-time annotation validation — is mounted automatically when `create_server(...)` is called.
 
 ## How a request flows through
 
@@ -80,10 +77,10 @@ The result would be: fragmented quality, inconsistent UX across packages, securi
 
 ## What molmcp deliberately does *not* do
 
-- **No domain tools.** No structure I/O facade, no `compute_rdf`, no `parse_smiles`. Those belong in MolCrafts package Providers (`molpy_mcp`, `molpack_mcp`, etc.).
-- **No batteries-included science deps.** molmcp's wheel pulls in only its server-framework dependency.
+- **No re-exported domain tools.** No structure I/O facade, no `compute_rdf`, no `parse_smiles`. Those are reachable through introspection plus a 3-line Python or CLI invocation — see [Provider design](provider-design.md) for why a tool catalog that mirrors upstream is a maintenance trap.
+- **No batteries-included science deps at the foundation layer.** molmcp's wheel pulls in only its server-framework dependency. The first-party `MolqProvider` / `MolexpProvider` are *lazy facades* — importing the provider class never imports the upstream dep; the probe happens at `register()` time, and a missing dep produces a clear runtime warning rather than a startup crash.
 - **No opinions about Provider internals.** A Provider can be 5 lines or 5,000 — molmcp only requires that it has a `name` and a `register(mcp)` method.
-- **No MolCrafts package import.** molmcp imports nothing from `molpy`, `molcfg`, `molexp`, etc. That keeps it adoptable on any cadence.
+- **No MolCrafts package import from the foundation.** Outside the in-tree providers (which are explicit, lazy, and entry-point-gated like third-party providers), molmcp imports nothing from `molpy`, `molcfg`, etc. That keeps it adoptable on any cadence.
 
 ## Read next
 

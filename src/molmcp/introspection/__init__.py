@@ -49,13 +49,23 @@ class IntrospectionProvider:
             return list_modules_under(roots, prefix)
 
         @mcp.tool(annotations=_READ_ONLY)
-        def list_symbols(module: str) -> dict[str, str]:
-            """List public symbols in a module, with one-line summaries.
+        def list_symbols(symbol: str) -> dict[str, str]:
+            """List public symbols of a module **or** members of a class.
+
+            For a module: returns ``{name: one_line_summary}``.
+
+            For a class: returns ``{name: "<kind> — summary"}`` where
+            ``kind`` is ``method`` / ``classmethod`` / ``staticmethod`` /
+            ``property`` / ``attribute`` / ``nested_class``.  This is
+            how to discover instance methods on a Python class without
+            pulling its full source.
 
             Args:
-                module: Fully-qualified module name (e.g. ``molpy.core.atomistic``).
+                symbol: Fully-qualified dotted name.  Examples:
+                    ``molpy.core.atomistic`` (module) or
+                    ``molpy.core.atomistic.Atomistic`` (class).
             """
-            return list_symbols_in(module)
+            return list_symbols_in(symbol)
 
         @mcp.tool(annotations=_READ_ONLY)
         def get_source(symbol: str) -> str:
@@ -109,9 +119,7 @@ class IntrospectionProvider:
             Returns:
                 List of ``{file, line, text}`` dicts.
             """
-            return search_in_sources(
-                roots, query, module_prefix, min(max_results, 50)
-            )
+            return search_in_sources(roots, query, module_prefix, min(max_results, 50))
 
 
 __all__ = ["IntrospectionProvider"]

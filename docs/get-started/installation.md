@@ -1,6 +1,6 @@
 # Installation
 
-molmcp is published on PyPI as **`molcrafts-molmcp`** and requires Python ≥ 3.10. The import name is `molmcp`.
+molmcp is published on PyPI as **`molcrafts-molmcp`** and requires Python ≥ 3.12. The import name is `molmcp`.
 
 ## With pip
 
@@ -46,7 +46,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-37 tests should pass.
+All collected tests should pass (currently 62).
 
 ## Adopting molmcp in a MolCrafts package
 

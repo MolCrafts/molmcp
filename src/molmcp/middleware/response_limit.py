@@ -31,7 +31,10 @@ class ResponseLimitMiddleware(Middleware):
         new_blocks = []
         truncated = False
         for block in result.content:
-            if isinstance(block, TextContent) and len(block.text.encode()) > self.max_bytes:
+            if (
+                isinstance(block, TextContent)
+                and len(block.text.encode()) > self.max_bytes
+            ):
                 cutoff = self.max_bytes
                 clipped = block.text.encode()[:cutoff].decode(errors="ignore")
                 marker = (

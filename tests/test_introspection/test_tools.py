@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest  # noqa: F401
-
 from conftest import call
 
 
@@ -24,16 +23,53 @@ class TestListModules:
 
 class TestListSymbols:
     async def test_root_module(self, server):
-        symbols = await call(server, "list_symbols", {"module": "fixture_pkg"})
+        symbols = await call(server, "list_symbols", {"symbol": "fixture_pkg"})
         assert isinstance(symbols, dict)
         assert "greet" in symbols
         assert "Widget" in symbols
 
     async def test_bad_module(self, server):
-        symbols = await call(
-            server, "list_symbols", {"module": "fixture_pkg.no_such"}
-        )
+        symbols = await call(server, "list_symbols", {"symbol": "fixture_pkg.no_such"})
         assert "error" in symbols
+
+    async def test_class_lists_method_with_kind_tag(self, server):
+        members = await call(server, "list_symbols", {"symbol": "fixture_pkg.Widget"})
+        assert "grow" in members
+        assert members["grow"].startswith("method —")
+        assert "Multiply" in members["grow"]
+
+    async def test_class_lists_classmethod(self, server):
+        members = await call(server, "list_symbols", {"symbol": "fixture_pkg.Widget"})
+        assert "of_default" in members
+        assert members["of_default"].startswith("classmethod —")
+
+    async def test_class_lists_staticmethod(self, server):
+        members = await call(server, "list_symbols", {"symbol": "fixture_pkg.Widget"})
+        assert "double" in members
+        assert members["double"].startswith("staticmethod —")
+
+    async def test_class_lists_property(self, server):
+        members = await call(server, "list_symbols", {"symbol": "fixture_pkg.Widget"})
+        assert "heavy" in members
+        assert members["heavy"].startswith("property —")
+
+    async def test_class_lists_attribute_and_nested_class(self, server):
+        members = await call(server, "list_symbols", {"symbol": "fixture_pkg.Widget"})
+        assert "DEFAULT_FACTOR" in members
+        assert members["DEFAULT_FACTOR"].startswith("attribute")
+        assert "Config" in members
+        assert members["Config"].startswith("nested_class —")
+
+    async def test_class_skips_dunders_and_inherited(self, server):
+        members = await call(server, "list_symbols", {"symbol": "fixture_pkg.Widget"})
+        # No leading-underscore names; nothing inherited from object.
+        assert all(not n.startswith("_") for n in members)
+        assert "__init__" not in members
+        assert "__class__" not in members
+
+    async def test_non_module_non_class(self, server):
+        result = await call(server, "list_symbols", {"symbol": "fixture_pkg.greet"})
+        assert "error" in result
 
 
 class TestGetSource:
@@ -50,9 +86,7 @@ class TestGetSource:
         assert "Widget" in src
 
     async def test_not_found(self, server):
-        src = await call(
-            server, "get_source", {"symbol": "fixture_pkg.NoSuchClass"}
-        )
+        src = await call(server, "get_source", {"symbol": "fixture_pkg.NoSuchClass"})
         assert "not found" in src.lower()
 
 
@@ -77,11 +111,18 @@ class TestGetSignature:
         assert "str" in sig
 
     async def test_method(self, server):
-        sig = await call(
-            server, "get_signature", {"symbol": "fixture_pkg.Widget.grow"}
-        )
+        sig = await call(server, "get_signature", {"symbol": "fixture_pkg.Widget.grow"})
         assert "factor" in sig
         assert "self" in sig
+
+    async def test_resolves_pep563_forward_ref(self, server):
+        # Widget.grow is declared with `-> "Widget"` under
+        # `from __future__ import annotations`; without eval_str the
+        # signature would surface the bare string ``'Widget'`` rather
+        # than the resolved class name.
+        sig = await call(server, "get_signature", {"symbol": "fixture_pkg.Widget.grow"})
+        assert "Widget" in sig
+        assert "'Widget'" not in sig  # not a quoted forward-ref
 
     async def test_not_found(self, server):
         sig = await call(server, "get_signature", {"symbol": "fixture_pkg.nope"})
@@ -104,9 +145,7 @@ class TestSearchSource:
             assert h["file"].startswith("fixture_pkg/sub")
 
     async def test_no_match(self, server):
-        hits = await call(
-            server, "search_source", {"query": "xyzzy_impossible_12345"}
-        )
+        hits = await call(server, "search_source", {"query": "xyzzy_impossible_12345"})
         assert hits == []
 
     async def test_max_results_capped_at_50(self, server):
