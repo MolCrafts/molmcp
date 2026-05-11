@@ -13,7 +13,7 @@ from .middleware import (
 from .provider import ENTRY_POINT_GROUP, Provider, discover_providers
 from .server import create_server
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __all__ = [
     "__version__",
