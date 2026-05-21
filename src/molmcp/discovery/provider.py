@@ -277,20 +277,24 @@ class DiscoveryProvider:
             if err is not None:
                 return err
             try:
-                result = self.engine().index(spec, force=True)
+                result = self.engine().refresh(spec)
             except SourceError as exc:
                 return {"error": str(exc), "source": spec}
             except Exception as exc:  # noqa: BLE001
                 return {"error": f"{type(exc).__name__}: {exc}", "source": spec}
-            return {
+            payload = {
                 "refreshed": True,
                 "indexed": {
                     "files": result.file_count,
                     "nodes": result.node_count,
                     "edges": result.edge_count,
                 },
+                "extract_stats": result.extract_stats,
                 "snapshot": _snapshot_block(result.snapshot),
             }
+            if result.changes is not None:
+                payload["changes"] = result.changes.to_dict()
+            return payload
 
 
 _METHOD = {

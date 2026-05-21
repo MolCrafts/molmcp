@@ -11,9 +11,20 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import DiscoveryConfig
+
+
+@dataclass(slots=True)
+class _SnapshotEntry:
+    snapshot_id: str
+    directory: Path
+    spec: str
+    indexed_at: float
 
 
 def slugify(value: str) -> str:
@@ -47,6 +58,9 @@ class SnapshotCache:
 
     def raw_dir(self, snapshot_id: str) -> Path:
         return self.snapshot_dir(snapshot_id) / "raw"
+
+    def extract_db_path(self) -> Path:
+        return self.root / "extract.db"
 
     def evidence_dir(self, snapshot_id: str) -> Path:
         return self.snapshot_dir(snapshot_id) / "evidence"
@@ -97,3 +111,56 @@ class SnapshotCache:
             return json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return None
+
+    # -- eviction ----------------------------------------------------
+
+    def _scan_snapshots(self) -> list[_SnapshotEntry]:
+        entries: list[_SnapshotEntry] = []
+        if not self.snapshots_root.is_dir():
+            return entries
+        for directory in self.snapshots_root.iterdir():
+            if not directory.is_dir():
+                continue
+            manifest_path = directory / "manifest.json"
+            if not manifest_path.is_file():
+                continue
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            entries.append(
+                _SnapshotEntry(
+                    snapshot_id=manifest.get("snapshot_id", directory.name),
+                    directory=directory,
+                    spec=manifest.get("spec", "?"),
+                    indexed_at=float(manifest.get("indexed_at", 0.0)),
+                )
+            )
+        return entries
+
+    def evict(self) -> dict:
+        """Prune cached snapshots past the configured limits.
+
+        Drops snapshots older than ``max_cache_age_days`` and, per
+        source spec, keeps only the newest ``max_snapshots_per_spec``.
+        """
+        removed: list[str] = []
+        now = time.time()
+        max_age = self.config.max_cache_age_days * 86400
+        survivors: dict[str, list[_SnapshotEntry]] = {}
+
+        for entry in self._scan_snapshots():
+            if max_age > 0 and (now - entry.indexed_at) > max_age:
+                shutil.rmtree(entry.directory, ignore_errors=True)
+                removed.append(entry.snapshot_id)
+                continue
+            survivors.setdefault(entry.spec, []).append(entry)
+
+        keep = max(self.config.max_snapshots_per_spec, 1)
+        for entries in survivors.values():
+            entries.sort(key=lambda e: e.indexed_at, reverse=True)
+            for entry in entries[keep:]:
+                shutil.rmtree(entry.directory, ignore_errors=True)
+                removed.append(entry.snapshot_id)
+
+        return {"removed": removed, "removed_count": len(removed)}

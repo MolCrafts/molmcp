@@ -113,7 +113,14 @@ def _build_discovery_parser() -> argparse.ArgumentParser:
     dmp.add_argument("source", help="Source spec.")
     dmp.add_argument("--output", default=None, help="Write JSON to a file.")
 
-    sub.add_parser("clean", help="Delete the discovery cache.")
+    cln = sub.add_parser(
+        "clean", help="Prune old cached snapshots (or wipe with --all)."
+    )
+    cln.add_argument(
+        "--all",
+        action="store_true",
+        help="Remove the entire discovery cache instead of pruning.",
+    )
     return p
 
 
@@ -125,11 +132,17 @@ def _discovery_main(argv: list[str]) -> int:
     engine = DiscoveryEngine(config)
 
     if args.command == "clean":
-        if config.cache_dir.exists():
-            shutil.rmtree(config.cache_dir)
-            print(f"removed {config.cache_dir}")
-        else:
-            print(f"nothing to clean ({config.cache_dir} does not exist)")
+        if args.all:
+            if config.cache_dir.exists():
+                shutil.rmtree(config.cache_dir)
+                print(f"removed {config.cache_dir}")
+            else:
+                print(f"nothing to clean ({config.cache_dir} does not exist)")
+            return 0
+        result = engine.cache.evict()
+        print(f"pruned {result['removed_count']} snapshot(s)")
+        for snapshot_id in result["removed"]:
+            print(f"  - {snapshot_id}")
         return 0
 
     if args.command == "index":

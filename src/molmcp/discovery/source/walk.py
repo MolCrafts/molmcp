@@ -27,6 +27,7 @@ class WalkedFile:
     language: str
     content_hash: str
     size: int
+    mtime: float
 
 
 def load_gitignore(root: Path) -> list[str]:
@@ -97,10 +98,10 @@ def walk_files(
             if language is None:
                 continue
             try:
-                size = abs_path.stat().st_size
+                stat = abs_path.stat()
             except OSError:
                 continue
-            if size > config.max_file_bytes:
+            if stat.st_size > config.max_file_bytes:
                 continue
             try:
                 data = abs_path.read_bytes()
@@ -112,7 +113,8 @@ def walk_files(
                     abs_path=str(abs_path),
                     language=language,
                     content_hash=hashlib.sha256(data).hexdigest(),
-                    size=size,
+                    size=stat.st_size,
+                    mtime=stat.st_mtime,
                 )
             )
 

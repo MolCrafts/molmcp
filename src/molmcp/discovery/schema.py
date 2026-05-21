@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 SCHEMA_VERSION = 1
+# Bump when analyzer output changes — invalidates the extraction cache.
+ANALYZER_VERSION = 1
 
 
 class NodeKind(StrEnum):
@@ -124,6 +126,29 @@ class Node:
             "metadata": dict(self.metadata),
         }
 
+    @classmethod
+    def from_dict(cls, d: dict) -> "Node":
+        return cls(
+            id=d["id"],
+            kind=d["kind"],
+            name=d["name"],
+            qualname=d["qualname"],
+            language=d["language"],
+            file=d["file"],
+            start_line=d["start_line"],
+            end_line=d["end_line"],
+            signature=d.get("signature"),
+            docstring=d.get("docstring"),
+            summary=d.get("summary"),
+            decorators=list(d.get("decorators", [])),
+            bases=list(d.get("bases", [])),
+            visibility=d.get("visibility", Visibility.PUBLIC),
+            is_exported=d.get("is_exported", False),
+            is_async=d.get("is_async", False),
+            is_abstract=d.get("is_abstract", False),
+            metadata=dict(d.get("metadata", {})),
+        )
+
 
 @dataclass(slots=True)
 class Edge:
@@ -149,6 +174,19 @@ class Edge:
             "line": self.line,
             "metadata": dict(self.metadata),
         }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Edge":
+        return cls(
+            id=d.get("id"),
+            source=d["source"],
+            target=d["target"],
+            kind=d["kind"],
+            provenance=d.get("provenance", Provenance.AST),
+            file=d.get("file"),
+            line=d.get("line"),
+            metadata=dict(d.get("metadata", {})),
+        )
 
 
 @dataclass(slots=True)
@@ -176,6 +214,17 @@ class UnresolvedRef:
             "file": self.file,
             "line": self.line,
         }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "UnresolvedRef":
+        return cls(
+            id=d.get("id"),
+            from_node=d["from_node"],
+            name=d["name"],
+            kind=d["kind"],
+            file=d.get("file"),
+            line=d.get("line"),
+        )
 
 
 @dataclass(slots=True)
