@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from .config import DiscoveryConfig
 from .engine import DiscoveryEngine, IndexResult
+from .overlay import CapabilityOverlay, OverlayContribution, load_overlays
+from .overlay.catalog import Capability, CatalogOverlay, load_catalog
 from .query import DiscoveryQuery
 from .schema import (
     SCHEMA_VERSION,
@@ -24,6 +26,9 @@ from .source import Snapshot, SourceError
 
 __all__ = [
     "SCHEMA_VERSION",
+    "Capability",
+    "CapabilityOverlay",
+    "CatalogOverlay",
     "CodeGraph",
     "DiscoveryConfig",
     "DiscoveryEngine",
@@ -34,8 +39,11 @@ __all__ = [
     "IndexResult",
     "Node",
     "NodeKind",
+    "OverlayContribution",
     "Provenance",
     "Snapshot",
     "SourceError",
     "UnresolvedRef",
+    "load_catalog",
+    "load_overlays",
 ]

@@ -8,6 +8,7 @@ an :class:`ExtractCache` lets unchanged files skip the analyzer.
 from __future__ import annotations
 
 import importlib.metadata
+import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +22,8 @@ from .resolve import Resolver
 from .schema import ANALYZER_VERSION, SCHEMA_VERSION, CodeGraph, FileRecord
 from .source import Snapshot, SourceResolver
 from .store import GraphStore
+
+logger = logging.getLogger(__name__)
 
 try:
     ENGINE_VERSION = importlib.metadata.version("molcrafts-molmcp")
@@ -55,7 +58,11 @@ class IndexResult:
 class DiscoveryEngine:
     """Indexes source specs into snapshot-cached code graphs."""
 
-    def __init__(self, config: DiscoveryConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: DiscoveryConfig | None = None,
+        overlays: list | None = None,
+    ) -> None:
         self.config = config or DiscoveryConfig()
         self.resolver = SourceResolver(self.config)
         self.cache = SnapshotCache(self.config)
@@ -63,6 +70,12 @@ class DiscoveryEngine:
             self.cache.extract_db_path(), ANALYZER_VERSION
         )
         self.extractor = Extractor(self.extract_cache)
+        if overlays is None:
+            from .overlay import load_overlays
+
+            self._overlays = load_overlays()
+        else:
+            self._overlays = list(overlays)
 
     def resolve(self, spec: str) -> Snapshot:
         """Resolve a spec to an immutable snapshot (no indexing)."""
@@ -177,7 +190,26 @@ class DiscoveryEngine:
 
     def _build(self, snapshot: Snapshot) -> CodeGraph:
         graph = self.extractor.extract(snapshot)
-        return Resolver().resolve(graph)
+        graph = Resolver().resolve(graph)
+        self._apply_overlays(snapshot, graph)
+        return graph
+
+    def _apply_overlays(self, snapshot: Snapshot, graph: CodeGraph) -> None:
+        for overlay in self._overlays:
+            try:
+                if not overlay.applies_to(snapshot):
+                    continue
+                contribution = overlay.contribute(graph)
+            except Exception as exc:  # noqa: BLE001 - isolate overlay bugs
+                logger.warning(
+                    "overlay %r failed: %s",
+                    getattr(overlay, "name", "?"),
+                    exc,
+                )
+                continue
+            graph.nodes.extend(contribution.nodes)
+            graph.edges.extend(contribution.edges)
+            graph.unresolved.extend(contribution.unresolved)
 
     def _cache_is_valid(self, snapshot_id: str) -> bool:
         if not self.cache.has(snapshot_id):

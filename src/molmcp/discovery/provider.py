@@ -28,6 +28,7 @@ _RELATIONS = (
     "callees",
     "implementers",
     "subclasses",
+    "implementations",
     "references",
     "examples",
     "tests",
@@ -220,8 +221,8 @@ class DiscoveryProvider:
             Args:
                 qualname: Fully-qualified symbol name.
                 relation: One of ``callers``, ``callees``,
-                    ``implementers``, ``subclasses``, ``references``,
-                    ``examples``, ``tests``, ``impact``.
+                    ``implementers``, ``subclasses``, ``implementations``,
+                    ``references``, ``examples``, ``tests``, ``impact``.
                 source: Configured source; omit for the default.
                 depth: Hops for ``impact`` (1-4); ignored otherwise.
                 max_results: Max related nodes (1-100).
@@ -317,6 +318,7 @@ class DiscoveryProvider:
 _METHOD = {
     "callers": "callers",
     "callees": "callees",
+    "implementations": "implementations",
     "references": "references",
     "examples": "examples_of",
     "tests": "tests_of",

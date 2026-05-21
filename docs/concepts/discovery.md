@@ -88,6 +88,47 @@ Rust, and C++ are registered stubs that declare their file extensions
 and slot in behind the same interface — a new analyzer needs no schema,
 store, or tool changes.
 
+## Domain capability overlays
+
+molmcp core is domain-agnostic. Domain knowledge — "this codebase
+provides a *radial distribution function* capability" — is layered on
+top through an **overlay**, without core ever importing the domain
+package.
+
+An overlay implements the `CapabilityOverlay` protocol (`name`,
+`applies_to`, `contribute`). After resolution, the engine calls each
+overlay's `contribute(graph)` and merges the returned `capability`
+nodes and `provides_capability` edges into the graph — so every
+discovery tool then works on capabilities for free.
+
+The simplest overlay is a `CatalogOverlay` built from a domain-agnostic
+`capability_catalog.toml`:
+
+```toml
+[[capability]]
+id = "compute.rdf"
+title = "Radial distribution function"
+summary = "Compute g(r) between atom selections."
+implemented_by = ["molpy.compute.rdf.RDF"]   # qualnames -> graph nodes
+examples = ["examples/rdf_basic.py"]
+tags = ["analysis", "structure"]
+```
+
+Each `implemented_by` qualname is resolved against the code graph into a
+`provides_capability` edge; a qualname that does not resolve is kept
+visibly in `unresolved` rather than dropped.
+
+Overlays are discovered via the `molmcp.overlays` entry-point group,
+exactly like providers:
+
+```toml
+[project.entry-points."molmcp.overlays"]
+molpy = "molpy_overlay:MolpyOverlay"
+```
+
+Remove every overlay and the engine still works — it is just a
+domain-agnostic code-discovery engine.
+
 ## Using it without MCP
 
 ```python

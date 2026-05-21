@@ -101,6 +101,10 @@ class DiscoveryQuery:
     # "subclasses" is the same walk under a friendlier name.
     subclasses = implementers
 
+    def implementations(self, qualname: str, limit: int = 40) -> list[Node]:
+        """Symbols that implement a ``capability`` node."""
+        return self._outgoing(qualname, EdgeKind.PROVIDES_CAPABILITY, limit)
+
     def references(self, qualname: str, limit: int = 40) -> list[Node]:
         node = self.get_node(qualname)
         if node is None:
