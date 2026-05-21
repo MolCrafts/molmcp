@@ -1,6 +1,6 @@
 # Expose a MolCrafts package
 
-Walkthrough: take any MolCrafts package and expose its source via MCP.
+Walkthrough: take any MolCrafts package and index it for discovery via MCP.
 
 ## The minimal case
 
@@ -8,26 +8,44 @@ Walkthrough: take any MolCrafts package and expose its source via MCP.
 python -m molmcp
 ```
 
-That's enough — molmcp auto-detects every installed MolCrafts package and exposes them all through the seven introspection tools. Below we walk through what the agent actually sees, using `molpy` as the running example.
+That's enough — molmcp auto-detects every installed MolCrafts package and indexes them all for the six discovery tools. Below we walk through what the agent actually sees, using `molpy` as the running example.
 
-If you want a server scoped to one package only, narrow with `--import-root`:
+If you want a server scoped to one package only, narrow with `--source`:
 
 ```bash
-python -m molmcp --import-root molpy
+python -m molmcp --source pkg:molpy
 ```
 
-## The seven tools, by example
+A `--source` spec is a local path, `pkg:<name>` for an installed package, or `github:owner/repo[@ref]` for a GitHub repository.
 
-### `list_modules`
+## How indexing works
+
+The first time a source is queried, the discovery engine resolves the spec to an immutable **snapshot**, statically parses every file into a **code graph** — symbols, signatures, docstrings, calls, base classes, imports, examples, tests — and stores that graph as one SQLite database keyed on a content hash. Re-indexing is incremental: unchanged files skip the analyzer. See **[Discovery engine](../concepts/discovery.md)** for the full pipeline.
+
+You can index ahead of time, or just inspect a source, with the CLI:
+
+```bash
+molmcp discovery index pkg:molpy
+```
+
+## The six tools, by example
+
+### `molmcp_outline`
+
+The "where do I look" tool — call it first to see a source's structure.
 
 ```python
 from molmcp import create_server
 import asyncio
 
-server = create_server("molpy", import_roots=["molpy"], discover_entry_points=False)
+server = create_server(
+    "molpy",
+    discovery_sources=["pkg:molpy"],
+    discover_entry_points=False,
+)
 
 async def main():
-    result = await server.call_tool("list_modules", {})
+    result = await server.call_tool("molmcp_outline", {})
     print(result.content[0].text)
 
 asyncio.run(main())
@@ -36,124 +54,123 @@ asyncio.run(main())
 Output (excerpt):
 
 ```json
-[
-  "molpy",
-  "molpy.builder",
-  "molpy.compute",
-  "molpy.core",
-  "molpy.core.atomistic",
-  "molpy.core.frame",
-  "...",
-  "molpy.io.data.lammps",
-  "molpy.parser",
-  "molpy.typifier"
-]
+{
+  "modules": [
+    {
+      "kind": "module",
+      "qualname": "molpy.core.atomistic",
+      "file": "molpy/core/atomistic.py",
+      "symbols": [
+        {"kind": "class", "name": "Atom"},
+        {"kind": "class", "name": "Atomistic"},
+        {"kind": "class", "name": "Bond"}
+      ]
+    }
+  ],
+  "snapshot": {"snapshot_id": "...", "spec": "pkg:molpy", "freshness": "fresh"}
+}
 ```
 
-The whole package tree, walked once. With `prefix="molpy.core"`, only that subtree.
+The whole package mapped from packages/modules down to their symbols. With `path="molpy/core"`, only that subtree. Every response carries a `snapshot` block so the agent knows which revision it is looking at.
 
-### `list_symbols`
+### `molmcp_find_capability`
+
+The primary tool. Describe a task in natural language; get ranked symbol matches, each with signature, summary, usage examples, tests, and callers.
 
 ```python
-await server.call_tool("list_symbols", {"symbol": "molpy.core.atomistic"})
-# Pass a class instead of a module to discover instance methods, properties, etc.
-await server.call_tool("list_symbols", {"symbol": "molpy.core.atomistic.Atomistic"})
+await server.call_tool(
+    "molmcp_find_capability",
+    {"task": "compute a radial distribution function", "max_results": 8},
+)
 ```
 
 Output (excerpt):
 
 ```json
 {
-  "Atom": "Atom is an Entity with default fields.",
-  "Atomistic": "Struct subclass managing atoms, bonds, angles, dihedrals.",
-  "Bond": "Bond connecting two Atoms.",
-  ...
+  "query": "compute a radial distribution function",
+  "match_count": 1,
+  "matches": [
+    {
+      "rank": 1,
+      "node": {
+        "qualname": "molpy.compute.rdf.RDF",
+        "kind": "class",
+        "file": "molpy/compute/rdf.py",
+        "start_line": 12
+      },
+      "signature": "RDF(selection_a, selection_b, r_max, n_bins=200)",
+      "summary": "Radial distribution function between two atom selections.",
+      "examples": [{"file": "molpy/compute/rdf.py", "code": "..."}],
+      "tests": [{"qualname": "test_rdf.test_oo_rdf", "file": "tests/test_rdf.py"}],
+      "callers": []
+    }
+  ],
+  "snapshot": {"snapshot_id": "...", "spec": "pkg:molpy", "freshness": "fresh"}
 }
 ```
 
-Each value is the first line of the symbol's docstring (or its type name if there's no docstring). Useful as a hub-and-spoke navigation aid: ask `list_symbols` first, then `get_source` on the interesting one.
+This is how an agent resolves a capability from real, indexed code instead of guessing function or class names.
 
-### `get_source`
+### `molmcp_search_symbols`
 
-```python
-await server.call_tool("get_source", {"symbol": "molpy.core.atomistic.Atomistic"})
-```
-
-Returns the full source of the `Atomistic` class, including decorators, exactly as `inspect.getsource` would.
-
-`get_source` accepts dotted paths down to methods:
-
-- `"molpy"` — module
-- `"molpy.core.atomistic"` — submodule
-- `"molpy.core.atomistic.Atomistic"` — class
-- `"molpy.core.atomistic.Atomistic.def_atom"` — bound method
-
-### `get_docstring`
+Full-text search over indexed symbols by name, qualname, or summary.
 
 ```python
-await server.call_tool("get_docstring", {"symbol": "molpy.core.atomistic.Atomistic"})
+await server.call_tool(
+    "molmcp_search_symbols",
+    {"query": "reader", "kind": "class", "max_results": 30},
+)
 ```
 
-Returns the cleaned (dedented, stripped) docstring. If there is none: `"No docstring for: <symbol>"`.
+`kind` is an optional node-kind filter (`class`, `function`, `method`, `test`, …). Returns one brief per match — qualname, kind, file/line, one-line summary — useful as a hub-and-spoke navigation aid: search first, then `molmcp_describe_symbol` on the interesting one.
 
-### `get_signature`
+### `molmcp_describe_symbol`
+
+Full detail for a single symbol — pass a qualname taken from a prior search or outline result, never a guessed one.
 
 ```python
-await server.call_tool("get_signature", {"symbol": "molpy.parser.parse_molecule"})
+await server.call_tool(
+    "molmcp_describe_symbol",
+    {"qualname": "molpy.core.atomistic.Atomistic", "include_source": True},
+)
 ```
 
-Output (illustrative):
+Returns the symbol's kind, signature, cleaned docstring, file/line span, and — with `include_source=True` — its full source code, decorators included. The same call works for modules, classes, methods, and functions.
 
-```
-molpy.parser.parse_molecule(smiles: str, /, *, hydrogens: bool = True) -> molpy.core.atomistic.Atomistic
-```
+### `molmcp_relations`
 
-### `read_file`
+Walk the code graph from one symbol along a single relation.
 
 ```python
-await server.call_tool("read_file", {
-    "relative_path": "molpy/core/atomistic.py",
-    "start": 1,
-    "end": 50,
-})
+await server.call_tool(
+    "molmcp_relations",
+    {"qualname": "molpy.compute.rdf.RDF", "relation": "callers"},
+)
 ```
 
-Reads a slice of an actual source file. The path is resolved against each import root's parent directory, so `molpy/core/atomistic.py` works because `molpy` is one of the roots.
+`relation` is one of `callers`, `callees`, `implementers`, `subclasses`, `implementations`, `references`, `examples`, `tests`, `impact`. So "show me usage of `RDF`" is `relation="examples"`, "what tests it" is `relation="tests"`, and "what breaks if I change it" is `relation="impact"` (with a `depth` of 1–4 hops).
 
-`..` in the path is rejected. Files outside any import root are rejected. So is reading `/etc/passwd`.
+### `molmcp_refresh`
 
-### `search_source`
+Force a fresh re-index of a source. Indexing is otherwise lazy and automatic — local sources are always re-checked, GitHub sources are cache-first — so reach for this only to rebuild a graph on demand.
 
 ```python
-await server.call_tool("search_source", {
-    "query": "class Reacter",
-    "module_prefix": "molpy.reacter",
-    "max_results": 10,
-})
+await server.call_tool("molmcp_refresh", {})
 ```
-
-Output:
-
-```json
-[
-  {"file": "molpy/reacter/__init__.py", "line": "42", "text": "class Reacter:"}
-]
-```
-
-Case-insensitive substring match, with file/line/text dicts. Capped at 50 results regardless of `max_results`. Modified-time-based caching means repeat searches across a session are cheap.
 
 ## Multi-package setups
 
-The default already exposes every installed MolCrafts package — `list_modules()` returns the union; `get_source` works for any symbol in any root. Useful when an agent is doing comparative work across the ecosystem — e.g., wiring up a `molexp` experiment that calls into `molpack`.
+The default already indexes every installed MolCrafts package as a separate source. The agent passes a `source` argument on any tool to scope a query to one of them, or omits it to use the default. Useful when an agent is doing comparative work across the ecosystem — e.g., wiring up a `molexp` experiment that calls into `molpack`.
 
-Pass `--import-root` explicitly only when you need to *narrow* (one package) or *extend beyond MolCrafts* (e.g. add `rdkit` to the introspection set):
+Pass `--source` explicitly only when you need to *narrow* (one package), *extend* (a local checkout, another package), or index something outside the default set:
 
 ```bash
-python -m molmcp --import-root molpy --import-root rdkit
+python -m molmcp --source pkg:molpy --source /path/to/a/repo --source github:MolCrafts/molpack
 ```
 
-## When introspection isn't enough
+## When discovery isn't enough
 
-The seven tools tell the agent *what's in the source*. For domain capabilities — "build a polymer in molpy", "pack a box with molpack", "submit a job through molq" — the agent reads the source and runs the upstream API/CLI itself; that's the introspection-first loop molmcp is built around.
+The six tools tell the agent *what's in the source* — symbols, signatures, examples, relationships. For domain capabilities — "build a polymer in molpy", "pack a box with molpack", "submit a job through molq" — the agent discovers the API and runs the upstream API/CLI itself; that's the discovery-first loop molmcp is built around.
 
-A Provider only enters the picture when the question depends on local runtime state introspection genuinely cannot see — a jobs DB, a workspace catalog, an OS-level config. The two first-party providers (`MolqProvider`, `MolexpProvider`) are the canonical examples. Read **[Provider design](../concepts/provider-design.md)** for the four-condition rule, then **[Write a Provider](write-a-provider.md)** for the mechanics.
+A Provider only enters the picture when the question depends on local runtime state no static analysis can recover — a jobs DB, a workspace catalog, an OS-level config. The two first-party providers (`MolqProvider`, `MolexpProvider`) are the canonical examples. Read **[Provider design](../concepts/provider-design.md)** for the four-condition rule, then **[Write a Provider](write-a-provider.md)** for the mechanics.

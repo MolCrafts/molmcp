@@ -117,7 +117,7 @@ async def test_list_pack_targets(server, tmp_path):
     assert "[" in text  # JSON array of target dicts
 ```
 
-Run with `pytest tests/test_mcp.py -v`. molmcp's introspection tools are absent because we didn't pass `import_roots=["molpack"]` — only the Provider's tool is registered.
+Run with `pytest tests/test_mcp.py -v`. molmcp's discovery tools are absent because we didn't pass `discovery_sources=["pkg:molpack"]` — only the Provider's tool is registered.
 
 ## Step 6 — Use it from an MCP client
 
@@ -128,9 +128,9 @@ pip install molpack[mcp]
 python -m molmcp
 ```
 
-Auto-discovery finds the entry point, so `MolpackProvider` is registered. Because `molpack` is now an importable top-level package, it's also picked up by the default introspection roots. The agent now sees:
+Auto-discovery finds the entry point, so `MolpackProvider` is registered. Because `molpack` is now an importable top-level package, it's also picked up by the default discovery sources. The agent now sees:
 
-- The seven introspection tools (over every installed MolCrafts package, including `molpack`)
+- The six discovery tools (over every installed MolCrafts package, including `molpack`)
 - `list_pack_targets` from your Provider
 
 To wire into Claude Code:

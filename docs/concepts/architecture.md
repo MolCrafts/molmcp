@@ -73,7 +73,7 @@ The result would be: fragmented quality, inconsistent UX across packages, securi
 
 - A user runs **one** invocation pattern (`python -m molmcp ...`).
 - Security defaults are uniform across every MolCrafts package.
-- Multiple MolCrafts packages can be exposed via a single server with `mcp.mount(prefix=...)`. Agents see `molpy__list_modules` and `molpack__pack_box` side by side.
+- Multiple MolCrafts packages can be exposed via a single server with `mcp.mount(prefix=...)`. Agents see `molmcp_find_capability` and `molpack__pack_box` side by side.
 - Updating the underlying transport library is a one-line dep bump in molmcp, not a coordinated change across N packages.
 
 ## What molmcp deliberately does *not* do

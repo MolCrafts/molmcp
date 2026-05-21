@@ -6,7 +6,9 @@ The public Python API of molmcp. Everything listed here is exported from the top
 from molmcp import (
     create_server,
     Provider,
-    IntrospectionProvider,
+    DiscoveryProvider,
+    DiscoveryEngine,
+    DiscoveryConfig,
     discover_providers,
     ENTRY_POINT_GROUP,
     PathSafetyMiddleware,
@@ -25,7 +27,8 @@ from molmcp import (
 def create_server(
     name: str = "molmcp",
     *,
-    import_roots: Iterable[str] | None = None,
+    discovery_sources: Iterable[str] | None = None,
+    discovery_config: DiscoveryConfig | None = None,
     providers: Iterable[Provider] | None = None,
     discover_entry_points: bool = True,
     enable_path_safety: bool = True,
@@ -41,7 +44,8 @@ Build a fully configured `FastMCP` server.
 | Parameter | Description |
 |-----------|-------------|
 | `name` | Server name advertised to MCP clients. |
-| `import_roots` | Top-level package names whose source `IntrospectionProvider` may read. Empty/`None` disables it. |
+| `discovery_sources` | Source specs the discovery engine may index — local paths, `pkg:<name>` for installed packages, or `github:owner/repo[@ref]`. Empty/`None` disables discovery. |
+| `discovery_config` | Optional `DiscoveryConfig` for the engine (cache directory, limits, …). |
 | `providers` | Explicit `Provider` instances to register, in order. They run *after* auto-discovered Providers. |
 | `discover_entry_points` | If `True`, auto-discover Providers via the `molmcp.providers` entry point group. |
 | `enable_path_safety` | Mount `PathSafetyMiddleware`. |
@@ -62,18 +66,68 @@ class Provider(Protocol):
 
 Runtime-checkable Protocol. Any class with these two members satisfies it. See **[Providers](../concepts/providers.md)**.
 
-## `IntrospectionProvider`
+## `DiscoveryProvider`
 
 ```python
-class IntrospectionProvider:
-    name: str = "introspection"
-    def __init__(self, import_roots: list[str]): ...
+class DiscoveryProvider:
+    name: str = "discovery"
+    def __init__(
+        self,
+        sources: list[str] | None = None,
+        config: DiscoveryConfig | None = None,
+    ): ...
     def register(self, mcp: FastMCP) -> None: ...
 ```
 
-The single built-in Provider. Registers seven read-only tools — `list_modules`, `list_symbols`, `get_source`, `get_docstring`, `get_signature`, `read_file`, `search_source` — bound to `import_roots`. Empty list registers nothing.
+The built-in MCP interface to the discovery engine. Registers six
+read-only tools — `molmcp_find_capability`, `molmcp_search_symbols`,
+`molmcp_describe_symbol`, `molmcp_relations`, `molmcp_outline`,
+`molmcp_refresh` — over the given `sources`. Empty/`None` registers
+nothing. Every tool returns a plain dict carrying a `snapshot` freshness
+block (`snapshot_id`, `origin`, `spec`, `commit`, `file_count`,
+`freshness`).
 
-You usually don't instantiate this directly; `create_server(import_roots=[...])` does it for you.
+You usually don't instantiate this directly; `create_server(discovery_sources=[...])` does it for you.
+
+See **[Discovery engine](../concepts/discovery.md)** for the pipeline,
+graph schema, and tool semantics.
+
+## `DiscoveryEngine`
+
+```python
+class DiscoveryEngine:
+    def __init__(self, config: DiscoveryConfig | None = None): ...
+    def index(self, source: str, *, force: bool = False) -> IndexResult: ...
+    def query(self, source: str) -> DiscoveryQuery: ...
+    def refresh(self, source: str) -> IndexResult: ...
+    def get_graph(self, source: str) -> CodeGraph: ...
+```
+
+The MCP-free core of `molmcp.discovery`. It resolves a source spec to an
+immutable snapshot, statically indexes it into a SQLite code graph, and
+answers structured queries against it. Importable, scriptable, and
+testable without FastMCP:
+
+```python
+from molmcp.discovery import DiscoveryEngine
+
+engine = DiscoveryEngine()
+query = engine.query("pkg:molpy")
+for node in query.search("radial distribution function"):
+    print(node.qualname, node.file, node.start_line)
+```
+
+## `DiscoveryConfig`
+
+```python
+class DiscoveryConfig: ...
+```
+
+Configuration for the discovery engine — cache directory (defaults to
+`~/.cache/molmcp/discovery/`, overridable with `MOLMCP_CACHE_DIR`),
+snapshot retention limits, and local-source watching. Pass an instance
+to `create_server(discovery_config=...)`, `DiscoveryProvider(...)`, or
+`DiscoveryEngine(...)`.
 
 ## `discover_providers`
 

@@ -42,7 +42,7 @@ create_server(..., enable_path_safety=False)
 
 **What it does:** caps tool responses at a configurable byte limit (default 256 KB). Text content over the limit is truncated and a marker message appended; structured content over the limit is replaced with a placeholder.
 
-**Why:** an unbounded `read_file` or `search_source` call against a large MolCrafts package can dump megabytes of source into the LLM context, blowing past token windows and inflating costs. The truncation marker tells the LLM *and* the user what happened so they can re-call with narrower arguments.
+**Why:** an unbounded `molmcp_describe_symbol` (with `include_source`) or `molmcp_outline` call against a large MolCrafts package can dump megabytes of source into the LLM context, blowing past token windows and inflating costs. The truncation marker tells the LLM *and* the user what happened so they can re-call with narrower arguments.
 
 **Configure:**
 
@@ -91,7 +91,7 @@ After `create_server(...)`, you can add any additional middleware your MolCrafts
 ```python
 from molmcp import create_server
 
-server = create_server("molpy", import_roots=["molpy"])
+server = create_server("molpy", discovery_sources=["pkg:molpy"])
 server.add_middleware(MyCustomMiddleware())
 server.run()
 ```

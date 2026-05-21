@@ -115,10 +115,10 @@ introspection cannot answer:
 | `MolqProvider` | `molq` | Reads `~/.molq/jobs.db` runtime state. |
 | `MolexpProvider` | `molexp` | Reads a workspace catalog rooted at `workspace.json`. |
 
-For everything else (`molpy`, `molpack`, `molrs`) the agent uses
-`IntrospectionProvider`, which auto-detects the installed MolCrafts
-packages — see [provider-design.md](provider-design.md) for the
-philosophy.
+For everything else (`molpy`, `molpack`, `molrs`) the agent uses the
+built-in `DiscoveryProvider`, which indexes the installed MolCrafts
+packages into a code graph — see [provider-design.md](provider-design.md)
+for the philosophy and [discovery.md](discovery.md) for the engine.
 
 Third parties writing their own MCP plugins should still use the
 `molmcp.providers` entry-point group; the same four-condition rule

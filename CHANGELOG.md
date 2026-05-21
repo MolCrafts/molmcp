@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Graph-based discovery engine** (`molmcp.discovery`) — a
+  multi-language, snapshot-cached codebase capability discovery engine
+  that replaces runtime introspection. A two-phase extract→resolve
+  pipeline turns source into a shared code graph (nodes, edges,
+  examples, tests) stored as one SQLite database per source snapshot.
+- Six read-only MCP tools — `molmcp_find_capability`,
+  `molmcp_search_symbols`, `molmcp_describe_symbol`, `molmcp_relations`,
+  `molmcp_outline`, `molmcp_refresh` — registered by `DiscoveryProvider`.
+  Every response carries a `snapshot`/`freshness` block.
+- Source specs: local paths, `pkg:<name>` for installed packages, and
+  `github:owner/repo[@ref]` (downloaded at a resolved commit SHA).
+- A `LanguageAnalyzer` abstraction with a deep stdlib-`ast` Python
+  analyzer; TypeScript/Rust/C++ are registered stubs behind the same
+  interface.
+- Incremental re-indexing via a content-addressed `ExtractCache`,
+  freshness tracking, snapshot-cache eviction, and an optional polling
+  `LocalWatcher`.
+- Domain capability overlays — a `CapabilityOverlay` protocol, a
+  `capability_catalog.toml` format, and the `molmcp.overlays`
+  entry-point group — so domain knowledge (e.g. MolPy capabilities)
+  layers on without molmcp core importing the domain package.
+- `molmcp discovery` CLI subcommands (`index`, `query`, `outline`,
+  `dump`, `clean`).
+
+### Changed
+
+- **Breaking:** the runtime-introspection package and its seven tools
+  (`list_modules`, `list_symbols`, `get_source`, `get_docstring`,
+  `get_signature`, `read_file`, `search_source`) are removed and
+  replaced by the discovery engine. `create_server` now takes
+  `discovery_sources` / `discovery_config` instead of `import_roots`;
+  the CLI takes `--source` instead of `--import-root`.
+
 ## [0.2.1] — 2026-05-11
 
 ### Added
