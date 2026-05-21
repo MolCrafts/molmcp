@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from .cache import SnapshotCache
 from .config import DiscoveryConfig
 from .extract import Extractor
+from .query import DiscoveryQuery
+from .resolve import Resolver
 from .schema import SCHEMA_VERSION, CodeGraph
 from .source import Snapshot, SourceResolver
 from .store import GraphStore
@@ -65,12 +67,19 @@ class DiscoveryEngine:
             graph = self.load_graph(snapshot.snapshot_id)
             return IndexResult(snapshot=snapshot, graph=graph, cached=True)
         graph = self.extractor.extract(snapshot)
+        graph = Resolver().resolve(graph)
         self._persist(snapshot, graph)
         return IndexResult(snapshot=snapshot, graph=graph, cached=False)
 
     def get_graph(self, spec: str) -> CodeGraph:
         """Index ``spec`` if needed and return its graph."""
         return self.index(spec).graph
+
+    def query(self, spec: str, *, force: bool = False) -> DiscoveryQuery:
+        """Index ``spec`` if needed and return a query handle over it."""
+        result = self.index(spec, force=force)
+        store = GraphStore(self.cache.graph_db_path(result.snapshot.snapshot_id))
+        return DiscoveryQuery(store, snapshot=result.snapshot)
 
     def load_graph(self, snapshot_id: str) -> CodeGraph:
         """Load a previously indexed snapshot's graph from cache."""

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .config import DiscoveryConfig
 from .engine import DiscoveryEngine, IndexResult
+from .query import DiscoveryQuery
 from .schema import (
     SCHEMA_VERSION,
     CodeGraph,
@@ -26,6 +27,7 @@ __all__ = [
     "CodeGraph",
     "DiscoveryConfig",
     "DiscoveryEngine",
+    "DiscoveryQuery",
     "Edge",
     "EdgeKind",
     "FileRecord",

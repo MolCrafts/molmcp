@@ -108,6 +108,18 @@ def _visibility(name: str) -> str:
     return Visibility.PRIVATE if name.startswith("_") else Visibility.PUBLIC
 
 
+def _is_test_file(path: str) -> bool:
+    """True when a path looks like a pytest/unittest test file."""
+    p = path.replace("\\", "/")
+    base = p.rsplit("/", 1)[-1]
+    if base == "conftest.py":
+        return True
+    if base.startswith("test_") or base.endswith("_test.py"):
+        return True
+    segments = p.split("/")
+    return "tests" in segments or "test" in segments
+
+
 class _Builder:
     """Accumulates one file's nodes/edges/unresolved refs."""
 
@@ -273,7 +285,9 @@ class PythonAnalyzer:
             d.split(".")[-1] in {"property", "cached_property"}
             for d in decorators
         )
-        if in_class:
+        if stmt.name.startswith("test_") and _is_test_file(b.file):
+            kind = NodeKind.TEST
+        elif in_class:
             kind = NodeKind.PROPERTY if is_property else NodeKind.METHOD
         else:
             kind = NodeKind.FUNCTION

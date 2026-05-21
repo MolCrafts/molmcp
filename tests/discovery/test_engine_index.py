@@ -92,8 +92,16 @@ def test_typescript_file_recorded_without_nodes(tmp_path):
     assert any(n.language == "python" for n in result.graph.nodes)
 
 
-def test_index_records_unresolved_calls(tmp_path):
+def test_index_resolves_internal_calls(tmp_path):
     engine = _engine(tmp_path)
     result = engine.index(str(_repo(tmp_path)))
-    call_names = {r.name for r in result.graph.unresolved if r.kind == "calls"}
-    assert "add" in call_names
+    add = next(n for n in result.graph.nodes if n.qualname == "calc.add")
+    run = next(
+        n for n in result.graph.nodes if n.qualname == "calc.Calc.run"
+    )
+    calls = {
+        (e.source, e.target)
+        for e in result.graph.edges
+        if e.kind == "calls"
+    }
+    assert (run.id, add.id) in calls

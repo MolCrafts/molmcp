@@ -2,13 +2,16 @@
 
 Snapshots are immutable, so a ``graph.db`` is written exactly once by
 :meth:`create` and thereafter only read. That removes any need for
-update triggers or row-level sync.
+update triggers or row-level sync. A derived FTS5 table is built at
+create time when the SQLite build supports it; otherwise search falls
+back to ``LIKE`` over indexed columns.
 """
 
 from __future__ import annotations
 
 import importlib.resources
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -27,11 +30,40 @@ def _dumps(value: object) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _fts_match(text: str) -> str:
+    """Build a forgiving FTS5 prefix query from free text."""
+    tokens = re.findall(r"[A-Za-z0-9_]+", text)
+    terms = [f"{t}*" for t in tokens if len(t) >= 2]
+    return " OR ".join(terms)
+
+
+def _build_fts(conn: sqlite3.Connection) -> bool:
+    """Create and populate the derived FTS index; False if FTS5 absent."""
+    try:
+        conn.execute(
+            "CREATE VIRTUAL TABLE nodes_fts USING fts5("
+            "node_id UNINDEXED, name, qualname, docstring, summary, "
+            "tokenize='unicode61')"
+        )
+    except sqlite3.OperationalError:
+        return False
+    conn.execute(
+        "INSERT INTO nodes_fts(node_id, name, qualname, docstring, summary) "
+        "SELECT id, name, qualname, IFNULL(docstring, ''), IFNULL(summary, '') "
+        "FROM nodes"
+    )
+    return True
+
+
 class GraphStore:
     """Read/write access to a single snapshot's ``graph.db``."""
 
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
+        self._read_conn: sqlite3.Connection | None = None
+        self._fts: bool | None = None
+
+    # -- connections -------------------------------------------------
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -42,8 +74,22 @@ class GraphStore:
         finally:
             conn.close()
 
+    def _conn(self) -> sqlite3.Connection:
+        if self._read_conn is None:
+            conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            self._read_conn = conn
+        return self._read_conn
+
+    def close(self) -> None:
+        if self._read_conn is not None:
+            self._read_conn.close()
+            self._read_conn = None
+
     def exists(self) -> bool:
         return self.db_path.is_file()
+
+    # -- creation ----------------------------------------------------
 
     def create(self, graph: CodeGraph, meta: dict) -> None:
         """Write ``graph`` to a fresh database, replacing any existing one."""
@@ -53,14 +99,15 @@ class GraphStore:
         with self.connect() as conn:
             conn.executescript(_SCHEMA_SQL)
             conn.execute("PRAGMA journal_mode=WAL")
-            self._insert_meta(conn, meta)
             self._insert_files(conn, graph.files)
             self._insert_nodes(conn, graph.nodes)
             self._insert_edges(conn, graph.edges)
             self._insert_unresolved(conn, graph.unresolved)
+            fts_available = _build_fts(conn)
+            full_meta = dict(meta)
+            full_meta["fts_available"] = fts_available
+            self._insert_meta(conn, full_meta)
             conn.commit()
-
-    # -- writers -----------------------------------------------------
 
     @staticmethod
     def _insert_meta(conn: sqlite3.Connection, meta: dict) -> None:
@@ -151,40 +198,138 @@ class GraphStore:
             [(r.from_node, r.name, str(r.kind), r.file, r.line) for r in refs],
         )
 
-    # -- readers -----------------------------------------------------
+    # -- whole-graph reads -------------------------------------------
 
     def read_meta(self) -> dict:
-        with self.connect() as conn:
-            rows = conn.execute("SELECT key, value FROM meta").fetchall()
         out: dict = {}
-        for row in rows:
+        for row in self._conn().execute("SELECT key, value FROM meta"):
             try:
                 out[row["key"]] = json.loads(row["value"])
             except (json.JSONDecodeError, TypeError):
                 out[row["key"]] = row["value"]
         return out
 
+    def fts_available(self) -> bool:
+        if self._fts is None:
+            self._fts = bool(self.read_meta().get("fts_available", False))
+        return self._fts
+
     def load_graph(self) -> CodeGraph:
-        with self.connect() as conn:
-            files = [
+        conn = self._conn()
+        return CodeGraph(
+            files=[
                 _row_to_file(r)
                 for r in conn.execute("SELECT * FROM files ORDER BY path")
-            ]
-            nodes = [
+            ],
+            nodes=[
                 _row_to_node(r)
                 for r in conn.execute("SELECT * FROM nodes ORDER BY id")
-            ]
-            edges = [
+            ],
+            edges=[
                 _row_to_edge(r)
                 for r in conn.execute("SELECT * FROM edges ORDER BY id")
-            ]
-            unresolved = [
+            ],
+            unresolved=[
                 _row_to_unresolved(r)
                 for r in conn.execute("SELECT * FROM unresolved ORDER BY id")
-            ]
-        return CodeGraph(
-            nodes=nodes, edges=edges, files=files, unresolved=unresolved
+            ],
         )
+
+    # -- targeted reads ----------------------------------------------
+
+    def get_node(self, node_id: str) -> Node | None:
+        row = self._conn().execute(
+            "SELECT * FROM nodes WHERE id = ?", (node_id,)
+        ).fetchone()
+        return _row_to_node(row) if row else None
+
+    def nodes_by_qualname(self, qualname: str) -> list[Node]:
+        return [
+            _row_to_node(r)
+            for r in self._conn().execute(
+                "SELECT * FROM nodes WHERE qualname = ? ORDER BY id",
+                (qualname,),
+            )
+        ]
+
+    def nodes_by_kind(self, kind: str, limit: int | None = None) -> list[Node]:
+        sql = "SELECT * FROM nodes WHERE kind = ? ORDER BY qualname"
+        params: tuple = (str(kind),)
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (str(kind), limit)
+        return [_row_to_node(r) for r in self._conn().execute(sql, params)]
+
+    def files(self) -> list[FileRecord]:
+        return [
+            _row_to_file(r)
+            for r in self._conn().execute("SELECT * FROM files ORDER BY path")
+        ]
+
+    def edges_from(self, node_id: str, kind: str | None = None) -> list[Edge]:
+        if kind is None:
+            sql = "SELECT * FROM edges WHERE source = ? ORDER BY id"
+            params: tuple = (node_id,)
+        else:
+            sql = "SELECT * FROM edges WHERE source = ? AND kind = ? ORDER BY id"
+            params = (node_id, str(kind))
+        return [_row_to_edge(r) for r in self._conn().execute(sql, params)]
+
+    def edges_to(self, node_id: str, kind: str | None = None) -> list[Edge]:
+        if kind is None:
+            sql = "SELECT * FROM edges WHERE target = ? ORDER BY id"
+            params: tuple = (node_id,)
+        else:
+            sql = "SELECT * FROM edges WHERE target = ? AND kind = ? ORDER BY id"
+            params = (node_id, str(kind))
+        return [_row_to_edge(r) for r in self._conn().execute(sql, params)]
+
+    def search(
+        self, query: str, kind: str | None = None, limit: int = 30
+    ) -> list[Node]:
+        """Rank symbols by relevance to free-text ``query``.
+
+        Uses the FTS5 index when available, else a ``LIKE`` scan. Results
+        are de-duplicated and capped at ``limit``.
+        """
+        conn = self._conn()
+        fetch = max(limit * 4, 40)
+        ids: list[str] = []
+        if self.fts_available():
+            match = _fts_match(query)
+            if match:
+                try:
+                    ids = [
+                        r["node_id"]
+                        for r in conn.execute(
+                            "SELECT node_id FROM nodes_fts WHERE nodes_fts "
+                            "MATCH ? ORDER BY rank LIMIT ?",
+                            (match, fetch),
+                        )
+                    ]
+                except sqlite3.OperationalError:
+                    ids = []
+        if not ids:
+            like = f"%{query}%"
+            ids = [
+                r["id"]
+                for r in conn.execute(
+                    "SELECT id FROM nodes WHERE name LIKE ? OR qualname LIKE ? "
+                    "OR IFNULL(summary, '') LIKE ? ORDER BY qualname LIMIT ?",
+                    (like, like, like, fetch),
+                )
+            ]
+        out: list[Node] = []
+        for node_id in ids:
+            node = self.get_node(node_id)
+            if node is None:
+                continue
+            if kind is not None and node.kind != kind:
+                continue
+            out.append(node)
+            if len(out) >= limit:
+                break
+        return out
 
 
 def _row_to_node(row: sqlite3.Row) -> Node:
