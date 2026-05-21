@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 from fastmcp import FastMCP
 
-from .introspection import IntrospectionProvider
+from .discovery.provider import DiscoveryProvider
 from .middleware import (
     MissingAnnotationsError,
     PathSafetyMiddleware,
@@ -16,13 +16,17 @@ from .middleware import (
 )
 from .provider import Provider, discover_providers
 
+if TYPE_CHECKING:
+    from .discovery import DiscoveryConfig
+
 logger = logging.getLogger(__name__)
 
 
 def create_server(
     name: str = "molmcp",
     *,
-    import_roots: Iterable[str] | None = None,
+    discovery_sources: Iterable[str] | None = None,
+    discovery_config: "DiscoveryConfig | None" = None,
     providers: Iterable[Provider] | None = None,
     discover_entry_points: bool = True,
     enable_path_safety: bool = True,
@@ -35,10 +39,13 @@ def create_server(
 
     Args:
         name: Server name advertised to MCP clients.
-        import_roots: Top-level package names whose source the built-in
-            :class:`IntrospectionProvider` may read. Empty/None disables it.
-        providers: Explicit Provider instances to register, in order. They
-            run after auto-discovered providers.
+        discovery_sources: Source specs the discovery engine may index —
+            local paths, ``pkg:<name>`` for installed packages, or
+            ``github:owner/repo[@ref]``. Empty/None disables discovery.
+        discovery_config: Optional :class:`DiscoveryConfig` for the
+            engine (cache directory, limits, ...).
+        providers: Explicit Provider instances to register, in order.
+            They run after auto-discovered providers.
         discover_entry_points: If True, auto-discover providers via the
             ``molmcp.providers`` entry point group.
         enable_path_safety: Mount :class:`PathSafetyMiddleware`.
@@ -52,10 +59,12 @@ def create_server(
     Returns:
         Ready-to-run :class:`fastmcp.FastMCP` instance.
     """
+    sources = list(discovery_sources) if discovery_sources else []
+
     mcp = FastMCP(
         name,
         instructions=instructions
-        or _default_instructions(import_roots, providers, discover_entry_points),
+        or _default_instructions(sources, providers, discover_entry_points),
     )
 
     if enable_path_safety:
@@ -63,9 +72,8 @@ def create_server(
     if enable_response_limit:
         mcp.add_middleware(ResponseLimitMiddleware(max_bytes=response_limit_bytes))
 
-    roots = list(import_roots) if import_roots else []
-    if roots:
-        IntrospectionProvider(roots).register(mcp)
+    if sources:
+        DiscoveryProvider(sources, discovery_config).register(mcp)
 
     auto: list[Provider] = list(discover_providers()) if discover_entry_points else []
     explicit: list[Provider] = list(providers) if providers else []
@@ -97,20 +105,21 @@ def create_server(
 
 
 def _default_instructions(
-    import_roots: Iterable[str] | None,
+    sources: list[str],
     providers: Iterable[Provider] | None,
     discover: bool,
 ) -> str:
     parts = ["molmcp server."]
-    if import_roots:
+    if sources:
         parts.append(
-            "Source-introspection tools available for: "
-            + ", ".join(import_roots)
-            + "."
+            "Graph-indexed discovery sources: " + ", ".join(sources) + "."
+        )
+        parts.append(
+            "Use molmcp_outline to see structure, molmcp_find_capability to "
+            "discover capabilities, then molmcp_search_symbols / "
+            "molmcp_describe_symbol / molmcp_relations to drill in. Resolve "
+            "every name from a prior tool result — never guess."
         )
     if providers or discover:
         parts.append("Domain tools provided by registered providers.")
-    parts.append(
-        "Use list_modules / list_symbols / get_source to discover the API."
-    )
     return " ".join(parts)

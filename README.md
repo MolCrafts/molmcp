@@ -16,8 +16,6 @@
   &middot;
   <a href="https://molcrafts.github.io/molmcp/get-started/quickstart/"><strong>Quickstart</strong></a>
   &middot;
-  <a href="https://molcrafts.github.io/molmcp/concepts/provider-design/"><strong>Provider design</strong></a>
-  &middot;
   <a href="https://github.com/MolCrafts/molmcp/issues"><strong>Issues</strong></a>
 </p>
 
@@ -25,39 +23,42 @@
 
 ## Why molmcp
 
-The MolCrafts ecosystem ships many packages — `molpy`, `molcfg`, `molexp`, `molpack`, `mollog`, `molq`, `molrec`, `molvis` — and each of them benefits from being callable by an LLM agent. Without coordination, every package would have to author its own MCP server, redo the same source-introspection plumbing, redo the same security defaults, redo the same plugin wiring. molmcp is the layer that the MolCrafts packages share so they don't have to.
+The MolCrafts ecosystem ships many packages — `molpy`, `molcfg`, `molexp`, `molpack`, `mollog`, `molq`, `molrec`, `molvis` — and each of them benefits from being callable by an LLM agent. The hard part is **discovery**: an agent needs to find out what a codebase actually provides instead of guessing function, class, or tool names.
+
+molmcp solves this with a **graph-based codebase capability discovery engine**. It statically indexes a repository into a code graph — symbols, signatures, docstrings, relationships, examples, and tests — and exposes that graph to agents over the Model Context Protocol.
 
 It does two things:
 
-1. Exposes seven read-only **source-introspection tools** for any MolCrafts package, so an agent can ask "what does `molpy.core.atomistic` contain?" and get an exact answer from the live source.
-2. Defines a **Provider** plugin contract for the narrow class of capabilities introspection cannot answer — stateful queries against local runtime state (a jobs DB, a workspace catalog) — under a single coordinated MCP server with shared security defaults.
+1. Runs a **discovery engine** that indexes any codebase (a local path, an installed package, or — soon — a GitHub repository) into a snapshot-cached code graph, and answers structured queries against it.
+2. Defines a **Provider** plugin contract for the narrow class of capabilities discovery cannot answer — stateful queries against local runtime state (a jobs DB, a workspace catalog) — under a single coordinated MCP server with shared security defaults.
 
-molmcp itself imports nothing from the MolCrafts packages. That's the point — it's pure infrastructure, and any MolCrafts package can adopt it without dragging in the others.
+molmcp core imports nothing from the MolCrafts packages. That's the point — it's pure infrastructure, and any codebase can be indexed without molmcp depending on it.
 
-## Design contract: introspection-first
+## Discovery, not guessing
 
-molmcp is **not** a tool-registration mirror of upstream packages. The primary
-mechanism for an agent to use a MolCrafts package is introspection: read the
-source via `IntrospectionProvider`, then call the API from a Python snippet or
-the package's CLI. A Provider earns a slot only when **all four** conditions
-hold: stable signature, read-only/idempotent, every-session frequency,
-single-shot answer — *and* the answer depends on runtime state introspection
-cannot see. Everything else is a 3-line introspection script.
+The discovery engine is built so an agent **resolves capabilities from indexed code structure** rather than guessing names:
 
-See [`docs/concepts/provider-design.md`](docs/concepts/provider-design.md) for
-the full rule and the list of capabilities that were deliberately *not*
-shipped.
+- It parses source with a per-language analyzer (Python today on the stdlib `ast` module; TypeScript, Rust, and C++ slot in behind the same `LanguageAnalyzer` interface) into a shared graph of nodes and edges.
+- A two-phase pipeline — extraction then resolution — links calls, base classes, imports, tests, and docstring examples into a connected graph.
+- The graph is stored as one SQLite database per **source snapshot**, keyed on a content hash (local) or commit SHA (GitHub) — never a branch name — so cached results are always tied to exact source.
+- Every tool response carries a `snapshot` block, so an agent always knows which revision it is looking at.
 
-## Features
+## Discovery tools
 
-- **Seven introspection tools** — `list_modules`, `list_symbols`, `get_source`, `get_docstring`, `get_signature`, `read_file`, `search_source` — pointed at any MolCrafts import root.
-- **Two first-party providers** for stateful queries:
-  - `MolqProvider` — `molq_list_jobs` (reads `~/.molq/jobs.db`).
-  - `MolexpProvider` — `molexp_list_projects`, `molexp_list_runs` (reads a `workspace.json` catalog).
-- **Provider plugin contract** — third-party MolCrafts packages contribute their own stateful-query tools via a `Provider` class plus an entry point. Auto-discovered, namespaced, version-able.
-- **Security middleware** that's on by default — path-traversal guard, response-size cap (256 KB), and a startup-time check that refuses to serve any tool missing a `readOnlyHint`/`destructiveHint` annotation.
-- **`run_safe` helper** — for Provider authors who shell out to external CLIs (Packmol, LAMMPS, AmberTools): forced list args, no `shell=True`, mandatory timeout.
-- **Three transports** — `stdio`, `streamable-http`, `sse`.
+When discovery sources are configured, molmcp exposes six composable, graph-backed tools (all read-only):
+
+| Tool | Purpose |
+|---|---|
+| `molmcp_find_capability` | Primary tool — describe a task, get ranked symbol matches with signatures, examples, tests, and callers. |
+| `molmcp_search_symbols` | Search indexed symbols by name, qualname, or summary. |
+| `molmcp_describe_symbol` | Full detail for one symbol, optionally with source code. |
+| `molmcp_relations` | Walk the graph from a symbol: callers, callees, implementers, subclasses, references, examples, tests, impact. |
+| `molmcp_outline` | Map a source's packages/modules to their symbols — the "where do I look" tool. |
+| `molmcp_refresh` | Force a fresh re-index of a source. |
+
+## Provider plugin contract
+
+Discovery answers most questions. For the rest — queries that depend on local runtime state no static analysis can recover — molmcp defines a **Provider** plugin contract. A Provider earns a tool slot only when **all four** conditions hold: stable signature, read-only/idempotent, every-session frequency, single-shot answer. See [`docs/concepts/provider-design.md`](docs/concepts/provider-design.md).
 
 ## Install
 
@@ -65,20 +66,21 @@ shipped.
 pip install molcrafts-molmcp
 ```
 
-Requires Python ≥ 3.12. The PyPI distribution is `molcrafts-molmcp`; the import name is `molmcp`.
+Requires Python ≥ 3.12. The PyPI distribution is `molcrafts-molmcp`; the import name is `molmcp`. The discovery engine adds no required runtime dependency — it uses the standard library.
 
 ## 60-second quickstart
 
-Expose the installed MolCrafts packages as a set of MCP introspection tools:
+Start an MCP server that indexes the installed MolCrafts packages:
 
 ```bash
 python -m molmcp
 ```
 
-molmcp auto-detects whichever of `{molpy, molpack, molrs, molq, molexp}` are
-importable in the active environment and registers introspection over them.
-Auto-discovered providers (`MolqProvider`, `MolexpProvider`, plus any
-third-party entry point) load on top.
+molmcp auto-detects whichever of `{molpy, molpack, molrs, molq, molexp}` are importable and registers discovery over them. Point it anywhere with `--source`:
+
+```bash
+python -m molmcp --source pkg:molpy --source /path/to/a/repo
+```
 
 Wire it into Claude Code:
 
@@ -86,21 +88,56 @@ Wire it into Claude Code:
 claude mcp add molcrafts -- python -m molmcp
 ```
 
-The agent now has `mcp__molmcp__list_modules`, `mcp__molmcp__get_source`,
-plus `molq_list_jobs` / `molexp_list_projects` etc. for whichever first-party
-providers register successfully against the user's environment.
+Inspect the engine without an MCP client:
 
-## Adding domain tools (for MolCrafts packages)
+```bash
+molmcp discovery index pkg:molpy
+molmcp discovery outline pkg:molpy
+molmcp discovery query pkg:molpy "radial distribution function"
+```
 
-Before adding a tool, check it against the four-condition rule in
-[`docs/concepts/provider-design.md`](docs/concepts/provider-design.md). Most
-ideas don't pass — and if introspection plus a 3-line script can answer the
-question, that's the right answer.
+## Source specs
 
-If a tool *does* earn a slot:
+A discovery source is one of:
+
+- `path/to/repo` — a local directory.
+- `pkg:<name>` — an installed Python package (resolved by import name).
+- `github:owner/repo[@ref]` — a GitHub repository *(planned)*.
+
+## Architecture
+
+```
+                ┌────────────────────────────────────┐
+                │  MCP clients                       │
+                │  (Claude Code, Claude Desktop, …)  │
+                └──────────────┬─────────────────────┘
+                               │   stdio / http / sse
+                               ▼
+                ┌────────────────────────────────────┐
+                │  molmcp                            │
+                │  • DiscoveryProvider (molmcp_* )   │
+                │  • Discovery engine core           │
+                │      source → snapshot → extract   │
+                │      → resolve → SQLite graph      │
+                │  • Provider contract + discovery   │
+                │  • PathSafety / ResponseLimit      │
+                │  • Annotations validator           │
+                └──────────────┬─────────────────────┘
+                               │
+            ┌──────────────────┼──────────────────────┐
+            ▼                  ▼                      ▼
+      MolqProvider      MolexpProvider     third-party providers
+      (jobs.db)         (workspace.json     (entry-point group
+                         catalog)            molmcp.providers)
+```
+
+The discovery engine core (`molmcp.discovery`) is MCP-free — it can be imported, scripted, and tested without FastMCP. Only `molmcp.discovery.provider` touches MCP.
+
+## Adding domain tools
+
+Before adding a Provider tool, check it against the four-condition rule in [`docs/concepts/provider-design.md`](docs/concepts/provider-design.md). If a tool earns a slot:
 
 ```python
-# in a sibling package, e.g. src/molpack_mcp/__init__.py
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
@@ -124,56 +161,9 @@ molpack = "molpack_mcp:MolpackProvider"
 
 `python -m molmcp` discovers it automatically.
 
-## Architecture
-
-```
-                ┌────────────────────────────────────┐
-                │  MCP clients                       │
-                │  (Claude Code, Claude Desktop, …)  │
-                └──────────────┬─────────────────────┘
-                               │   stdio / http / sse
-                               ▼
-                ┌────────────────────────────────────┐
-                │  molmcp                            │
-                │  • IntrospectionProvider           │
-                │  • Provider contract + discovery   │
-                │  • PathSafety / ResponseLimit      │
-                │  • Annotations validator           │
-                │  • run_safe / fence_untrusted      │
-                └──────────────┬─────────────────────┘
-                               │
-            ┌──────────────────┼──────────────────────┐
-            ▼                  ▼                      ▼
-      MolqProvider      MolexpProvider     third-party providers
-      (jobs.db)         (workspace.json     (entry-point group
-                         catalog)            molmcp.providers)
-```
-
-molmcp itself is a single Python package — no MolCrafts package depends on any
-other through it. First-party providers ship in-tree and are entry-point
-discovered like any third-party Provider.
-
-## Documentation
-
-Full documentation lives at **[molcrafts.github.io/molmcp](https://molcrafts.github.io/molmcp/)**:
-
-- [Installation & quickstart](https://molcrafts.github.io/molmcp/get-started/installation/)
-- [Architecture](https://molcrafts.github.io/molmcp/concepts/architecture/)
-- [Provider design contract](https://molcrafts.github.io/molmcp/concepts/provider-design/)
-- [Writing a Provider](https://molcrafts.github.io/molmcp/guides/write-a-provider/)
-- [Security model](https://molcrafts.github.io/molmcp/guides/security/)
-- [CLI reference](https://molcrafts.github.io/molmcp/reference/cli/)
-
-To preview the docs locally:
-
-```bash
-pip install "molcrafts-molmcp[docs]"
-zensical serve
-```
-
 ## Status
 
-Alpha. The Provider contract and middleware surface may shift before 1.0. Pin to `molcrafts-molmcp >= 0.2, < 0.3`.
+Alpha. The discovery engine and Provider contract may shift before 1.0. Pin to `molcrafts-molmcp >= 0.2, < 0.3`.
 
 ## Contributing
 
@@ -183,14 +173,6 @@ cd molmcp
 pip install -e ".[dev]"
 pytest
 ```
-
-## Releasing
-
-1. Bump `version` in `pyproject.toml` and `__version__` in `src/molmcp/__init__.py`.
-2. Update `CHANGELOG.md`.
-3. `git tag v<X.Y.Z> && git push origin v<X.Y.Z>`.
-
-The tag push fires `release.yml`, which builds and publishes to PyPI via [Trusted Publisher](https://docs.pypi.org/trusted-publishers/) OIDC.
 
 ## License
 

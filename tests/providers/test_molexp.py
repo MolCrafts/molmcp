@@ -70,7 +70,7 @@ def _build_server(workspace):
         name="molexp-test",
         providers=[MolexpProvider(workspace)],
         discover_entry_points=False,
-        import_roots=None,
+        discovery_sources=None,
     )
 
 
