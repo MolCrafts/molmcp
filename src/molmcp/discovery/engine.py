@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.metadata
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .cache import ExtractCache, FreshnessTracker, SnapshotCache
 from .cache.freshness import ChangeSet
@@ -34,6 +35,7 @@ class IndexResult:
     snapshot: Snapshot
     graph: CodeGraph
     cached: bool
+    freshness: str = "fresh"
     extract_stats: dict = field(default_factory=dict)
     changes: ChangeSet | None = None
 
@@ -67,7 +69,21 @@ class DiscoveryEngine:
         return self.resolver.resolve(spec)
 
     def index(self, spec: str, *, force: bool = False) -> IndexResult:
-        """Index ``spec``, reusing a cached snapshot when possible."""
+        """Index ``spec``, reusing a cached snapshot when possible.
+
+        GitHub sources are cache-first: an already-indexed commit is
+        served without any network call (avoiding rate limits). Call
+        :meth:`refresh` to pull a newer commit.
+        """
+        spec = spec.strip()
+        if not force and spec.startswith("github:"):
+            cached = self._cached_github_snapshot(spec)
+            if cached is not None:
+                graph = self.load_graph(cached.snapshot_id)
+                return IndexResult(
+                    snapshot=cached, graph=graph, cached=True,
+                    freshness="unknown",
+                )
         snapshot = self.resolver.resolve(spec)
         if not force and self._cache_is_valid(snapshot.snapshot_id):
             graph = self.load_graph(snapshot.snapshot_id)
@@ -80,6 +96,35 @@ class DiscoveryEngine:
             cached=False,
             extract_stats=dict(self.extractor.stats),
         )
+
+    def check_freshness(self, spec: str) -> str:
+        """Report whether a cached source has drifted from its origin.
+
+        Returns ``fresh``, ``stale``, or ``unknown``. Local sources are
+        re-resolved on every query, so they report ``fresh``.
+        """
+        spec = spec.strip()
+        if not spec.startswith("github:"):
+            return "fresh"
+        cached = self._cached_github_snapshot(spec)
+        if cached is None:
+            return "unknown"
+        from .source.github import latest_commit
+
+        try:
+            current = latest_commit(spec, self.config)
+        except Exception:  # noqa: BLE001 - a freshness probe must not raise
+            return "unknown"
+        return "fresh" if current == cached.commit else "stale"
+
+    def watch(self, spec: str, *, on_change=None):
+        """Start a polling :class:`LocalWatcher` for a local source."""
+        from .cache.watch import LocalWatcher
+
+        watcher = LocalWatcher(
+            self, spec, interval=self.config.watch_interval, on_change=on_change
+        )
+        return watcher.start()
 
     def refresh(self, spec: str) -> IndexResult:
         """Force a re-index and report what changed since the last one."""
@@ -96,6 +141,7 @@ class DiscoveryEngine:
             snapshot=snapshot,
             graph=graph,
             cached=False,
+            freshness="fresh",
             extract_stats=dict(self.extractor.stats),
             changes=changes,
         )
@@ -108,7 +154,9 @@ class DiscoveryEngine:
         """Index ``spec`` if needed and return a query handle over it."""
         result = self.index(spec, force=force)
         store = GraphStore(self.cache.graph_db_path(result.snapshot.snapshot_id))
-        return DiscoveryQuery(store, snapshot=result.snapshot)
+        return DiscoveryQuery(
+            store, snapshot=result.snapshot, freshness=result.freshness
+        )
 
     def load_graph(self, snapshot_id: str) -> CodeGraph:
         """Load a previously indexed snapshot's graph from cache."""
@@ -136,6 +184,28 @@ class DiscoveryEngine:
             return False
         manifest = self.cache.read_manifest(snapshot_id) or {}
         return manifest.get("schema_version") == SCHEMA_VERSION
+
+    def _cached_github_snapshot(self, spec: str) -> Snapshot | None:
+        """Rebuild a Snapshot for an already-indexed github spec, no network."""
+        ref = self.cache.read_ref(spec)
+        if not ref:
+            return None
+        snapshot_id = ref.get("snapshot_id")
+        if not snapshot_id or not self._cache_is_valid(snapshot_id):
+            return None
+        manifest = self.cache.read_manifest(snapshot_id) or {}
+        root = manifest.get("root_dir")
+        return Snapshot(
+            snapshot_id=snapshot_id,
+            origin=manifest.get("origin", "github"),
+            spec=spec,
+            root_dir=Path(root) if root else self.cache.snapshot_dir(snapshot_id),
+            scope=None,
+            ref=manifest.get("ref"),
+            commit=manifest.get("commit"),
+            created_at=float(manifest.get("indexed_at", 0.0)),
+            files=(),
+        )
 
     def _previous_files(self, spec: str) -> list[FileRecord] | None:
         ref = self.cache.read_ref(spec)
@@ -171,6 +241,7 @@ class DiscoveryEngine:
             "spec": snapshot.spec,
             "ref": snapshot.ref,
             "commit": snapshot.commit,
+            "root_dir": str(snapshot.root_dir),
             "indexed_at": indexed_at,
             "schema_version": SCHEMA_VERSION,
             "engine_version": ENGINE_VERSION,

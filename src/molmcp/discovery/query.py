@@ -53,9 +53,15 @@ _TOPLEVEL_KINDS = {
 class DiscoveryQuery:
     """Structured queries over one indexed snapshot."""
 
-    def __init__(self, store: GraphStore, snapshot: Snapshot | None = None):
+    def __init__(
+        self,
+        store: GraphStore,
+        snapshot: Snapshot | None = None,
+        freshness: str = "fresh",
+    ):
         self.store = store
         self.snapshot = snapshot
+        self.freshness = freshness
 
     # -- lookup ------------------------------------------------------
 

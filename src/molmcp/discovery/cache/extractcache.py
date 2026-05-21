@@ -61,7 +61,8 @@ class ExtractCache:
     def _connect(self) -> sqlite3.Connection:
         if self._conn is None:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            conn.execute("PRAGMA busy_timeout=5000")
             conn.execute(_CREATE)
             conn.commit()
             self._conn = conn

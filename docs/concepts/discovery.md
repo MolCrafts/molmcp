@@ -22,6 +22,9 @@ source spec ─► SourceResolver ─► Snapshot ─► Extractor ─► Resolv
    installed package, or `github:owner/repo@ref` — is resolved to an
    immutable `Snapshot`. The snapshot is identified by a **content
    hash** (local) or **commit SHA** (GitHub), never a branch name.
+   GitHub sources resolve the ref to a commit, download that commit's
+   tarball into the cache, and are then indexed exactly like local
+   source.
 2. **Extraction (phase 1).** Each file is dispatched by extension to a
    `LanguageAnalyzer`. The Python analyzer (stdlib `ast`) emits modules,
    classes, functions, methods, properties, fields, constants,
@@ -67,6 +70,15 @@ to exact source. When a file changes, the next index produces a new
 snapshot id and a new directory — the old one is untouched. Every tool
 response carries a `snapshot` block so an agent knows which revision it
 is looking at.
+
+Re-indexing is **incremental**: a content-addressed `ExtractCache` lets
+unchanged files skip the analyzer, so only edited files are re-parsed.
+Local sources are re-resolved on every query (always fresh); GitHub
+sources are cache-first to respect API rate limits — call
+`molmcp_refresh` to pull a newer commit. The cache is bounded by
+`max_snapshots_per_spec` and `max_cache_age_days`, pruned automatically.
+An optional `LocalWatcher` polls a local source and refreshes it on
+change.
 
 ## Multi-language by design
 

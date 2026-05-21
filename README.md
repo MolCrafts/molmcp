@@ -102,7 +102,8 @@ A discovery source is one of:
 
 - `path/to/repo` — a local directory.
 - `pkg:<name>` — an installed Python package (resolved by import name).
-- `github:owner/repo[@ref]` — a GitHub repository *(planned)*.
+- `github:owner/repo[@ref]` — a GitHub repository (downloaded at a
+  resolved commit; `GITHUB_TOKEN` is used when set).
 
 ## Architecture
 

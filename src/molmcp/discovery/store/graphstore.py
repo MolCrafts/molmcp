@@ -67,8 +67,9 @@ class GraphStore:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000")
         try:
             yield conn
         finally:
@@ -76,8 +77,11 @@ class GraphStore:
 
     def _conn(self) -> sqlite3.Connection:
         if self._read_conn is None:
-            conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
+            conn = sqlite3.connect(
+                f"file:{self.db_path}?mode=ro", uri=True, check_same_thread=False
+            )
             conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout=5000")
             self._read_conn = conn
         return self._read_conn
 

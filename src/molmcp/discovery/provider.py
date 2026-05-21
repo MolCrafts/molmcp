@@ -40,14 +40,14 @@ def _clamp(value: int, low: int, high: int) -> int:
     return max(low, min(int(value), high))
 
 
-def _snapshot_block(snapshot: Snapshot) -> dict:
+def _snapshot_block(snapshot: Snapshot, freshness: str = "fresh") -> dict:
     return {
         "snapshot_id": snapshot.snapshot_id,
         "origin": snapshot.origin,
         "spec": snapshot.spec,
         "commit": snapshot.commit,
         "file_count": snapshot.file_count,
-        "freshness": "fresh",
+        "freshness": freshness,
     }
 
 
@@ -64,6 +64,7 @@ class DiscoveryProvider:
         self.sources = list(sources or [])
         self._config = config
         self._engine: DiscoveryEngine | None = None
+        self._watchers: list = []
 
     def engine(self) -> DiscoveryEngine:
         if self._engine is None:
@@ -101,14 +102,30 @@ class DiscoveryProvider:
         finally:
             query.store.close()
         if query.snapshot is not None:
-            payload["snapshot"] = _snapshot_block(query.snapshot)
+            payload["snapshot"] = _snapshot_block(
+                query.snapshot, query.freshness
+            )
         return payload
 
     # -- registration ------------------------------------------------
 
+    def _maybe_start_watchers(self) -> None:
+        config = self._config
+        if config is None or not config.watch:
+            return
+        engine = self.engine()
+        for spec in self.sources:
+            if spec.strip().startswith("github:"):
+                continue
+            try:
+                self._watchers.append(engine.watch(spec))
+            except Exception:  # noqa: BLE001 - watching must not break startup
+                continue
+
     def register(self, mcp: "FastMCP") -> None:
         if not self.sources:
             return
+        self._maybe_start_watchers()
 
         @mcp.tool(annotations=_READ_ONLY)
         def molmcp_find_capability(
@@ -290,7 +307,7 @@ class DiscoveryProvider:
                     "edges": result.edge_count,
                 },
                 "extract_stats": result.extract_stats,
-                "snapshot": _snapshot_block(result.snapshot),
+                "snapshot": _snapshot_block(result.snapshot, result.freshness),
             }
             if result.changes is not None:
                 payload["changes"] = result.changes.to_dict()
