@@ -148,3 +148,46 @@ molmcp discovery outline pkg:molpy
 molmcp discovery query pkg:molpy "structure reader"
 molmcp discovery dump pkg:molpy --output graph.json
 ```
+
+## Verifying it works
+
+There are four ways to confirm discovery is healthy, from quickest to
+most thorough.
+
+**1. The built-in self-check.** `molmcp discovery verify` indexes a
+source and prints a health report — counts, FTS status, and a sample
+query — exiting non-zero on failure, so it works in CI or a setup
+script:
+
+```bash
+molmcp discovery verify pkg:molpy
+```
+
+**2. The test suite.** The engine ships with focused tests:
+
+```bash
+pytest tests/discovery -q
+```
+
+**3. The Python API**, with no MCP client involved:
+
+```python
+from molmcp.discovery import DiscoveryEngine
+
+query = DiscoveryEngine().query("pkg:molpy")
+hits = query.search("radial distribution function")
+assert hits, "expected at least one match"
+print(hits[0].qualname, hits[0].file, hits[0].start_line)
+```
+
+**4. The MCP tool path.** Run `python -m molmcp --source pkg:molpy` and
+call the tools — every response carries a `snapshot` block with a
+`freshness` status. The key property to check: an agent never invents a
+name. The flow is `molmcp_outline` → `molmcp_search_symbols` /
+`molmcp_find_capability` (which return real qualnames) →
+`molmcp_describe_symbol` / `molmcp_relations`; a wrong qualname yields a
+structured `{"error": …}`, never a hallucinated result.
+
+The graph itself is plain SQLite — open
+`~/.cache/molmcp/discovery/snapshots/<slug>/graph.db` with any SQLite
+browser to inspect the `nodes`, `edges`, and `files` tables directly.

@@ -122,8 +122,9 @@ python -m molmcp --no-discover
 
 ## `molmcp discovery`
 
-Inspect the discovery engine without an MCP client. Each subcommand takes
-a source spec (a local path, `pkg:<name>`, or `github:owner/repo[@ref]`).
+Inspect and drive the discovery engine without an MCP client. Every
+subcommand except `clean` takes a source spec (a local path,
+`pkg:<name>`, or `github:owner/repo[@ref]`).
 
 ### `index SOURCE`
 
@@ -132,6 +133,31 @@ and the cache location.
 
 ```bash
 molmcp discovery index pkg:molpy
+```
+
+### `verify SOURCE`
+
+Index a source and run a self-check — file/node/edge counts, node- and
+edge-kind breakdown, whether the FTS5 index is available, and a sample
+search against a known symbol. Prints a health report and **exits
+non-zero** if discovery is not working, so it is usable in CI or a
+setup script.
+
+```bash
+molmcp discovery verify pkg:molpy
+```
+
+```
+verifying discovery for: pkg:molpy
+  snapshot:      local:hash:sha256-…
+  origin:        local (freshness: fresh)
+  files:         …
+  nodes:         …  [field …, method …, function …, class …, module …]
+  edges:         …  [contains …, calls …, imports …]
+  unresolved:    …
+  FTS5 index:    available
+  sample search: 'RDF' -> ok
+  result:        OK — discovery is working
 ```
 
 ### `query SOURCE TEXT [--kind KIND] [--limit N]`

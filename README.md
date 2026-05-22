@@ -88,13 +88,19 @@ Wire it into Claude Code:
 claude mcp add molcrafts -- python -m molmcp
 ```
 
-Inspect the engine without an MCP client:
+Inspect the engine — or verify it works — without an MCP client:
 
 ```bash
+molmcp discovery verify pkg:molpy   # self-check: counts, FTS, sample query
 molmcp discovery index pkg:molpy
 molmcp discovery outline pkg:molpy
 molmcp discovery query pkg:molpy "radial distribution function"
 ```
+
+`molmcp discovery verify` prints a health report and exits non-zero on
+failure, so it doubles as a CI/setup check. See the
+[discovery engine guide](https://molcrafts.github.io/molmcp/concepts/discovery/)
+for the full verification walkthrough.
 
 ## Source specs
 

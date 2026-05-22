@@ -30,8 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `capability_catalog.toml` format, and the `molmcp.overlays`
   entry-point group — so domain knowledge (e.g. MolPy capabilities)
   layers on without molmcp core importing the domain package.
-- `molmcp discovery` CLI subcommands (`index`, `query`, `outline`,
-  `dump`, `clean`).
+- `molmcp discovery` CLI subcommands (`index`, `verify`, `query`,
+  `outline`, `dump`, `clean`). `verify` runs a self-check and exits
+  non-zero on failure.
 
 ### Changed
 
