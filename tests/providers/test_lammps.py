@@ -38,7 +38,7 @@ def _build_server(provider: LammpsProvider | None = None):
         name="lammps-test",
         providers=[provider or LammpsProvider()],
         discover_entry_points=False,
-        import_roots=None,
+        discovery_sources=None,
     )
 
 

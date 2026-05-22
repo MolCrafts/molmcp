@@ -2,10 +2,16 @@
 
 ```
 molmcp [OPTIONS]
+molmcp serve [OPTIONS]
 python -m molmcp [OPTIONS]
+molmcp discovery <SUBCOMMAND> [OPTIONS]
 ```
 
-Both forms are equivalent. The `molmcp` script is installed by `pip install molcrafts-molmcp` via `[project.scripts]`; `python -m molmcp` works whenever the package is importable.
+The `molmcp` script is installed by `pip install molcrafts-molmcp` via `[project.scripts]`; `python -m molmcp` works whenever the package is importable.
+
+`molmcp` (or `molmcp serve` / `python -m molmcp`) starts the MCP server. `molmcp discovery` drives the discovery engine directly, without an MCP client — see [`molmcp discovery`](#molmcp-discovery) below.
+
+## `molmcp serve`
 
 The default invocation needs no flags:
 
@@ -14,9 +20,9 @@ python -m molmcp
 ```
 
 molmcp auto-detects whichever of `{molpy, molpack, molrs, molq, molexp}` are
-importable, registers introspection over them, and loads any auto-discovered
-providers. The flags below are for *narrowing*, *extending*, or otherwise
-deviating from that default.
+importable, registers graph-based discovery over them, and loads any
+auto-discovered providers. The flags below are for *narrowing*, *extending*,
+or otherwise deviating from that default.
 
 ## Options
 
@@ -30,29 +36,33 @@ This becomes the prefix in client-side tool naming (e.g., Claude Code's `mcp__<n
 python -m molmcp --name molcrafts-dev
 ```
 
-### `--import-root PACKAGE`
+### `--source SPEC`
 
-Top-level Python package whose source the built-in `IntrospectionProvider` should expose. Repeatable.
+A discovery source the engine should index. Repeatable. A spec is one of:
 
-If `--import-root` is omitted, molmcp auto-detects whichever of
+- `path/to/repo` — a local directory.
+- `pkg:<name>` — an installed Python package, resolved by import name.
+- `github:owner/repo[@ref]` — a GitHub repository, downloaded at a
+  resolved commit SHA (`GITHUB_TOKEN` is used when set).
+
+If `--source` is omitted, molmcp defaults to whichever of
 `{molpy, molpack, molrs, molq, molexp}` are importable in the active
-environment. With none of those installed, it falls back to introspecting
-`molmcp` itself so the seven tools are always present.
+environment, each as a `pkg:` spec.
 
-Pass `--import-root` explicitly only when you want to:
+Pass `--source` explicitly when you want to:
 
 - *Narrow* to a single package:
   ```bash
-  python -m molmcp --import-root molpy
+  python -m molmcp --source pkg:molpy
   ```
-- *Extend* beyond the default set (e.g. add a non-MolCrafts package):
+- *Extend* the set (a local checkout, another package, a GitHub repo):
   ```bash
-  python -m molmcp --import-root molpy --import-root rdkit
+  python -m molmcp --source pkg:molpy --source /path/to/a/repo --source github:MolCrafts/molpack
   ```
 
 ### `--no-discover`
 
-Skip auto-discovery of Providers via the `molmcp.providers` entry point group. Use when you want only `IntrospectionProvider` and no third-party providers loaded:
+Skip auto-discovery of Providers via the `molmcp.providers` entry point group. Use when you want only the discovery tools and no third-party providers loaded:
 
 ```bash
 python -m molmcp --no-discover
@@ -95,7 +105,7 @@ python -m molmcp
 ### Narrow to a single package
 
 ```bash
-python -m molmcp --import-root molpy
+python -m molmcp --source pkg:molpy
 ```
 
 ### HTTP transport on port 9000
@@ -104,10 +114,91 @@ python -m molmcp --import-root molpy
 python -m molmcp --transport streamable-http --host 0.0.0.0 --port 9000
 ```
 
-### Locked-down: introspection only, no provider discovery
+### Locked-down: discovery only, no provider discovery
 
 ```bash
 python -m molmcp --no-discover
+```
+
+## `molmcp discovery`
+
+Inspect and drive the discovery engine without an MCP client. Every
+subcommand except `clean` takes a source spec (a local path,
+`pkg:<name>`, or `github:owner/repo[@ref]`).
+
+### `index SOURCE`
+
+Index a source and print a summary — snapshot id, file/node/edge counts,
+and the cache location.
+
+```bash
+molmcp discovery index pkg:molpy
+```
+
+### `verify SOURCE`
+
+Index a source and run a self-check — file/node/edge counts, node- and
+edge-kind breakdown, whether the FTS5 index is available, and a sample
+search against a known symbol. Prints a health report and **exits
+non-zero** if discovery is not working, so it is usable in CI or a
+setup script.
+
+```bash
+molmcp discovery verify pkg:molpy
+```
+
+```
+verifying discovery for: pkg:molpy
+  snapshot:      local:hash:sha256-…
+  origin:        local (freshness: fresh)
+  files:         …
+  nodes:         …  [field …, method …, function …, class …, module …]
+  edges:         …  [contains …, calls …, imports …]
+  unresolved:    …
+  FTS5 index:    available
+  sample search: 'RDF' -> ok
+  result:        OK — discovery is working
+```
+
+### `query SOURCE TEXT [--kind KIND] [--limit N]`
+
+Search indexed symbols in a source.
+
+```bash
+molmcp discovery query pkg:molpy "radial distribution function"
+molmcp discovery query pkg:molpy reader --kind class --limit 10
+```
+
+`--kind` filters by node kind (e.g. `class`, `function`, `method`,
+`test`); `--limit` caps the result count (default `20`).
+
+### `outline SOURCE [--path PATH]`
+
+Print a source's structure — packages/modules mapped to their symbols.
+`--path` narrows to a file or subtree.
+
+```bash
+molmcp discovery outline pkg:molpy
+molmcp discovery outline pkg:molpy --path molpy/compute
+```
+
+### `dump SOURCE [--output FILE]`
+
+Dump a source's full code graph as JSON (nodes, edges, files,
+unresolved references). Writes to `--output` if given, otherwise stdout.
+
+```bash
+molmcp discovery dump pkg:molpy --output graph.json
+```
+
+### `clean [--all]`
+
+Prune old cached snapshots. With `--all`, remove the entire discovery
+cache instead of pruning.
+
+```bash
+molmcp discovery clean
+molmcp discovery clean --all
 ```
 
 ## Wiring into Claude Code

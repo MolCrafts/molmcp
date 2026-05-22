@@ -25,7 +25,7 @@ def _build_server():
         name="molpy-test",
         providers=[MolpyProvider()],
         discover_entry_points=False,
-        import_roots=None,
+        discovery_sources=None,
     )
 
 

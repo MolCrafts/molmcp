@@ -2,23 +2,23 @@
 
 **The MCP foundation for the MolCrafts ecosystem.**
 
-molmcp is the Model Context Protocol layer that MolCrafts packages share. Instead of every package — `molpy`, `molcfg`, `molexp`, `molpack`, `mollog`, `molq`, `molrec`, `molvis` — authoring its own MCP server, they all build on molmcp: same source-introspection tools, same security defaults, same Provider plugin contract. molmcp itself is pure infrastructure — it imports nothing from MolCrafts packages, so any of them can adopt it without dragging in the others.
+molmcp is the Model Context Protocol layer that MolCrafts packages share. Instead of every package — `molpy`, `molcfg`, `molexp`, `molpack`, `mollog`, `molq`, `molrec`, `molvis` — authoring its own MCP server, they all build on molmcp: same graph-based discovery tools, same security defaults, same Provider plugin contract. molmcp itself is pure infrastructure — it imports nothing from MolCrafts packages, so any of them can adopt it without dragging in the others.
 
-The design contract is **introspection-first**: agents discover the MolCrafts API by reading source through generic introspection tools, then call it from Python or the package's CLI. molmcp adds a curated Provider only when the answer depends on runtime state introspection cannot see. See [Provider design](concepts/provider-design.md) for the four-condition rule that gates every tool.
+The design contract is **discovery-first**: agents resolve the MolCrafts API from a statically indexed code graph through generic discovery tools, then call it from Python or the package's CLI. molmcp adds a curated Provider only when the answer depends on runtime state discovery cannot see. See [Provider design](concepts/provider-design.md) for the four-condition rule that gates every tool.
 
 ## What molmcp gives the MolCrafts ecosystem
 
 <div class="grid cards" markdown>
 
-- :material-magnify: **Source introspection**
+- :material-magnify: **Graph-based discovery**
 
-    Seven read-only tools — `list_modules`, `list_symbols`, `get_source`, `get_docstring`, `get_signature`, `read_file`, `search_source` — bound to any MolCrafts import root.
+    Six read-only tools — `molmcp_find_capability`, `molmcp_search_symbols`, `molmcp_describe_symbol`, `molmcp_relations`, `molmcp_outline`, `molmcp_refresh` — over a code graph indexed from any MolCrafts source.
 
     [→ Quickstart](get-started/quickstart.md)
 
 - :material-puzzle: **Provider plugin contract**
 
-    A Provider may register a tool only when introspection cannot answer the question — typically a stateful query against a local DB or workspace. Two providers ship in-tree (`MolqProvider`, `MolexpProvider`); third-party packages plug in via the `molmcp.providers` entry-point group.
+    A Provider may register a tool only when discovery cannot answer the question — typically a stateful query against a local DB or workspace. Two providers ship in-tree (`MolqProvider`, `MolexpProvider`); third-party packages plug in via the `molmcp.providers` entry-point group.
 
     [→ Provider design](concepts/provider-design.md)
 
@@ -43,13 +43,13 @@ pip install molcrafts-molmcp
 python -m molmcp
 ```
 
-That's enough — seven introspection tools online over MCP stdio against whichever of `{molpy, molpack, molrs, molq, molexp}` are installed in the active environment, plus the first-party `MolqProvider` / `MolexpProvider` tools when their packages are present. For the one-line `claude mcp add` recipe, multi-server setups, and per-client wiring, see [Deploy](get-started/deploy.md).
+That's enough — six graph-based discovery tools online over MCP stdio against whichever of `{molpy, molpack, molrs, molq, molexp}` are installed in the active environment, plus the first-party `MolqProvider` / `MolexpProvider` tools when their packages are present. For the one-line `claude mcp add` recipe, multi-server setups, and per-client wiring, see [Deploy](get-started/deploy.md).
 
-When a MolCrafts package has a stateful query that introspection genuinely cannot answer, it ships a Provider — see [Provider design](concepts/provider-design.md) for the rule and [Writing a Provider](guides/write-a-provider.md) for the mechanics.
+When a MolCrafts package has a stateful query that discovery genuinely cannot answer, it ships a Provider — see [Provider design](concepts/provider-design.md) for the rule and [Writing a Provider](guides/write-a-provider.md) for the mechanics.
 
 ## Why this exists
 
-When LLM agents work on a MolCrafts project they need exact, current API knowledge — what's in `molpy.core.atomistic`, what `molpack.pack` accepts, what `molexp.Experiment` returns. Re-implementing source introspection per package is wasted work; the code is identical regardless of which MolCrafts package it points at. molmcp factors out the common layer, with security defaults that no one wants to maintain in N copies, so MolCrafts packages can focus on the *interesting* part: exposing the simulations, the parsers, the I/O — the things only they can do.
+When LLM agents work on a MolCrafts project they need exact, current API knowledge — what's in `molpy.core.atomistic`, what `molpack.pack` accepts, what `molexp.Experiment` returns. Re-implementing code discovery per package is wasted work; the engine is identical regardless of which MolCrafts package it indexes. molmcp factors out the common layer, with security defaults that no one wants to maintain in N copies, so MolCrafts packages can focus on the *interesting* part: exposing the simulations, the parsers, the I/O — the things only they can do.
 
 [Get started →](get-started/installation.md){ .md-button .md-button--primary }
 [See the architecture →](concepts/architecture.md){ .md-button }

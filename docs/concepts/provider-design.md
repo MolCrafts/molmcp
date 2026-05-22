@@ -1,12 +1,13 @@
 # Provider design contract
 
 molmcp is **not** a tool-registration mirror of upstream packages. The
-primary mechanism for an agent to use a MolCrafts package is
-introspection: read the source via `IntrospectionProvider`, then call
-the API from a Python snippet or the package's CLI. A Provider that
-adds a hand-curated tool catalog has to justify its existence against
-this baseline — otherwise we ship maintenance burden (every upstream
-API change becomes a molmcp PR) and double-source the truth.
+primary mechanism for an agent to use a MolCrafts package is the
+[discovery engine](discovery.md): query the indexed code graph for
+symbols, relationships, and examples, then call the API from a Python
+snippet or the package's CLI. A Provider that adds a hand-curated tool
+catalog has to justify its existence against this baseline — otherwise
+we ship maintenance burden (every upstream API change becomes a molmcp
+PR) and double-source the truth.
 
 ## When does a tool earn a slot?
 
@@ -32,7 +33,7 @@ hold:
    that's exactly the use case introspection unlocks.
 
 If any condition fails: **don't** add the tool. The agent gets the
-capability through `IntrospectionProvider` plus a 3-line Python or CLI
+capability through the discovery engine plus a 3-line Python or CLI
 invocation.
 
 ## What's currently shipped
@@ -56,22 +57,22 @@ revisions:
 - `molq_status`, `list_ssh_hosts` — derivable from `cat ~/.ssh/config` or reading `molq.ssh_config` via introspection.
 - `get_job`, `get_job_transitions`, `get_job_dependencies` — derivable from `molq_list_jobs` + a few lines.
 - `list_experiments`, `get_run`, `get_metrics`, `get_asset_text` — derivable from `molexp_list_runs` + reading `molexp.workspace` source.
-- The entire `LammpsProvider`, `MolPyProvider`, `MolPackProvider`, `MolRsProvider` packages — each was a hand-curated re-export of an upstream API. Replaced by `--import-root <pkg>` with `IntrospectionProvider`.
+- The entire `LammpsProvider`, `MolPyProvider`, `MolPackProvider`, `MolRsProvider` packages — each was a hand-curated re-export of an upstream API. Replaced by `--source <spec>` with the discovery engine.
 
-## Introspection-first workflow
+## Discovery-first workflow
 
-The CLI defaults `--import-root` to whichever of `{molpy, molpack, molrs, molq, molexp}` are installed in the active Python environment. Without any explicit configuration the agent therefore gets:
+The CLI defaults `--source` to whichever of `{molpy, molpack, molrs, molq, molexp}` are installed in the active Python environment. Without any explicit configuration the agent therefore gets:
 
-- 7 introspection tools (`list_modules`, `list_symbols`, `get_source`, `get_docstring`, `get_signature`, `read_file`, `search_source`) over the installed MolCrafts packages.
+- 6 discovery tools (`molmcp_find_capability`, `molmcp_search_symbols`, `molmcp_describe_symbol`, `molmcp_relations`, `molmcp_outline`, `molmcp_refresh`) over the indexed code graph of the installed MolCrafts packages.
 - Whichever of the 3 stateful tools above belong to packages that successfully register.
 
 Upstream adds a new function? The agent finds it via
-`list_symbols(prefix="molpy.newfeature")` and reads its docstring. molmcp
-ships nothing.
+`molmcp_search_symbols` or `molmcp_find_capability` and reads its
+signature and examples. molmcp ships nothing.
 
-Upstream renames a function? The agent's introspection-driven script
-fails with a clean Python `AttributeError`, the agent re-introspects,
-and continues. molmcp ships nothing.
+Upstream renames a function? The next index produces a new snapshot,
+the agent re-discovers the symbol under its new name, and continues.
+molmcp ships nothing.
 
 A user invents a workflow that combines six molq calls into a custom
 analysis? The agent writes the analysis. molmcp ships nothing.
@@ -82,9 +83,9 @@ That's the design.
 
 Walk the four conditions, in order, and write down which one fails for
 your candidate tool. If you can't find one that fails — *and* the
-answer genuinely needs runtime state introspection cannot see — that's
-the bar. Otherwise, push back and document the introspection recipe in
-the relevant guide instead.
+answer genuinely needs runtime state the discovery engine cannot see —
+that's the bar. Otherwise, push back and document the discovery recipe
+in the relevant guide instead.
 
 ## Read next
 

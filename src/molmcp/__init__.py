@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from .discovery import DiscoveryConfig, DiscoveryEngine
+from .discovery.provider import DiscoveryProvider
 from .helpers import SubprocessResult, fence_untrusted, run_safe
-from .introspection import IntrospectionProvider
 from .middleware import (
     MissingAnnotationsError,
     PathSafetyMiddleware,
@@ -19,7 +20,9 @@ __all__ = [
     "__version__",
     "create_server",
     "Provider",
-    "IntrospectionProvider",
+    "DiscoveryProvider",
+    "DiscoveryEngine",
+    "DiscoveryConfig",
     "discover_providers",
     "ENTRY_POINT_GROUP",
     "PathSafetyMiddleware",

@@ -20,13 +20,13 @@ tooling — all on stdio by default:
 
 | Layer | What the agent sees | When to use |
 |-------|---------------------|-------------|
-| **Introspection tools** (`IntrospectionProvider`) | Seven generic tools — `list_modules`, `list_symbols`, `get_source`, `get_docstring`, `get_signature`, `read_file`, `search_source` — pointed at any MolCrafts import root. | "Show me the source of `molpy.compute.RDF`. What does `molpack.pack` accept?" — the default loop. |
-| **First-party Provider tools** | Stateful queries that introspection cannot answer: `molq_list_jobs`, `molexp_list_projects`, `molexp_list_runs`. | "What's running right now? What experiments are in this workspace?" |
+| **Discovery tools** (`DiscoveryProvider`) | Six graph-backed tools — `molmcp_find_capability`, `molmcp_search_symbols`, `molmcp_describe_symbol`, `molmcp_relations`, `molmcp_outline`, `molmcp_refresh` — over any indexed source. | "What does molpy provide for an RDF? Show me `molpy.compute.RDF`. What calls it?" — the default loop. |
+| **First-party Provider tools** | Stateful queries that discovery cannot answer: `molq_list_jobs`, `molexp_list_projects`, `molexp_list_runs`. | "What's running right now? What experiments are in this workspace?" |
 | **Third-party Providers** | Whatever any installed package contributes via the `molmcp.providers` entry-point group, gated on the four-condition rule in [Provider design](../concepts/provider-design.md). | When a downstream package legitimately needs to expose a stateful query. |
 
 There is no separate plugin-server CLI — historical `molmcp-molpy` /
 `molmcp-molrs` / `molmcp-molpack` packages have been removed in favour
-of the introspection-first loop.
+of the discovery-first loop.
 
 ## Prerequisites
 
@@ -34,7 +34,7 @@ of the introspection-first loop.
   ```bash
   pip install molcrafts-molmcp
   ```
-- One or more MolCrafts packages you want introspection over:
+- One or more MolCrafts packages you want discovery over:
   ```bash
   pip install molcrafts-molpy molcrafts-molrs molcrafts-molpack
   ```
@@ -73,8 +73,8 @@ existence is justified against the four-condition rule — see
     Anything else (`molq_submit`, `molq_cancel`, `molq_cleanup`,
     `register_cluster`, `refresh_cluster`, `get_job_transitions`, …) is
     deliberately omitted — those mutate state and belong in the `molq`
-    CLI itself, which the agent can invoke directly after introspecting
-    `molq`.
+    CLI itself, which the agent can invoke directly after discovering
+    `molq`'s API.
 
 === "molexp (`MolexpProvider`)"
 
@@ -86,11 +86,11 @@ existence is justified against the four-condition rule — see
       with a stable filter set and flat output.
 
     Per-run details (`get_run`, `get_metrics`, `get_asset_text`) are
-    derivable from `molexp_list_runs` plus introspection over
+    derivable from `molexp_list_runs` plus discovery over
     `molexp.workspace`.
 
-The seven introspection tools cover every installed MolCrafts package
-by default — see [Quickstart](quickstart.md#3-the-seven-introspection-tools).
+The six discovery tools cover every installed MolCrafts package
+by default — see [Quickstart](quickstart.md#3-the-six-discovery-tools).
 
 ---
 
@@ -115,8 +115,9 @@ What this command does:
   Everything after `--` is what Claude Code runs each session.
 - `python -m molmcp` — the molmcp foundation. Auto-detects whichever of
   `{molpy, molpack, molrs, molq, molexp}` are installed and registers
-  introspection over them. Auto-discovered Providers (`MolqProvider`,
-  `MolexpProvider`, plus any third-party entry-point) register on top.
+  graph-based discovery over them. Auto-discovered Providers
+  (`MolqProvider`, `MolexpProvider`, plus any third-party entry-point)
+  register on top.
 
 Verify:
 
@@ -134,14 +135,15 @@ molcrafts: python -m molmcp - ✓ Connected
 
 Open a Claude Code session. Ask:
 
-> What modules does molpy expose? Then show me the signature of
-> `molpy.compute.RDF`.
+> What does molpy provide for computing an RDF? Then show me the
+> signature of `molpy.compute.RDF`.
 
 Behind the scenes Claude calls:
 
-- `mcp__molcrafts__list_modules` → every module under the registered
-  import roots.
-- `mcp__molcrafts__get_signature` with `symbol="molpy.compute.RDF"`.
+- `mcp__molcrafts__molmcp_find_capability` → ranked symbol matches for
+  the task across the indexed sources.
+- `mcp__molcrafts__molmcp_describe_symbol` with
+  `qualname="molpy.compute.RDF"`.
 
 The `mcp__<name>__<tool>` prefix is the `<name>` you passed to
 `claude mcp add`.
@@ -150,15 +152,15 @@ The `mcp__<name>__<tool>` prefix is the `<name>` you passed to
 
 If you want a server scoped to a single MolCrafts package — say, when
 you're juggling multiple projects and want distinct MCP servers per
-project root — pass `--import-root` explicitly:
+project root — pass `--source` explicitly:
 
 ```bash
-claude mcp add molpy -- python -m molmcp --import-root molpy
+claude mcp add molpy -- python -m molmcp --source pkg:molpy
 ```
 
-The seven tools now operate over `molpy` only. Most users don't need
-this; the default serves every installed package and the agent simply
-filters by module prefix when it asks.
+The discovery tools now operate over `molpy` only. Most users don't need
+this; the default indexes every installed package and the agent passes a
+`source` argument when it needs to scope a query.
 
 #### Removing a server
 
@@ -215,15 +217,16 @@ Open your client and ask:
 
 The agent will typically:
 
-1. Call `mcp__molcrafts__list_symbols` with `module="molpy.compute"` to
-   confirm `RDF` and `NeighborList` exist.
-2. Call `mcp__molcrafts__get_signature` on
+1. Call `mcp__molcrafts__molmcp_find_capability` with the task to surface
+   the relevant symbols — `RDF`, `NeighborList` — with their signatures
+   and usage examples.
+2. Call `mcp__molcrafts__molmcp_describe_symbol` on
    `molpy.compute.RDF` and `molpy.compute.NeighborList` to learn the
    exact call shapes.
 3. Write the snippet using the verified signatures.
 
-That's the loop molmcp is built for: the agent verifies the API
-against the live source before writing code, instead of guessing from
+That's the loop molmcp is built for: the agent resolves the API from the
+indexed code graph before writing code, instead of guessing from
 training data.
 
 ---
@@ -233,10 +236,10 @@ training data.
 - **[CLI reference](../reference/cli.md)** — every flag the `molmcp`
   CLI accepts.
 - **[Architecture](../concepts/architecture.md)** — how the
-  introspection layer and the Provider layer compose.
+  discovery layer and the Provider layer compose.
 - **[Provider design](../concepts/provider-design.md)** — the
   four-condition rule that decides which capabilities earn a tool slot
-  vs. stay in introspection-driven scripts.
+  vs. stay in discovery-driven scripts.
 - **[Write a Provider](../guides/write-a-provider.md)** — author a
   Provider for your own MolCrafts package after checking it against
   the design contract.

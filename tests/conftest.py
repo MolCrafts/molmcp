@@ -7,14 +7,16 @@ import json
 import pytest
 
 from molmcp import create_server
+from molmcp.discovery import DiscoveryConfig
 
 
 @pytest.fixture
-def server():
-    """A server bound to the in-tree fixture_pkg."""
+def server(tmp_path):
+    """A server with discovery bound to the in-tree fixture_pkg."""
     return create_server(
         "test",
-        import_roots=["fixture_pkg"],
+        discovery_sources=["pkg:fixture_pkg"],
+        discovery_config=DiscoveryConfig(cache_dir=tmp_path / "discovery-cache"),
         discover_entry_points=False,
     )
 

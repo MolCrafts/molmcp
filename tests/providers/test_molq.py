@@ -33,7 +33,7 @@ def _build_server(provider: MolqProvider) -> Any:
         name="molq-test",
         providers=[provider],
         discover_entry_points=False,
-        import_roots=None,
+        discovery_sources=None,
     )
 
 
@@ -283,7 +283,7 @@ class TestStoreDispatch:
             name="molq-stubbed",
             providers=[provider],
             discover_entry_points=False,
-            import_roots=None,
+            discovery_sources=None,
         )
         fn = _tool(server, "molq_list_jobs")
 

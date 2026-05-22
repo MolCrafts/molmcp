@@ -10,9 +10,9 @@ python -m molmcp
 
 That's it — no flags needed. molmcp auto-detects whichever of
 `{molpy, molpack, molrs, molq, molexp}` are importable in the active
-environment and registers introspection over them. Auto-discovered providers
-(`MolqProvider`, `MolexpProvider`, and any third-party `molmcp.providers`
-entry point) load on top.
+environment and registers graph-based discovery over them. Auto-discovered
+providers (`MolqProvider`, `MolexpProvider`, and any third-party
+`molmcp.providers` entry point) load on top.
 
 The server stays in the foreground, talking MCP over stdin/stdout. `Ctrl+C` to stop.
 
@@ -28,30 +28,34 @@ The `--` separates Claude Code's args from molmcp's; everything after `--` is th
 
 After this, ask Claude:
 
-> What modules does molpy expose? Show me the source of `molpy.core.atomistic.Atomistic`.
+> What does molpy provide for computing a radial distribution function? Show me `molpy.core.atomistic.Atomistic`.
 
 Behind the scenes Claude calls:
 
-- `mcp__molcrafts__list_modules`
-- `mcp__molcrafts__get_source`
+- `mcp__molcrafts__molmcp_find_capability`
+- `mcp__molcrafts__molmcp_describe_symbol`
 
 The `mcp__<name>__<tool>` prefix tracks the name you registered with (`molcrafts` here).
 
 For the full local-stdio walkthrough — verifying with `claude mcp list`, the in-tree `MolqProvider` / `MolexpProvider` tools, and per-client wiring — see [Deploy](deploy.md).
 
-## 3. The seven introspection tools
+## 3. The six discovery tools
+
+When discovery sources are configured, molmcp exposes six composable,
+graph-backed tools (all read-only):
 
 | Tool | What it does |
 |------|--------------|
-| `list_modules(prefix=None)` | Walks the import tree and returns all module names. |
-| `list_symbols(symbol)` | Lists public symbols of a module **or** members of a class (kind-tagged) with one-line summaries. |
-| `get_source(symbol)` | Returns full source for a module / class / method. |
-| `get_docstring(symbol)` | Returns the cleaned docstring. |
-| `get_signature(symbol)` | Returns the call signature with type hints. |
-| `read_file(relative_path, start, end)` | Reads a line range from any source file in the package. |
-| `search_source(query, module_prefix, max_results)` | Case-insensitive substring search. |
+| `molmcp_find_capability(task, source=None, max_results=8)` | Primary tool — describe a task, get ranked symbol matches with signature, summary, examples, tests, and callers. |
+| `molmcp_search_symbols(query, source=None, kind=None, max_results=30)` | Full-text search over indexed symbols by name, qualname, or summary. |
+| `molmcp_describe_symbol(qualname, source=None, include_source=False)` | Full detail for one symbol, optionally with source code. |
+| `molmcp_relations(qualname, relation, source=None, depth=1, max_results=40)` | Walk the graph from a symbol — `callers`, `callees`, `implementers`, `subclasses`, `implementations`, `references`, `examples`, `tests`, `impact`. |
+| `molmcp_outline(source=None, path=None)` | Map a source's packages/modules to their symbols — the "where do I look" tool. |
+| `molmcp_refresh(source=None)` | Force a fresh re-index of a source. |
 
-Every tool is marked `readOnlyHint=True`, so MCP clients can auto-approve them safely.
+Every tool is marked `readOnlyHint=True`, so MCP clients can auto-approve
+them safely, and every response carries a `snapshot` block so the agent
+knows which revision of the source it is looking at.
 
 ## 4. Run over HTTP instead
 
@@ -63,6 +67,7 @@ python -m molmcp --transport streamable-http --host 127.0.0.1 --port 8787
 
 ## What's next?
 
-- **[Expose a package](../guides/expose-a-package.md)** — deeper guide on the introspection tools
+- **[Expose a package](../guides/expose-a-package.md)** — deeper guide on the discovery tools
+- **[Discovery engine](../concepts/discovery.md)** — how the code graph is built and queried
 - **[Write a Provider](../guides/write-a-provider.md)** — add *domain* tools (build, pack, simulate) from your MolCrafts package
 - **[Architecture](../concepts/architecture.md)** — how molmcp composes the pieces

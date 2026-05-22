@@ -25,7 +25,7 @@ def _build_server():
         name="molpack-test",
         providers=[MolpackProvider()],
         discover_entry_points=False,
-        import_roots=None,
+        discovery_sources=None,
     )
 
 
