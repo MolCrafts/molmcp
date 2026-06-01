@@ -1,0 +1,39 @@
+# Mirrors every check in .github/workflows/*.yml. Any divergence is a bug —
+# when you add/modify a CI step, update this file in the same commit.
+#
+# CI source of truth: .github/workflows/ci.yml
+#   - uv sync --extra dev
+#   - uv run ruff check src tests   (Lint)   -> pre-commit
+#   - uv run pytest -v              (Test)   -> pre-push
+# Version parity is guaranteed by uv.lock (uv run resolves the locked env).
+
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+
+  - repo: local
+    hooks:
+      # CI: "Lint" step — uv run ruff check src tests
+      - id: ruff-check
+        name: ruff check src tests (CI Lint)
+        entry: uv run ruff check src tests
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      # CI: "Test" step — uv run pytest -v
+      - id: pytest
+        name: pytest -v (CI Test)
+        entry: uv run pytest -v
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
