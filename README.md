@@ -76,7 +76,7 @@ Start an MCP server that indexes the installed MolCrafts packages:
 python -m molmcp
 ```
 
-molmcp auto-detects whichever of `{molpy, molpack, molrs, molq, molexp}` are importable and registers discovery over them. Point it anywhere with `--source`:
+molmcp registers discovery over the MolCrafts packages — `molpy`, `molpack`, `molrs`, `molq`, `molexp`, and `molnex` — reading each from a local install when importable and from GitHub (`github:MolCrafts/<repo>`) otherwise. Point it anywhere with `--source`:
 
 ```bash
 python -m molmcp --source pkg:molpy --source /path/to/a/repo

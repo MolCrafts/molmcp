@@ -11,9 +11,20 @@ from collections import Counter
 
 from .server import create_server
 
-# Installed MolCrafts packages discovery defaults to when no --source is
-# given. Filtered to whatever is importable in the active environment.
+# MolCrafts sources discovery defaults to when no --source is given.
+# Each resolves to the locally installed copy (``pkg:``) when importable
+# in the active environment (uv / venv), otherwise to the upstream repo
+# (``github:``) — so discovery works whether or not a package is
+# installed, and core never imports a MolCrafts package.
+_GITHUB_OWNER = "MolCrafts"
+
+# Single-package sources: the import name doubles as the GitHub repo name.
 _DEFAULT_PACKAGES = ("molpy", "molpack", "molrs", "molq", "molexp")
+
+# Multi-package repos with no single import name — always indexed whole
+# from GitHub. molnex ships four packages (molix, molpot, molrep, molzoo),
+# so there is no ``molnex`` module to resolve a ``pkg:`` spec against.
+_DEFAULT_REPOS = ("molnex",)
 
 _SPEC_HELP = (
     "source spec: a local path, 'pkg:<name>' for an installed package, "
@@ -21,12 +32,31 @@ _SPEC_HELP = (
 )
 
 
+def _is_importable(pkg: str) -> bool:
+    """Whether ``pkg`` is importable in the active environment."""
+    try:
+        return importlib.util.find_spec(pkg) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _local_or_github(pkg: str) -> str:
+    """Local install spec when ``pkg`` is importable, else its GitHub repo."""
+    if _is_importable(pkg):
+        return f"pkg:{pkg}"
+    return f"github:{_GITHUB_OWNER}/{pkg}"
+
+
 def _available_default_sources() -> list[str]:
-    return [
-        f"pkg:{pkg}"
-        for pkg in _DEFAULT_PACKAGES
-        if importlib.util.find_spec(pkg) is not None
-    ]
+    """Default discovery sources: every MolCrafts package, local-first.
+
+    Single-package sources prefer a local install and fall back to their
+    GitHub repo; multi-package repos (no single import name) are always
+    taken whole from GitHub.
+    """
+    sources = [_local_or_github(pkg) for pkg in _DEFAULT_PACKAGES]
+    sources += [f"github:{_GITHUB_OWNER}/{repo}" for repo in _DEFAULT_REPOS]
+    return sources
 
 
 # -- molmcp serve --------------------------------------------------------
@@ -51,8 +81,9 @@ def _build_serve_parser() -> argparse.ArgumentParser:
         metavar="SPEC",
         help="Discovery source: a local path, 'pkg:<name>' for an "
         "installed package, or 'github:owner/repo[@ref]'. Repeatable. "
-        "When omitted, defaults to whichever of "
-        "{molpy, molpack, molrs, molq, molexp} are installed.",
+        "When omitted, defaults to the MolCrafts packages "
+        "(molpy, molpack, molrs, molq, molexp, molnex) — each read from a "
+        "local install when present, and from GitHub otherwise.",
     )
     p.add_argument(
         "--no-discover",
