@@ -47,16 +47,49 @@ def _local_or_github(pkg: str) -> str:
     return f"github:{_GITHUB_OWNER}/{pkg}"
 
 
-def _available_default_sources() -> list[str]:
-    """Default discovery sources: every MolCrafts package, local-first.
+def _source_for_package(pkg: str) -> str:
+    """Discovery source for one default package.
 
-    Single-package sources prefer a local install and fall back to their
-    GitHub repo; multi-package repos (no single import name) are always
-    taken whole from GitHub.
+    Multi-package repos (no single import name) are always taken whole
+    from GitHub; single packages prefer a local install and fall back to
+    their GitHub repo.
     """
-    sources = [_local_or_github(pkg) for pkg in _DEFAULT_PACKAGES]
-    sources += [f"github:{_GITHUB_OWNER}/{repo}" for repo in _DEFAULT_REPOS]
-    return sources
+    if pkg in _DEFAULT_REPOS:
+        return f"github:{_GITHUB_OWNER}/{pkg}"
+    return _local_or_github(pkg)
+
+
+def _available_default_sources() -> list[str]:
+    """Default discovery sources: every MolCrafts package, local-first."""
+    return [_source_for_package(pkg) for pkg in (*_DEFAULT_PACKAGES, *_DEFAULT_REPOS)]
+
+
+def _split_pkg_values(raw: list[str]) -> list[str]:
+    """Normalize ``--pkg`` values: split on commas, strip, drop empties.
+
+    ``--pkg molpy,molexp`` and ``--pkg molpy --pkg molexp`` are
+    equivalent. Order is preserved; duplicates collapse to first use.
+    """
+    seen: list[str] = []
+    for value in raw:
+        for token in value.split(","):
+            token = token.strip()
+            if token and token not in seen:
+                seen.append(token)
+    return seen
+
+
+def _resolve_serve_sources(pkgs: list[str], explicit_sources: list[str]) -> list[str]:
+    """Discovery sources for ``serve``.
+
+    An explicit ``--source`` wins outright; otherwise ``--pkg`` narrows
+    the defaults to the chosen packages; otherwise all defaults load.
+    """
+    if explicit_sources:
+        return explicit_sources
+    if pkgs:
+        return [_source_for_package(pkg) for pkg in pkgs]
+    return _available_default_sources()
 
 
 # -- molmcp serve --------------------------------------------------------
@@ -75,21 +108,32 @@ def _build_serve_parser() -> argparse.ArgumentParser:
         help="Server name advertised to MCP clients (default: molmcp).",
     )
     p.add_argument(
+        "--pkg",
+        action="append",
+        default=[],
+        metavar="NAME[,NAME...]",
+        help="Restrict to these MolCrafts packages (repeatable or "
+        "comma-separated). Narrows both the default discovery sources and "
+        "the entry-point-discovered providers. When omitted, every "
+        "package loads. Example: --pkg molpy,molexp.",
+    )
+    p.add_argument(
         "--source",
         action="append",
         default=[],
         metavar="SPEC",
         help="Discovery source: a local path, 'pkg:<name>' for an "
         "installed package, or 'github:owner/repo[@ref]'. Repeatable. "
-        "When omitted, defaults to the MolCrafts packages "
-        "(molpy, molpack, molrs, molq, molexp, molnex) — each read from a "
-        "local install when present, and from GitHub otherwise.",
+        "Overrides the --pkg-derived default for discovery sources only "
+        "(provider filtering still honors --pkg). When both are omitted, "
+        "defaults to the MolCrafts packages (molpy, molpack, molrs, molq, "
+        "molexp, molnex) — each read from a local install when present, "
+        "and from GitHub otherwise.",
     )
     p.add_argument(
         "--no-discover",
         action="store_true",
-        help="Do not auto-discover providers via the molmcp.providers "
-        "entry point.",
+        help="Do not auto-discover providers via the molmcp.providers entry point.",
     )
     p.add_argument(
         "--no-validate-annotations",
@@ -110,10 +154,12 @@ def _build_serve_parser() -> argparse.ArgumentParser:
 
 def _serve_main(argv: list[str]) -> int:
     args = _build_serve_parser().parse_args(argv)
+    pkgs = _split_pkg_values(args.pkg)
     server = create_server(
         name=args.name,
-        discovery_sources=args.source or _available_default_sources(),
+        discovery_sources=_resolve_serve_sources(pkgs, args.source),
         discover_entry_points=not args.no_discover,
+        provider_names=set(pkgs) or None,
         validate_annotations=not args.no_validate_annotations,
     )
     kwargs: dict = {"transport": args.transport}
@@ -130,8 +176,7 @@ def _serve_main(argv: list[str]) -> int:
 def _build_discovery_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="molmcp discovery",
-        description="Inspect and drive the discovery engine without an "
-        "MCP client.",
+        description="Inspect and drive the discovery engine without an MCP client.",
     )
     sub = p.add_subparsers(dest="command", required=True, metavar="SUBCOMMAND")
 
@@ -163,20 +208,15 @@ def _build_discovery_parser() -> argparse.ArgumentParser:
         default=None,
         help="Filter by node kind (class, function, method, test, ...).",
     )
-    qry.add_argument(
-        "--limit", type=int, default=20, help="Max results (default: 20)."
-    )
+    qry.add_argument("--limit", type=int, default=20, help="Max results (default: 20).")
 
     out = sub.add_parser(
         "outline",
         help="Print a source's structure.",
-        description="Print a source's packages/modules mapped to their "
-        "symbols.",
+        description="Print a source's packages/modules mapped to their symbols.",
     )
     out.add_argument("source", metavar="SOURCE", help=_SPEC_HELP)
-    out.add_argument(
-        "--path", default=None, help="Narrow to a file or subtree."
-    )
+    out.add_argument("--path", default=None, help="Narrow to a file or subtree.")
 
     dmp = sub.add_parser(
         "dump",
@@ -234,17 +274,14 @@ def _cmd_verify(engine, args) -> int:
 
     store = GraphStore(engine.cache.graph_db_path(snapshot.snapshot_id))
     fts = store.fts_available()
-    sample = next(
-        (n for n in graph.nodes if n.kind in ("class", "function")), None
-    )
+    sample = next((n for n in graph.nodes if n.kind in ("class", "function")), None)
     sample_ok = True
     sample_line = "  sample search: (skipped — no class/function nodes)"
     if sample is not None:
         hits = DiscoveryQuery(store, snapshot).search(sample.name, limit=10)
         sample_ok = any(h.id == sample.id for h in hits)
         sample_line = (
-            f"  sample search: '{sample.name}' -> "
-            f"{'ok' if sample_ok else 'MISMATCH'}"
+            f"  sample search: '{sample.name}' -> {'ok' if sample_ok else 'MISMATCH'}"
         )
     store.close()
 
@@ -256,10 +293,7 @@ def _cmd_verify(engine, args) -> int:
     print(f"  nodes:         {result.node_count}  [{_fmt_counter(kinds)}]")
     print(f"  edges:         {result.edge_count}  [{_fmt_counter(edges)}]")
     print(f"  unresolved:    {len(graph.unresolved)}")
-    print(
-        f"  FTS5 index:    "
-        f"{'available' if fts else 'unavailable (LIKE fallback)'}"
-    )
+    print(f"  FTS5 index:    {'available' if fts else 'unavailable (LIKE fallback)'}")
     print(sample_line)
 
     problems: list[str] = []
@@ -280,10 +314,7 @@ def _cmd_query(engine, args) -> int:
         results = query.search(args.text, kind=args.kind, limit=args.limit)
         print(f"{len(results)} match(es) for {args.text!r} in {args.source}")
         for node in results:
-            print(
-                f"  {node.kind:10} {node.qualname}  "
-                f"({node.file}:{node.start_line})"
-            )
+            print(f"  {node.kind:10} {node.qualname}  ({node.file}:{node.start_line})")
             if node.summary:
                 print(f"             {node.summary}")
     finally:

@@ -29,6 +29,7 @@ def create_server(
     discovery_config: "DiscoveryConfig | None" = None,
     providers: Iterable[Provider] | None = None,
     discover_entry_points: bool = True,
+    provider_names: set[str] | None = None,
     enable_path_safety: bool = True,
     enable_response_limit: bool = True,
     response_limit_bytes: int = 256 * 1024,
@@ -48,6 +49,9 @@ def create_server(
             They run after auto-discovered providers.
         discover_entry_points: If True, auto-discover providers via the
             ``molmcp.providers`` entry point group.
+        provider_names: When set, restrict auto-discovered providers to
+            those whose ``name`` is in this set. ``None`` means no filter.
+            Explicit ``providers=`` are never filtered.
         enable_path_safety: Mount :class:`PathSafetyMiddleware`.
         enable_response_limit: Mount :class:`ResponseLimitMiddleware`.
         response_limit_bytes: Per-response truncation threshold.
@@ -76,6 +80,8 @@ def create_server(
         DiscoveryProvider(sources, discovery_config).register(mcp)
 
     auto: list[Provider] = list(discover_providers()) if discover_entry_points else []
+    if provider_names is not None:
+        auto = [p for p in auto if p.name in provider_names]
     explicit: list[Provider] = list(providers) if providers else []
     seen: set[str] = set()
 
@@ -91,7 +97,9 @@ def create_server(
                 raise
             logger.warning(
                 "Skipping auto-discovered provider %r: %s: %s",
-                prov.name, type(exc).__name__, exc,
+                prov.name,
+                type(exc).__name__,
+                exc,
             )
 
     if validate_annotations:
@@ -111,9 +119,7 @@ def _default_instructions(
 ) -> str:
     parts = ["molmcp server."]
     if sources:
-        parts.append(
-            "Graph-indexed discovery sources: " + ", ".join(sources) + "."
-        )
+        parts.append("Graph-indexed discovery sources: " + ", ".join(sources) + ".")
         parts.append(
             "Use molmcp_outline to see structure, molmcp_find_capability to "
             "discover capabilities, then molmcp_search_symbols / "

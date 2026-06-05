@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `molmcp --pkg NAME[,NAME...]` (repeatable or comma-separated) restricts
+  the server to the chosen MolCrafts packages, narrowing both the default
+  discovery sources and the entry-point-discovered providers. An explicit
+  `--source` still overrides discovery sources, while provider filtering
+  keeps honoring `--pkg`. `create_server(..., provider_names=...)` is the
+  programmatic equivalent.
+
 - **Graph-based discovery engine** (`molmcp.discovery`) — a
   multi-language, snapshot-cached codebase capability discovery engine
   that replaces runtime introspection. A two-phase extract→resolve
