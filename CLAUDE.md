@@ -5,7 +5,7 @@ mol_project:
   stage: experimental
   build:
     install: "uv sync --extra dev"
-    check: "uv run ruff check src tests"
+    check: "uv run ruff check src tests && uv run ruff format --check src tests"
     test: "uv run pytest -v"
     test_single: "uv run pytest {path} -v"
   arch:
@@ -17,7 +17,7 @@ mol_project:
     required: false
   ci:
     config: .github/workflows/ci.yml
-    local: "uv run ruff check src tests && uv run pytest -v"
+    local: "uv run ruff check src tests && uv run ruff format --check src tests && uv run pytest -v"
   notes_path: .claude/notes/notes.md
   specs_path: .claude/specs/
 ---
