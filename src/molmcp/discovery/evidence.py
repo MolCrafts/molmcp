@@ -15,6 +15,8 @@ from .schema import Edge, Node, NodeKind
 
 _MAX_EXAMPLE_CHARS = 2000
 _MAX_SOURCE_CHARS = 12000
+_MAX_CONVENTIONS = 3
+_MAX_CONVENTION_CHARS = 1200
 
 
 def node_brief(node: Node) -> dict:
@@ -62,6 +64,20 @@ def example_view(node: Node) -> dict:
     }
 
 
+def convention_view(node: Node) -> dict:
+    """View of a ``convention`` node, with its rules text size-capped."""
+    rules = "\n".join(str(r) for r in node.metadata.get("rules", []))
+    if len(rules) > _MAX_CONVENTION_CHARS:
+        rules = rules[:_MAX_CONVENTION_CHARS] + "\n... (truncated)"
+    return {
+        "id": node.qualname,
+        "title": str(node.metadata.get("title", "")),
+        "scope": list(node.metadata.get("scope", [])),
+        "rules": rules,
+        "tags": list(node.metadata.get("tags", [])),
+    }
+
+
 def _caller_view(node: Node, edge: Edge) -> dict:
     """Caller entry: node brief plus the call edge's confidence."""
     view = node_brief(node)
@@ -99,6 +115,7 @@ class EvidenceBuilder:
             matches += self._symbol_matches(task, remaining, exclude=implemented)
         for rank, match in enumerate(matches, 1):
             match["rank"] = rank
+            match["conventions"] = self._conventions_block(match["node"]["qualname"])
         payload: dict = {
             "query": task,
             "match_count": len(matches),
@@ -184,6 +201,13 @@ class EvidenceBuilder:
             )
         return matches
 
+    def _conventions_block(self, qualname: str) -> list[dict]:
+        """Scope-matched conventions for a symbol, capped in count."""
+        return [
+            convention_view(c)
+            for c in self.query.conventions_for(qualname, limit=_MAX_CONVENTIONS)
+        ]
+
     def describe(
         self, qualname: str, include_source: bool, root_dir: Path | None
     ) -> dict | None:
@@ -199,6 +223,7 @@ class EvidenceBuilder:
         ]
         detail["caller_count"] = len(self.query.callers(qualname, limit=500))
         detail["callee_count"] = len(self.query.callees(qualname, limit=500))
+        detail["conventions"] = self._conventions_block(node.qualname)
         if include_source and root_dir is not None:
             detail["source"] = read_source(root_dir, node)
         return detail

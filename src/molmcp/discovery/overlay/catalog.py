@@ -10,7 +10,9 @@ A ``capability_catalog.toml`` declares curated capabilities:
     examples = ["examples/rdf_basic.py"]
     tags = ["analysis", "structure"]
 
-The *format* is core; the *content* ships with a domain overlay package.
+The same file may also carry ``[[convention]]`` tables; see
+:mod:`.conventions`. The *format* is core; the *content* ships with a
+domain overlay package.
 """
 
 from __future__ import annotations
@@ -31,6 +33,11 @@ from ..schema import (
 )
 from ..source import Snapshot
 from . import OverlayContribution
+from .conventions import (
+    Convention,
+    build_convention_contribution,
+    load_conventions,
+)
 
 _CATALOG_FILE = "<catalog>"
 
@@ -158,6 +165,7 @@ class CatalogOverlay:
         self.catalog_path = Path(catalog_path)
         self.spec_contains = spec_contains
         self._capabilities: list[Capability] | None = None
+        self._conventions: list[Convention] | None = None
 
     @property
     def capabilities(self) -> list[Capability]:
@@ -165,10 +173,23 @@ class CatalogOverlay:
             self._capabilities = load_catalog(self.catalog_path)
         return self._capabilities
 
+    @property
+    def conventions(self) -> list[Convention]:
+        """Conventions lazily parsed from the catalog file."""
+        if self._conventions is None:
+            self._conventions = load_conventions(self.catalog_path)
+        return self._conventions
+
     def applies_to(self, snapshot: Snapshot) -> bool:
         if self.spec_contains is None:
             return True
         return self.spec_contains in snapshot.spec
 
     def contribute(self, graph: CodeGraph) -> OverlayContribution:
-        return build_contribution(self.capabilities, graph)
+        """Merged capability + convention contribution for ``graph``."""
+        contribution = build_contribution(self.capabilities, graph)
+        extra = build_convention_contribution(self.conventions, graph)
+        contribution.nodes.extend(extra.nodes)
+        contribution.edges.extend(extra.edges)
+        contribution.unresolved.extend(extra.unresolved)
+        return contribution

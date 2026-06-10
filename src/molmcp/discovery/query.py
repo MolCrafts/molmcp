@@ -15,6 +15,7 @@ _KIND_ORDER: dict[str, int] = {
     NodeKind.MODULE: 1,
     NodeKind.NAMESPACE: 2,
     NodeKind.CAPABILITY: 2,
+    NodeKind.CONVENTION: 2,
     NodeKind.CLASS: 3,
     NodeKind.STRUCT: 3,
     NodeKind.INTERFACE: 3,
@@ -76,6 +77,25 @@ class DiscoveryQuery:
         if not candidates:
             return None
         return sorted(candidates, key=lambda n: (_KIND_ORDER.get(n.kind, 7), n.id))[0]
+
+    def conventions_for(self, qualname: str, limit: int = 10) -> list[Node]:
+        """Convention nodes whose scope prefix covers ``qualname``.
+
+        Matching is dot-boundary-safe (scope ``a.b`` does not match
+        ``a.b2.x``) and works at any symbol depth via the convention's
+        metadata scopes — ``governs`` edges only attach at
+        package/module granularity. Most specific scope first.
+        """
+        matches: list[tuple[int, Node]] = []
+        for node in self.store.nodes_by_kind(NodeKind.CONVENTION):
+            best = -1
+            for scope in node.metadata.get("scope", []):
+                if qualname == scope or qualname.startswith(scope + "."):
+                    best = max(best, len(scope))
+            if best >= 0:
+                matches.append((best, node))
+        matches.sort(key=lambda pair: (-pair[0], pair[1].qualname))
+        return [node for _, node in matches[:limit]]
 
     # -- relationship walks ------------------------------------------
 
