@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 # Bump when analyzer output changes — invalidates the extraction cache.
 ANALYZER_VERSION = 1
 

@@ -10,7 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from .query import DiscoveryQuery
-from .schema import Node
+from .ranking import RankCandidate, rank_matches, rank_signals
+from .schema import Edge, Node, NodeKind
 
 _MAX_EXAMPLE_CHARS = 2000
 _MAX_SOURCE_CHARS = 12000
@@ -61,6 +62,16 @@ def example_view(node: Node) -> dict:
     }
 
 
+def _caller_view(node: Node, edge: Edge) -> dict:
+    """Caller entry: node brief plus the call edge's confidence."""
+    view = node_brief(node)
+    view["provenance"] = str(edge.provenance)
+    via = edge.metadata.get("via")
+    if via:
+        view["via"] = via
+    return view
+
+
 def read_source(root_dir: Path, node: Node) -> str:
     """Read a node's source span from disk (best-effort)."""
     path = Path(root_dir) / node.file
@@ -81,29 +92,13 @@ class EvidenceBuilder:
         self.query = query
 
     def find_capability(self, task: str, max_results: int) -> dict:
-        hits = self.query.search(task, limit=max_results)
-        matches = []
-        for rank, node in enumerate(hits, 1):
-            matches.append(
-                {
-                    "rank": rank,
-                    "node": node_brief(node),
-                    "signature": node.signature,
-                    "summary": node.summary,
-                    "examples": [
-                        example_view(e)
-                        for e in self.query.examples_of(node.qualname, limit=3)
-                    ],
-                    "tests": [
-                        node_brief(t)
-                        for t in self.query.tests_of(node.qualname, limit=5)
-                    ],
-                    "callers": [
-                        node_brief(c)
-                        for c in self.query.callers(node.qualname, limit=6)
-                    ],
-                }
-            )
+        matches = self._capability_matches(task, max_results)
+        implemented = {i["qualname"] for m in matches for i in m["implemented_by"]}
+        remaining = max_results - len(matches)
+        if remaining > 0:
+            matches += self._symbol_matches(task, remaining, exclude=implemented)
+        for rank, match in enumerate(matches, 1):
+            match["rank"] = rank
         payload: dict = {
             "query": task,
             "match_count": len(matches),
@@ -116,6 +111,79 @@ class EvidenceBuilder:
             )
         return payload
 
+    def _capability_matches(self, task: str, max_results: int) -> list[dict]:
+        """Curated capability nodes matching ``task``, ranked first."""
+        caps = self.query.search(task, kind=NodeKind.CAPABILITY, limit=max_results)
+        matches = []
+        for node in caps:
+            impls = self.query.implementations(node.qualname, limit=10)
+            matches.append(
+                {
+                    "rank": 0,  # assigned globally across both stages
+                    "match_type": "capability",
+                    "node": node_brief(node),
+                    "signature": node.signature,
+                    "summary": node.summary,
+                    "implemented_by": [node_brief(i) for i in impls],
+                    "examples": [
+                        example_view(e)
+                        for e in self.query.examples_of(node.qualname, limit=3)
+                    ],
+                }
+            )
+        return matches
+
+    def _symbol_matches(
+        self,
+        task: str,
+        max_results: int,
+        exclude: set[str] | None = None,
+    ) -> list[dict]:
+        """FTS recall oversampled, then re-ranked by graph signals."""
+        skip = exclude or set()
+        hits = [
+            n
+            for n in self.query.search(task, limit=max_results * 3)
+            if n.kind != NodeKind.CAPABILITY and n.qualname not in skip
+        ]
+        counts = self.query.caller_counts([n.id for n in hits])
+        evidence: dict[str, tuple[list[Node], list[Node]]] = {}
+        candidates = []
+        for fts_rank, node in enumerate(hits):
+            examples = self.query.examples_of(node.qualname, limit=3)
+            tests = self.query.tests_of(node.qualname, limit=5)
+            evidence[node.id] = (examples, tests)
+            candidates.append(
+                RankCandidate(
+                    node=node,
+                    fts_rank=fts_rank,
+                    caller_count=counts.get(node.id, 0),
+                    example_count=len(examples),
+                    test_count=len(tests),
+                )
+            )
+        matches = []
+        for rank, cand in enumerate(rank_matches(candidates)[:max_results], 1):
+            node = cand.node
+            examples, tests = evidence[node.id]
+            matches.append(
+                {
+                    "rank": rank,
+                    "match_type": "symbol",
+                    "node": node_brief(node),
+                    "signature": node.signature,
+                    "summary": node.summary,
+                    "rank_signals": rank_signals(cand),
+                    "examples": [example_view(e) for e in examples],
+                    "tests": [node_brief(t) for t in tests],
+                    "callers": [
+                        _caller_view(c, e)
+                        for c, e in self.query.callers_pairs(node.qualname, limit=6)
+                    ],
+                }
+            )
+        return matches
+
     def describe(
         self, qualname: str, include_source: bool, root_dir: Path | None
     ) -> dict | None:
@@ -124,8 +192,7 @@ class EvidenceBuilder:
             return None
         detail = node_detail(node)
         detail["examples"] = [
-            example_view(e)
-            for e in self.query.examples_of(qualname, limit=5)
+            example_view(e) for e in self.query.examples_of(qualname, limit=5)
         ]
         detail["tests"] = [
             node_brief(t) for t in self.query.tests_of(qualname, limit=10)

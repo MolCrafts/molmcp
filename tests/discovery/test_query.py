@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from molmcp.discovery import DiscoveryConfig, DiscoveryEngine, DiscoveryQuery
+from molmcp.discovery.schema import EdgeKind
 
 _CALC = '''"""Calculator package."""
 
@@ -132,3 +133,41 @@ def test_outline_path_filter(query):
 def test_unknown_symbol_returns_empty(query):
     assert query.get_node("calc.nonexistent") is None
     assert query.callers("calc.nonexistent") == []
+
+
+# -- batched incoming-edge / caller counts ------------------------------
+
+
+def _ids(query: DiscoveryQuery, *qualnames: str) -> list[str]:
+    out: list[str] = []
+    for qualname in qualnames:
+        node = query.get_node(qualname)
+        assert node is not None
+        out.append(node.id)
+    return out
+
+
+def test_incoming_edge_counts_batched(query):
+    add_id, mul_id, base_id = _ids(query, "calc.add", "calc.mul", "calc.Base")
+    counts = query.store.incoming_edge_counts([add_id, mul_id, base_id], EdgeKind.CALLS)
+    # add is called by mul, Calc.run and test_add; mul by Calc.run;
+    # Base has zero CALLS in-edges and must be absent from the result.
+    assert counts == {add_id: 3, mul_id: 1}
+
+
+def test_incoming_edge_counts_empty_input(query):
+    assert query.store.incoming_edge_counts([], EdgeKind.CALLS) == {}
+
+
+def test_incoming_edge_counts_only_requested_kind(query):
+    (add_id,) = _ids(query, "calc.add")
+    # test_add both CALLS and TESTS calc.add; kinds must not bleed.
+    tests = query.store.incoming_edge_counts([add_id], EdgeKind.TESTS)
+    calls = query.store.incoming_edge_counts([add_id], EdgeKind.CALLS)
+    assert tests == {add_id: 1}
+    assert calls == {add_id: 3}
+
+
+def test_caller_counts_delegates_to_store(query):
+    add_id, base_id = _ids(query, "calc.add", "calc.Base")
+    assert query.caller_counts([add_id, base_id]) == {add_id: 3}

@@ -121,9 +121,7 @@ class GraphStore:
         )
 
     @staticmethod
-    def _insert_files(
-        conn: sqlite3.Connection, files: list[FileRecord]
-    ) -> None:
+    def _insert_files(conn: sqlite3.Connection, files: list[FileRecord]) -> None:
         conn.executemany(
             "INSERT INTO files(path, language, content_hash, size, "
             "node_count, errors, indexed_at) VALUES(?,?,?,?,?,?,?)",
@@ -193,9 +191,7 @@ class GraphStore:
         )
 
     @staticmethod
-    def _insert_unresolved(
-        conn: sqlite3.Connection, refs: list[UnresolvedRef]
-    ) -> None:
+    def _insert_unresolved(conn: sqlite3.Connection, refs: list[UnresolvedRef]) -> None:
         conn.executemany(
             "INSERT INTO unresolved(from_node, name, kind, file, line) "
             "VALUES(?,?,?,?,?)",
@@ -226,12 +222,10 @@ class GraphStore:
                 for r in conn.execute("SELECT * FROM files ORDER BY path")
             ],
             nodes=[
-                _row_to_node(r)
-                for r in conn.execute("SELECT * FROM nodes ORDER BY id")
+                _row_to_node(r) for r in conn.execute("SELECT * FROM nodes ORDER BY id")
             ],
             edges=[
-                _row_to_edge(r)
-                for r in conn.execute("SELECT * FROM edges ORDER BY id")
+                _row_to_edge(r) for r in conn.execute("SELECT * FROM edges ORDER BY id")
             ],
             unresolved=[
                 _row_to_unresolved(r)
@@ -242,9 +236,11 @@ class GraphStore:
     # -- targeted reads ----------------------------------------------
 
     def get_node(self, node_id: str) -> Node | None:
-        row = self._conn().execute(
-            "SELECT * FROM nodes WHERE id = ?", (node_id,)
-        ).fetchone()
+        row = (
+            self._conn()
+            .execute("SELECT * FROM nodes WHERE id = ?", (node_id,))
+            .fetchone()
+        )
         return _row_to_node(row) if row else None
 
     def nodes_by_qualname(self, qualname: str) -> list[Node]:
@@ -287,6 +283,22 @@ class GraphStore:
             sql = "SELECT * FROM edges WHERE target = ? AND kind = ? ORDER BY id"
             params = (node_id, str(kind))
         return [_row_to_edge(r) for r in self._conn().execute(sql, params)]
+
+    def incoming_edge_counts(self, node_ids: list[str], kind: str) -> dict[str, int]:
+        """Count incoming edges of ``kind`` per node id in one statement.
+
+        Ids with no matching in-edges are absent from the result.
+        """
+        if not node_ids:
+            return {}
+        placeholders = ",".join("?" for _ in node_ids)
+        rows = self._conn().execute(
+            "SELECT target, COUNT(*) AS n FROM edges "
+            f"WHERE kind = ? AND target IN ({placeholders}) "
+            "GROUP BY target",
+            (str(kind), *node_ids),
+        )
+        return {row["target"]: row["n"] for row in rows}
 
     def search(
         self, query: str, kind: str | None = None, limit: int = 30

@@ -39,9 +39,11 @@ class Resolver:
         self._by_qualname: dict[str, list[Node]] = {}
         self._by_name: dict[str, list[Node]] = {}
         self._by_id: dict[str, Node] = {}
+        self._imports_by_file: dict[str, dict[str, list[Node]]] = {}
 
     def resolve(self, graph: CodeGraph) -> CodeGraph:
         self._index_nodes(graph.nodes)
+        self._build_import_map(graph)
         self._resolve_refs(graph)
         self._link_tests(graph)
         self._extract_examples(graph)
@@ -57,6 +59,25 @@ class Resolver:
             self._by_qualname.setdefault(node.qualname, []).append(node)
             self._by_name.setdefault(node.name, []).append(node)
             self._by_id[node.id] = node
+
+    def _build_import_map(self, graph: CodeGraph) -> None:
+        """Map ``file -> simple name -> nodes`` from its import refs.
+
+        Lets ``_resolve_call`` prefer symbols a file actually imports
+        over the snapshot-global same-name pool.
+        """
+        self._imports_by_file = {}
+        for ref in graph.unresolved:
+            if ref.kind != EdgeKind.IMPORTS or not ref.file:
+                continue
+            abs_name = self._absolute_import_name(ref)
+            if not abs_name:
+                continue
+            targets = self._by_qualname.get(abs_name)
+            if not targets:
+                continue
+            per_file = self._imports_by_file.setdefault(ref.file, {})
+            per_file.setdefault(abs_name.split(".")[-1], []).extend(targets)
 
     def _pick(
         self,
@@ -113,23 +134,62 @@ class Resolver:
         simple = ref.name.split(".")[-1]
         if simple in ("", "self", "cls", "super"):
             return None
-        target = self._pick(
-            self._by_name.get(simple, []), ref.file, _CALLABLE_KINDS
-        )
+        scoped = self._import_scoped_target(ref)
+        if scoped is not None:
+            target, unique = scoped
+            # A unique import-scoped hit carries AST-confirmed intent,
+            # matching the evidence strength of an exact qualname match;
+            # multiple candidates remain a guess.
+            prov = Provenance.RESOLVED if unique else Provenance.HEURISTIC
+            edge = self._edge(ref, target, prov)
+            edge.metadata["via"] = "import"
+            return edge
+        target = self._pick(self._by_name.get(simple, []), ref.file, _CALLABLE_KINDS)
         if target is None or target.id == ref.from_node:
             return None
         return self._edge(ref, target, Provenance.HEURISTIC)
 
+    def _import_scoped_target(self, ref: UnresolvedRef) -> tuple[Node, bool] | None:
+        """Resolve a call against the referencing file's imports.
+
+        Returns ``(target, unique)``, or None when the file's imports
+        offer no candidate (the global heuristic then applies).
+        """
+        imports = self._imports_by_file.get(ref.file or "", {})
+        if not imports:
+            return None
+        parts = ref.name.split(".")
+        if len(parts) >= 2:
+            # Dotted call through an imported module: mod.fn().
+            for module in imports.get(parts[0], []):
+                if module.kind not in _MODULE_KINDS:
+                    continue
+                qualname = ".".join([module.qualname, *parts[1:]])
+                pool = [
+                    c
+                    for c in self._by_qualname.get(qualname, [])
+                    if c.kind in _CALLABLE_KINDS and c.id != ref.from_node
+                ]
+                if pool:
+                    return (
+                        sorted(pool, key=lambda n: n.id)[0],
+                        len(pool) == 1,
+                    )
+        pool = [
+            c
+            for c in imports.get(parts[-1], [])
+            if c.kind in _CALLABLE_KINDS and c.id != ref.from_node
+        ]
+        if pool:
+            return sorted(pool, key=lambda n: n.id)[0], len(pool) == 1
+        return None
+
     def _resolve_type(self, ref: UnresolvedRef) -> Edge | None:
-        exact = self._pick(
-            self._by_qualname.get(ref.name, []), ref.file, _TYPE_KINDS
-        )
+        exact = self._pick(self._by_qualname.get(ref.name, []), ref.file, _TYPE_KINDS)
         if exact is not None:
             return self._edge(ref, exact, Provenance.RESOLVED)
         simple = ref.name.split(".")[-1]
-        target = self._pick(
-            self._by_name.get(simple, []), ref.file, _TYPE_KINDS
-        )
+        target = self._pick(self._by_name.get(simple, []), ref.file, _TYPE_KINDS)
         if target is None:
             return None
         return self._edge(ref, target, Provenance.HEURISTIC)
@@ -138,9 +198,7 @@ class Resolver:
         abs_name = self._absolute_import_name(ref)
         if not abs_name:
             return None
-        target = self._pick(
-            self._by_qualname.get(abs_name, []), ref.file, None
-        )
+        target = self._pick(self._by_qualname.get(abs_name, []), ref.file, None)
         if target is None:
             return None
         return self._edge(ref, target, Provenance.RESOLVED)
@@ -174,7 +232,7 @@ class Resolver:
         for node in list(graph.nodes):
             if node.kind != NodeKind.TEST:
                 continue
-            subject = node.name[len("test_"):]
+            subject = node.name[len("test_") :]
             if not subject:
                 continue
             target = self._pick(

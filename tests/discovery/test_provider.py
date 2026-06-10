@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest  # noqa: F401
+import pytest
 from conftest import call
 
 from molmcp import create_server
-from molmcp.discovery import DiscoveryConfig
+from molmcp.discovery import DiscoveryConfig, DiscoveryEngine
+from molmcp.discovery.evidence import EvidenceBuilder
+from molmcp.discovery.overlay.catalog import CatalogOverlay
 
 _DISCOVERY_TOOLS = {
     "molmcp_find_capability",
@@ -48,9 +50,7 @@ class TestOutline:
 
 class TestSearch:
     async def test_finds_class(self, server):
-        result = await call(
-            server, "molmcp_search_symbols", {"query": "Widget"}
-        )
+        result = await call(server, "molmcp_search_symbols", {"query": "Widget"})
         assert "fixture_pkg.Widget" in {r["qualname"] for r in result["results"]}
 
     async def test_kind_filter(self, server):
@@ -111,12 +111,132 @@ class TestRelations:
 
 class TestFindCapability:
     async def test_returns_matches_and_snapshot(self, server):
-        result = await call(
-            server, "molmcp_find_capability", {"task": "widget"}
-        )
+        result = await call(server, "molmcp_find_capability", {"task": "widget"})
         assert "matches" in result
         assert "snapshot" in result
         assert result["match_count"] == len(result["matches"])
+
+
+_CAP_CATALOG = """
+[[capability]]
+id = "compute.rdf"
+title = "Radial distribution function"
+summary = "Compute g(r) between atom selections."
+implemented_by = ["compute.RDF"]
+tags = ["analysis"]
+"""
+
+_CAP_SOURCE = '''"""Compute module."""
+
+
+class RDF:
+    """Radial distribution function compute op."""
+
+    def run(self):
+        return 1
+'''
+
+
+@pytest.fixture
+def capability_query(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "compute.py").write_text(_CAP_SOURCE, encoding="utf-8")
+    catalog = tmp_path / "capability_catalog.toml"
+    catalog.write_text(_CAP_CATALOG, encoding="utf-8")
+    engine = DiscoveryEngine(
+        DiscoveryConfig(cache_dir=tmp_path / "cache"),
+        overlays=[CatalogOverlay(catalog, name="test")],
+    )
+    return engine.query(str(repo))
+
+
+class TestCapabilityFirst:
+    def test_capability_match_ranks_first(self, capability_query):
+        result = EvidenceBuilder(capability_query).find_capability(
+            "radial distribution", 8
+        )
+        top = result["matches"][0]
+        assert top["match_type"] == "capability"
+        assert top["node"]["qualname"] == "compute.rdf"
+        implemented = {n["qualname"] for n in top["implemented_by"]}
+        assert implemented == {"compute.RDF"}
+
+    def test_implemented_symbols_deduped_from_symbol_stage(self, capability_query):
+        result = EvidenceBuilder(capability_query).find_capability(
+            "radial distribution", 8
+        )
+        symbol_quals = {
+            m["node"]["qualname"]
+            for m in result["matches"]
+            if m["match_type"] == "symbol"
+        }
+        assert "compute.RDF" not in symbol_quals
+
+    def test_ranks_are_consecutive_across_stages(self, capability_query):
+        result = EvidenceBuilder(capability_query).find_capability("compute", 8)
+        ranks = [m["rank"] for m in result["matches"]]
+        assert ranks == list(range(1, len(ranks) + 1))
+
+    async def test_no_capability_source_yields_symbol_matches_only(self, server):
+        result = await call(server, "molmcp_find_capability", {"task": "widget"})
+        assert result["matches"]
+        assert all(m["match_type"] == "symbol" for m in result["matches"])
+
+
+_PROV_SOURCE = '''"""m module."""
+
+
+def helper():
+    """A helper others call."""
+    return 1
+
+
+def driver():
+    """Calls helper."""
+    return helper()
+'''
+
+_PROVENANCE_VALUES = {"ast", "heuristic", "resolved"}
+
+
+@pytest.fixture
+def prov_repo(tmp_path):
+    repo = tmp_path / "prov_repo"
+    repo.mkdir()
+    (repo / "m.py").write_text(_PROV_SOURCE, encoding="utf-8")
+    return repo
+
+
+class TestProvenanceExposure:
+    async def test_relations_items_carry_provenance(self, tmp_path, prov_repo):
+        server = create_server(
+            "prov",
+            discovery_sources=[str(prov_repo)],
+            discovery_config=DiscoveryConfig(cache_dir=tmp_path / "pc"),
+            discover_entry_points=False,
+        )
+        result = await call(
+            server,
+            "molmcp_relations",
+            {"qualname": "m.helper", "relation": "callers"},
+        )
+        assert result["result_count"] >= 1
+        for item in result["results"]:
+            assert item["provenance"] in _PROVENANCE_VALUES
+
+    def test_find_capability_callers_carry_provenance(self, tmp_path, prov_repo):
+        from molmcp.discovery import DiscoveryEngine
+
+        engine = DiscoveryEngine(DiscoveryConfig(cache_dir=tmp_path / "pc2"))
+        query = engine.query(str(prov_repo))
+        result = EvidenceBuilder(query).find_capability("helper", 8)
+        match = next(
+            m for m in result["matches"] if m["node"]["qualname"] == "m.helper"
+        )
+        assert match["callers"]
+        for caller in match["callers"]:
+            assert caller["provenance"] in _PROVENANCE_VALUES
 
 
 class TestRefresh:
