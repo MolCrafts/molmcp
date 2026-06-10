@@ -111,9 +111,7 @@ ERROR_HINTS: tuple[ErrorHint, ...] = (
     ),
     ErrorHint(
         match_pattern="Cannot use kspace solver on system with no charge",
-        cause_hint=(
-            "kspace_style was declared but no atoms carry a non-zero charge."
-        ),
+        cause_hint=("kspace_style was declared but no atoms carry a non-zero charge."),
         remedy_hints=(
             "Check the data file Charges section.",
             "Confirm atom_style is one that supports charge (charge / full).",
@@ -150,9 +148,7 @@ ERROR_HINTS: tuple[ErrorHint, ...] = (
     ErrorHint(
         match_pattern="Angle coeff for type",
         cause_hint="Angle coefficients missing or malformed.",
-        remedy_hints=(
-            "Same diagnosis as Bond coeff for type, applied to angles.",
-        ),
+        remedy_hints=("Same diagnosis as Bond coeff for type, applied to angles.",),
         doc_refs=("read_data", "angle_coeff"),
         related_howtos=(("debug", "data_file_error"),),
     ),
@@ -292,8 +288,7 @@ def lookup(message: str, version: str = urls.DEFAULT_VERSION) -> dict:
                         urls.build_url(slug, version) for slug in hint.doc_refs
                     ],
                     "related_howtos": [
-                        {"category": c, "slug": s}
-                        for (c, s) in hint.related_howtos
+                        {"category": c, "slug": s} for (c, s) in hint.related_howtos
                     ],
                 }
             )

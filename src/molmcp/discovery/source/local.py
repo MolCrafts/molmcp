@@ -73,9 +73,7 @@ def _build_snapshot(
     )
 
 
-def resolve_local_path(
-    path: Path, spec: str, config: DiscoveryConfig
-) -> Snapshot:
+def resolve_local_path(path: Path, spec: str, config: DiscoveryConfig) -> Snapshot:
     """Resolve a local directory path to a snapshot.
 
     When the path is itself a Python package (has ``__init__.py``), the

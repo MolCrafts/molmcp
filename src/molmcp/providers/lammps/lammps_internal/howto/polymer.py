@@ -75,7 +75,8 @@ HOWTOS: tuple[Howto, ...] = (
             "vector autocorrelation) decay.",
         ),
         doc_refs=(
-            "compute_gyration", "compute_chunk_atom",
+            "compute_gyration",
+            "compute_chunk_atom",
         ),
         related_commands=(
             ("compute", "gyration"),

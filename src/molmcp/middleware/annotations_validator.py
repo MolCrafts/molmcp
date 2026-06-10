@@ -61,7 +61,6 @@ def validate_tool_annotations(mcp: FastMCP, *, strict: bool = True) -> list[str]
             )
     if warnings and strict:
         raise MissingAnnotationsError(
-            "Tool annotation validation failed:\n  - "
-            + "\n  - ".join(warnings)
+            "Tool annotation validation failed:\n  - " + "\n  - ".join(warnings)
         )
     return warnings

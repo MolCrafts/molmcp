@@ -80,8 +80,6 @@ class TestProviderDeduplication:
         # Two providers with the same name — second should be skipped silently
         p1 = GoodProvider()
         p2 = GoodProvider()
-        server = create_server(
-            "test", providers=[p1, p2], discover_entry_points=False
-        )
+        server = create_server("test", providers=[p1, p2], discover_entry_points=False)
         # No exception, single registration
         assert isinstance(server, FastMCP)

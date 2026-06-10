@@ -442,7 +442,5 @@ class TestMolexpListRuns:
             for i in range(5)
         ]
         server = _build_server(ws)
-        rows = _tool(server, "molexp_list_runs")(
-            scope_kind="workspace", limit=2
-        )
+        rows = _tool(server, "molexp_list_runs")(scope_kind="workspace", limit=2)
         assert len(rows) == 2

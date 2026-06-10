@@ -85,9 +85,7 @@ def test_contains_edges_link_parents_to_children(result):
     widget = _by_qualname(result, "fixture_pkg.Widget")
     grow = _by_qualname(result, "fixture_pkg.Widget.grow")
     contains = {
-        (e.source, e.target)
-        for e in result.edges
-        if e.kind == EdgeKind.CONTAINS
+        (e.source, e.target) for e in result.edges if e.kind == EdgeKind.CONTAINS
     }
     assert (module.id, widget.id) in contains
     assert (widget.id, grow.id) in contains
@@ -105,9 +103,7 @@ def test_calls_recorded_as_unresolved(result):
 
 
 def test_syntax_error_is_captured_not_raised():
-    record = FileRecord(
-        path="bad.py", language="python", content_hash="x", size=10
-    )
+    record = FileRecord(path="bad.py", language="python", content_hash="x", size=10)
     out = PythonAnalyzer().analyze(record, "def broken(:\n")
     assert out.nodes == []
     assert any("SyntaxError" in e for e in out.errors)

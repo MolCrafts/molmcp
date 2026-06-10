@@ -135,9 +135,7 @@ def tokenize(content: str) -> dict:
             double = code.count('"')
             single = code.count("'")
             if double % 2 != 0 or single % 2 != 0:
-                warnings.append(
-                    f"line {line_no}: unbalanced quote in `{code.strip()}`"
-                )
+                warnings.append(f"line {line_no}: unbalanced quote in `{code.strip()}`")
         commands.append(
             {
                 "line": line_no,

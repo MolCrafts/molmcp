@@ -94,7 +94,9 @@ class DiscoveryEngine:
             if cached is not None:
                 graph = self.load_graph(cached.snapshot_id)
                 return IndexResult(
-                    snapshot=cached, graph=graph, cached=True,
+                    snapshot=cached,
+                    graph=graph,
+                    cached=True,
                     freshness="unknown",
                 )
         snapshot = self.resolver.resolve(spec)
@@ -175,9 +177,7 @@ class DiscoveryEngine:
         """Load a previously indexed snapshot's graph from cache."""
         store = GraphStore(self.cache.graph_db_path(snapshot_id))
         if not store.exists():
-            raise FileNotFoundError(
-                f"no cached graph for snapshot {snapshot_id!r}"
-            )
+            raise FileNotFoundError(f"no cached graph for snapshot {snapshot_id!r}")
         try:
             return store.load_graph()
         finally:

@@ -28,18 +28,14 @@ def _repo(tmp_path: Path) -> Path:
 
 
 def test_engine_works_without_overlays(tmp_path):
-    engine = DiscoveryEngine(
-        DiscoveryConfig(cache_dir=tmp_path / "cache"), overlays=[]
-    )
+    engine = DiscoveryEngine(DiscoveryConfig(cache_dir=tmp_path / "cache"), overlays=[])
     graph = engine.get_graph(str(_repo(tmp_path)))
     assert {n.qualname for n in graph.nodes} >= {"calc.add", "calc.Calc"}
     assert not any(n.kind == "capability" for n in graph.nodes)
 
 
 def test_all_queries_work_without_overlays(tmp_path):
-    engine = DiscoveryEngine(
-        DiscoveryConfig(cache_dir=tmp_path / "cache"), overlays=[]
-    )
+    engine = DiscoveryEngine(DiscoveryConfig(cache_dir=tmp_path / "cache"), overlays=[])
     query = engine.query(str(_repo(tmp_path)))
     assert query.search("calculator")
     assert query.get_node("calc.Calc") is not None

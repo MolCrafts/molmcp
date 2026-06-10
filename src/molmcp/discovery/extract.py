@@ -65,9 +65,7 @@ class Extractor:
                     graph.files.append(record)
                     continue
                 except Exception as exc:  # noqa: BLE001 - isolate analyzer bugs
-                    record.errors.append(
-                        f"analyzer error: {type(exc).__name__}: {exc}"
-                    )
+                    record.errors.append(f"analyzer error: {type(exc).__name__}: {exc}")
                     graph.files.append(record)
                     continue
                 analyzed += 1

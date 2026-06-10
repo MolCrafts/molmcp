@@ -68,9 +68,7 @@ _ANCHOR_RE = re.compile(
 
 # Match either <span id="x"></span> or <section id="x">. Both appear in
 # LAMMPS docs depending on Sphinx version / page type.
-_SECTION_OPEN_RE_TPL = (
-    r'<(?:section|span) id="{anchor}"(?:></span>|>)'
-)
+_SECTION_OPEN_RE_TPL = r'<(?:section|span) id="{anchor}"(?:></span>|>)'
 
 # Match a section boundary — next anchored heading.
 _SECTION_BOUNDARY_RE = re.compile(
@@ -159,7 +157,7 @@ def fetch_all(
     howto_html = fetch(howto_url)
     seen_topics: set[str] = set()
     for slug in _HOWTO_HREF_RE.findall(howto_html):
-        topic = slug[len("Howto_"):]
+        topic = slug[len("Howto_") :]
         seen_topics.add(topic)
     return page_slugs, tuple(sorted(seen_topics))
 
@@ -204,12 +202,8 @@ def diff_against_existing(
     list[tuple[tuple[str, str], str]],
 ]:
     """Compute (added, changed, removed) for two slug maps."""
-    added = [
-        (key, new[key]) for key in sorted(set(new) - set(existing))
-    ]
-    removed = [
-        (key, existing[key]) for key in sorted(set(existing) - set(new))
-    ]
+    added = [(key, new[key]) for key in sorted(set(new) - set(existing))]
+    removed = [(key, existing[key]) for key in sorted(set(existing) - set(new))]
     changed = [
         (key, existing[key], new[key])
         for key in sorted(set(existing) & set(new))

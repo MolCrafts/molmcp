@@ -69,11 +69,15 @@ class ExtractCache:
         return self._conn
 
     def get(self, path: str, content_hash: str) -> AnalyzerResult | None:
-        row = self._connect().execute(
-            "SELECT payload FROM extract WHERE path=? AND content_hash=? "
-            "AND analyzer_version=?",
-            (path, content_hash, self.analyzer_version),
-        ).fetchone()
+        row = (
+            self._connect()
+            .execute(
+                "SELECT payload FROM extract WHERE path=? AND content_hash=? "
+                "AND analyzer_version=?",
+                (path, content_hash, self.analyzer_version),
+            )
+            .fetchone()
+        )
         if row is None:
             return None
         try:
@@ -86,8 +90,7 @@ class ExtractCache:
             "INSERT OR REPLACE INTO extract"
             "(path, content_hash, analyzer_version, payload, created_at) "
             "VALUES(?,?,?,?,?)",
-            (path, content_hash, self.analyzer_version, _encode(result),
-             time.time()),
+            (path, content_hash, self.analyzer_version, _encode(result), time.time()),
         )
 
     def flush(self) -> None:
@@ -95,9 +98,7 @@ class ExtractCache:
             self._conn.commit()
 
     def entry_count(self) -> int:
-        return self._connect().execute(
-            "SELECT COUNT(*) FROM extract"
-        ).fetchone()[0]
+        return self._connect().execute("SELECT COUNT(*) FROM extract").fetchone()[0]
 
     def prune_older_than(self, cutoff: float) -> int:
         conn = self._connect()

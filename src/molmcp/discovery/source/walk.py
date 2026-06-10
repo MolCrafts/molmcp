@@ -55,9 +55,7 @@ def _matches(rel_posix: str, name: str, patterns: list[str]) -> bool:
         if p.startswith("/"):
             p = p[1:]
         if "/" in p:
-            if fnmatch.fnmatch(rel_posix, p) or fnmatch.fnmatch(
-                rel_posix, p + "/*"
-            ):
+            if fnmatch.fnmatch(rel_posix, p) or fnmatch.fnmatch(rel_posix, p + "/*"):
                 return True
         elif fnmatch.fnmatch(name, p):
             return True

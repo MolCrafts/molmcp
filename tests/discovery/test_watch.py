@@ -30,9 +30,7 @@ def test_poll_once_reports_no_change(tmp_path):
 def test_poll_once_detects_and_refreshes_change(tmp_path):
     repo = _repo(tmp_path)
     changes: list = []
-    watcher = LocalWatcher(
-        _engine(tmp_path), str(repo), on_change=changes.append
-    )
+    watcher = LocalWatcher(_engine(tmp_path), str(repo), on_change=changes.append)
     watcher.poll_once()
 
     (repo / "m.py").write_text("def m():\n    return 1\n", encoding="utf-8")
@@ -54,9 +52,7 @@ def test_watch_thread_triggers_refresh(tmp_path):
     watcher.start()
     try:
         time.sleep(0.15)
-        (repo / "m.py").write_text(
-            "def m():\n    return 2\n", encoding="utf-8"
-        )
+        (repo / "m.py").write_text("def m():\n    return 2\n", encoding="utf-8")
         assert fired.wait(timeout=3.0)
     finally:
         watcher.stop()

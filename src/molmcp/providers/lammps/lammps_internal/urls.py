@@ -155,8 +155,7 @@ SHARED_WITH = _build_shared_with()
 def _validate_version(version: str) -> None:
     if version not in VERSION_PREFIX:
         raise ValueError(
-            f"unknown LAMMPS doc version {version!r}; "
-            f"valid: {sorted(VERSION_PREFIX)}"
+            f"unknown LAMMPS doc version {version!r}; valid: {sorted(VERSION_PREFIX)}"
         )
 
 

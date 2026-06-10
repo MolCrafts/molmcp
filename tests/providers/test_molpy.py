@@ -87,9 +87,7 @@ def test_list_compute_ops_discovers_from_module():
         if inspect.isclass(getattr(compute_mod, name))
         and getattr(compute_mod, name) is not compute_mod.Compute
         and issubclass(getattr(compute_mod, name), compute_mod.Compute)
-        and not getattr(
-            getattr(compute_mod, name), "__abstractmethods__", frozenset()
-        )
+        and not getattr(getattr(compute_mod, name), "__abstractmethods__", frozenset())
     }
 
     server = _build_server()
@@ -113,9 +111,7 @@ def test_list_readers_discovers_structure_and_trajectory():
         if _inspect.isclass(getattr(io_mod, name))
         and getattr(io_mod, name) is not io_mod.DataReader
         and issubclass(getattr(io_mod, name), io_mod.DataReader)
-        and not getattr(
-            getattr(io_mod, name), "__abstractmethods__", frozenset()
-        )
+        and not getattr(getattr(io_mod, name), "__abstractmethods__", frozenset())
     }
 
     server = _build_server()

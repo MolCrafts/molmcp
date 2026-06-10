@@ -68,9 +68,7 @@ def _project_for_experiment(
     return None
 
 
-def _enriched_run_row(
-    workspace: Workspace, entry: dict[str, Any]
-) -> dict[str, Any]:
+def _enriched_run_row(workspace: Workspace, entry: dict[str, Any]) -> dict[str, Any]:
     """Catalog row + on-disk parameters as a single flat dict.
 
     Run catalog rows store ``experiment_id`` but not ``project_id``;

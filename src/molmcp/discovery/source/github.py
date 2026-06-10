@@ -28,15 +28,14 @@ _TIMEOUT = 30
 
 
 def _parse_github_spec(spec: str) -> tuple[str, str, str | None]:
-    body = spec[len("github:"):] if spec.startswith("github:") else spec
+    body = spec[len("github:") :] if spec.startswith("github:") else spec
     ref: str | None = None
     if "@" in body:
         body, ref = body.rsplit("@", 1)
     parts = [p for p in body.strip("/").split("/") if p]
     if len(parts) != 2:
         raise SourceError(
-            f"invalid github spec {spec!r} "
-            "(expected github:owner/repo[@ref])"
+            f"invalid github spec {spec!r} (expected github:owner/repo[@ref])"
         )
     return parts[0], parts[1], (ref or None)
 
@@ -54,24 +53,18 @@ def _http_get(
         with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
             return response.read()
     except urllib.error.HTTPError as exc:
-        raise SourceError(
-            f"GitHub request failed ({exc.code}) for {url}"
-        ) from exc
+        raise SourceError(f"GitHub request failed ({exc.code}) for {url}") from exc
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise SourceError(f"GitHub request failed for {url}: {exc}") from exc
 
 
-def resolve_ref(
-    owner: str, repo: str, ref: str | None, config: DiscoveryConfig
-) -> str:
+def resolve_ref(owner: str, repo: str, ref: str | None, config: DiscoveryConfig) -> str:
     """Resolve a branch/tag/ref (or the default branch) to a commit SHA."""
     token = config.github_token
     if ref is None:
         info = json.loads(_http_get(f"{_API}/repos/{owner}/{repo}", token))
         ref = info.get("default_branch", "HEAD")
-    payload = json.loads(
-        _http_get(f"{_API}/repos/{owner}/{repo}/commits/{ref}", token)
-    )
+    payload = json.loads(_http_get(f"{_API}/repos/{owner}/{repo}/commits/{ref}", token))
     sha = payload.get("sha")
     if not sha:
         raise SourceError(f"could not resolve {owner}/{repo}@{ref}")

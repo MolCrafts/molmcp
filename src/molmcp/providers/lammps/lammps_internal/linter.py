@@ -117,8 +117,7 @@ def _rule_pair_coeff_after_pair_style(
                     level="error",
                     line=c.line,
                     message=(
-                        "`pair_coeff` requires a preceding `pair_style` "
-                        "declaration."
+                        "`pair_coeff` requires a preceding `pair_style` declaration."
                     ),
                     source="ordering",
                     command="pair_coeff",
@@ -171,9 +170,7 @@ def _rule_kspace_required_for_long_range(
 
 def _track_ids_per_kind(
     commands: list[parser.Command],
-) -> tuple[
-    dict[str, set[str]], list[tuple[parser.Command, str, str]]
-]:
+) -> tuple[dict[str, set[str]], list[tuple[parser.Command, str, str]]]:
     """Return (defined_per_kind, references) for fix/compute/dump.
 
     references: list of (Command, kind, id) for every reference command
@@ -357,9 +354,8 @@ def _rule_content_check_pointers(
             if url is None:
                 # unknown style: point at the category index
                 index_slug = urls.CATEGORY_INDEXES.get(cat, "Commands")
-                url = (
-                    urls.doc_root_url(version)
-                    + (index_slug if "#" in index_slug else f"{index_slug}.html")
+                url = urls.doc_root_url(version) + (
+                    index_slug if "#" in index_slug else f"{index_slug}.html"
                 )
                 level = "warning"
                 msg = (

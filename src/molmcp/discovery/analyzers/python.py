@@ -136,8 +136,12 @@ class _Builder:
 
     def add_contains(self, parent_id: str, child_id: str) -> None:
         self.edges.append(
-            Edge(source=parent_id, target=child_id, kind=EdgeKind.CONTAINS,
-                 file=self.file)
+            Edge(
+                source=parent_id,
+                target=child_id,
+                kind=EdgeKind.CONTAINS,
+                file=self.file,
+            )
         )
 
     def add_ref(self, from_id: str, name: str, kind: str, line: int | None) -> None:
@@ -147,8 +151,9 @@ class _Builder:
                 return
             self._seen_calls.add(key)
         self.unresolved.append(
-            UnresolvedRef(from_node=from_id, name=name, kind=kind,
-                          file=self.file, line=line)
+            UnresolvedRef(
+                from_node=from_id, name=name, kind=kind, file=self.file, line=line
+            )
         )
 
     def collect_calls(self, from_id: str, fn: ast.AST) -> None:
@@ -156,8 +161,9 @@ class _Builder:
             if isinstance(sub, ast.Call):
                 target = _call_target(sub.func)
                 if target:
-                    self.add_ref(from_id, target, EdgeKind.CALLS,
-                                 getattr(sub, "lineno", None))
+                    self.add_ref(
+                        from_id, target, EdgeKind.CALLS, getattr(sub, "lineno", None)
+                    )
 
 
 class PythonAnalyzer:
@@ -183,18 +189,25 @@ class PythonAnalyzer:
 
         b.add_node(
             Node(
-                id=mod_id, kind=mod_kind, name=mod_name, qualname=mod_qn,
-                language=self.language, file=file.path, start_line=1,
-                end_line=line_count, docstring=mod_doc,
-                summary=_summary(mod_doc), is_exported=True,
+                id=mod_id,
+                kind=mod_kind,
+                name=mod_name,
+                qualname=mod_qn,
+                language=self.language,
+                file=file.path,
+                start_line=1,
+                end_line=line_count,
+                docstring=mod_doc,
+                summary=_summary(mod_doc),
+                is_exported=True,
             )
         )
 
         exported = _extract_all(tree)
-        self._visit_body(tree.body, b, mod_id, mod_qn, in_class=False,
-                         exported=exported)
-        return AnalyzerResult(nodes=b.nodes, edges=b.edges,
-                              unresolved=b.unresolved)
+        self._visit_body(
+            tree.body, b, mod_id, mod_qn, in_class=False, exported=exported
+        )
+        return AnalyzerResult(nodes=b.nodes, edges=b.edges, unresolved=b.unresolved)
 
     def _visit_body(
         self,
@@ -211,14 +224,17 @@ class PythonAnalyzer:
                 if not in_class:
                     self._handle_import(stmt, b, parent_id)
             elif isinstance(stmt, ast.ClassDef):
-                self._handle_class(stmt, b, parent_id, parent_qn,
-                                   in_class=in_class, exported=exported)
+                self._handle_class(
+                    stmt, b, parent_id, parent_qn, in_class=in_class, exported=exported
+                )
             elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                self._handle_function(stmt, b, parent_id, parent_qn,
-                                      in_class=in_class, exported=exported)
+                self._handle_function(
+                    stmt, b, parent_id, parent_qn, in_class=in_class, exported=exported
+                )
             elif isinstance(stmt, (ast.Assign, ast.AnnAssign)):
-                self._handle_assign(stmt, b, parent_id, parent_qn,
-                                    in_class=in_class, exported=exported)
+                self._handle_assign(
+                    stmt, b, parent_id, parent_qn, in_class=in_class, exported=exported
+                )
 
     def _handle_import(
         self, stmt: ast.Import | ast.ImportFrom, b: _Builder, mod_id: str
@@ -253,10 +269,18 @@ class PythonAnalyzer:
         ) or "abstractmethod" in " ".join(decorators)
         b.add_node(
             Node(
-                id=cid, kind=NodeKind.CLASS, name=stmt.name, qualname=qn,
-                language=self.language, file=b.file, start_line=stmt.lineno,
-                end_line=stmt.end_lineno or stmt.lineno, docstring=doc,
-                summary=_summary(doc), decorators=decorators, bases=bases,
+                id=cid,
+                kind=NodeKind.CLASS,
+                name=stmt.name,
+                qualname=qn,
+                language=self.language,
+                file=b.file,
+                start_line=stmt.lineno,
+                end_line=stmt.end_lineno or stmt.lineno,
+                docstring=doc,
+                summary=_summary(doc),
+                decorators=decorators,
+                bases=bases,
                 visibility=_visibility(stmt.name),
                 is_exported=_is_exported(stmt.name, in_class, exported),
                 is_abstract=is_abstract,
@@ -265,8 +289,7 @@ class PythonAnalyzer:
         b.add_contains(parent_id, cid)
         for base in bases:
             b.add_ref(cid, base, EdgeKind.EXTENDS, stmt.lineno)
-        self._visit_body(stmt.body, b, cid, qn, in_class=True,
-                         exported=exported)
+        self._visit_body(stmt.body, b, cid, qn, in_class=True, exported=exported)
 
     def _handle_function(
         self,
@@ -282,8 +305,7 @@ class PythonAnalyzer:
         decorators = _decorator_names(stmt.decorator_list)
         dec_blob = " ".join(decorators)
         is_property = any(
-            d.split(".")[-1] in {"property", "cached_property"}
-            for d in decorators
+            d.split(".")[-1] in {"property", "cached_property"} for d in decorators
         )
         if stmt.name.startswith("test_") and _is_test_file(b.file):
             kind = NodeKind.TEST
@@ -301,11 +323,18 @@ class PythonAnalyzer:
                 metadata["method_type"] = "staticmethod"
         b.add_node(
             Node(
-                id=fid, kind=kind, name=stmt.name, qualname=qn,
-                language=self.language, file=b.file, start_line=stmt.lineno,
+                id=fid,
+                kind=kind,
+                name=stmt.name,
+                qualname=qn,
+                language=self.language,
+                file=b.file,
+                start_line=stmt.lineno,
                 end_line=stmt.end_lineno or stmt.lineno,
-                signature=_signature(stmt), docstring=doc,
-                summary=_summary(doc), decorators=decorators,
+                signature=_signature(stmt),
+                docstring=doc,
+                summary=_summary(doc),
+                decorators=decorators,
                 visibility=_visibility(stmt.name),
                 is_exported=_is_exported(stmt.name, in_class, exported),
                 is_async=isinstance(stmt, ast.AsyncFunctionDef),
@@ -341,8 +370,12 @@ class PythonAnalyzer:
             nid = node_id(b.file, qn, kind)
             b.add_node(
                 Node(
-                    id=nid, kind=kind, name=name, qualname=qn,
-                    language=self.language, file=b.file,
+                    id=nid,
+                    kind=kind,
+                    name=name,
+                    qualname=qn,
+                    language=self.language,
+                    file=b.file,
                     start_line=stmt.lineno,
                     end_line=stmt.end_lineno or stmt.lineno,
                     visibility=_visibility(name),
@@ -357,9 +390,7 @@ def _extract_all(tree: ast.Module) -> set[str] | None:
     for stmt in tree.body:
         if not isinstance(stmt, ast.Assign):
             continue
-        if not any(
-            isinstance(t, ast.Name) and t.id == "__all__" for t in stmt.targets
-        ):
+        if not any(isinstance(t, ast.Name) and t.id == "__all__" for t in stmt.targets):
             continue
         value = stmt.value
         if isinstance(value, (ast.List, ast.Tuple, ast.Set)):

@@ -1,10 +1,10 @@
 """SnapshotCache — on-disk layout for indexed snapshots.
 
-    <cache_dir>/snapshots/<slug>/manifest.json
-                                /graph.db
-                                /raw/         (GitHub sources)
-                                /evidence/<query_hash>.json
-    <cache_dir>/refs/<spec-slug>.json
+<cache_dir>/snapshots/<slug>/manifest.json
+                            /graph.db
+                            /raw/         (GitHub sources)
+                            /evidence/<query_hash>.json
+<cache_dir>/refs/<spec-slug>.json
 """
 
 from __future__ import annotations
