@@ -19,6 +19,13 @@ _MAX_CONVENTIONS = 3
 _MAX_CONVENTION_CHARS = 1200
 
 
+def _truncate(text: str, cap: int) -> str:
+    """Cap ``text``, appending a marker when content was dropped."""
+    if len(text) > cap:
+        return text[:cap] + "\n... (truncated)"
+    return text
+
+
 def node_brief(node: Node) -> dict:
     """Compact node view for lists."""
     return {
@@ -52,9 +59,7 @@ def node_detail(node: Node) -> dict:
 
 def example_view(node: Node) -> dict:
     """View of an ``example`` node, with its code snippet."""
-    code = str(node.metadata.get("code", ""))
-    if len(code) > _MAX_EXAMPLE_CHARS:
-        code = code[:_MAX_EXAMPLE_CHARS] + "\n... (truncated)"
+    code = _truncate(str(node.metadata.get("code", "")), _MAX_EXAMPLE_CHARS)
     return {
         "qualname": node.qualname,
         "file": node.file,
@@ -66,9 +71,10 @@ def example_view(node: Node) -> dict:
 
 def convention_view(node: Node) -> dict:
     """View of a ``convention`` node, with its rules text size-capped."""
-    rules = "\n".join(str(r) for r in node.metadata.get("rules", []))
-    if len(rules) > _MAX_CONVENTION_CHARS:
-        rules = rules[:_MAX_CONVENTION_CHARS] + "\n... (truncated)"
+    rules = _truncate(
+        "\n".join(str(r) for r in node.metadata.get("rules", [])),
+        _MAX_CONVENTION_CHARS,
+    )
     return {
         "id": node.qualname,
         "title": str(node.metadata.get("title", "")),
@@ -96,9 +102,7 @@ def read_source(root_dir: Path, node: Node) -> str:
     except OSError as exc:
         return f"<source unavailable: {exc}>"
     snippet = "\n".join(lines[node.start_line - 1 : node.end_line])
-    if len(snippet) > _MAX_SOURCE_CHARS:
-        snippet = snippet[:_MAX_SOURCE_CHARS] + "\n... (truncated)"
-    return snippet
+    return _truncate(snippet, _MAX_SOURCE_CHARS)
 
 
 class EvidenceBuilder:

@@ -386,15 +386,17 @@ def _cmd_dump(engine, args) -> int:
     return 0
 
 
+def _print_symbol_section(label: str, nodes) -> None:
+    print(f"  {label}: {len(nodes)}")
+    for node in nodes:
+        print(f"    {node.qualname}  ({node.file}:{node.start_line})")
+
+
 def _render_lint_report(source: str, report) -> None:
     """Human-readable lint report: three sections plus counts."""
     print(f"lint {source}")
-    print(f"  undocumented exports: {len(report.undocumented_exports)}")
-    for node in report.undocumented_exports:
-        print(f"    {node.qualname}  ({node.file}:{node.start_line})")
-    print(f"  untested public symbols: {len(report.untested_public_symbols)}")
-    for node in report.untested_public_symbols:
-        print(f"    {node.qualname}  ({node.file}:{node.start_line})")
+    _print_symbol_section("undocumented exports", report.undocumented_exports)
+    _print_symbol_section("untested public symbols", report.untested_public_symbols)
     print(f"  high-unresolved modules: {len(report.high_unresolved_modules)}")
     for stat in report.high_unresolved_modules:
         print(
