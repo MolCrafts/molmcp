@@ -232,6 +232,36 @@ def _build_discovery_parser() -> argparse.ArgumentParser:
         help="Write JSON to a file instead of stdout.",
     )
 
+    lnt = sub.add_parser(
+        "lint",
+        help="Report discoverability findings for a source.",
+        description="Measure a source's discoverability health: "
+        "undocumented exported symbols, untested public symbols, and "
+        "modules with a high unresolved-reference share. Advisory — "
+        "exits 0 even with findings; --strict exits 1 when any exist.",
+    )
+    lnt.add_argument(
+        "source", nargs="?", default=None, metavar="SOURCE", help=_SPEC_HELP
+    )
+    lnt.add_argument(
+        "--pkg",
+        action="append",
+        default=[],
+        metavar="NAME[,NAME...]",
+        help="Lint these MolCrafts packages (repeatable or "
+        "comma-separated); used when SOURCE is omitted.",
+    )
+    lnt.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON report.",
+    )
+    lnt.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit 1 when any finding exists (for upstream CI gates).",
+    )
+
     cln = sub.add_parser(
         "clean",
         help="Prune old cached snapshots (or wipe with --all).",
@@ -356,6 +386,53 @@ def _cmd_dump(engine, args) -> int:
     return 0
 
 
+def _render_lint_report(source: str, report) -> None:
+    """Human-readable lint report: three sections plus counts."""
+    print(f"lint {source}")
+    print(f"  undocumented exports: {len(report.undocumented_exports)}")
+    for node in report.undocumented_exports:
+        print(f"    {node.qualname}  ({node.file}:{node.start_line})")
+    print(f"  untested public symbols: {len(report.untested_public_symbols)}")
+    for node in report.untested_public_symbols:
+        print(f"    {node.qualname}  ({node.file}:{node.start_line})")
+    print(f"  high-unresolved modules: {len(report.high_unresolved_modules)}")
+    for stat in report.high_unresolved_modules:
+        print(
+            f"    {stat.file}  {stat.unresolved_count}/{stat.total_refs} "
+            f"unresolved ({stat.ratio:.0%})"
+        )
+    if report.total_findings == 0:
+        print("  OK — no discoverability findings")
+
+
+def _cmd_lint(engine, args) -> int:
+    """Lint one or more sources; advisory exit unless --strict."""
+    from .discovery.lint import lint_graph
+
+    if args.source:
+        sources = [args.source]
+    else:
+        sources = [_source_for_package(p) for p in _split_pkg_values(args.pkg)]
+    reports = []
+    total_findings = 0
+    for spec in sources:
+        report = lint_graph(engine.get_graph(spec))
+        total_findings += report.total_findings
+        reports.append((spec, report))
+    if args.json:
+        payload = {
+            "reports": [
+                {"source": spec, **report.to_dict()} for spec, report in reports
+            ],
+            "total_findings": total_findings,
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        for spec, report in reports:
+            _render_lint_report(spec, report)
+    return 1 if args.strict and total_findings > 0 else 0
+
+
 def _cmd_clean(engine, args) -> int:
     cache_dir = engine.config.cache_dir
     if args.all:
@@ -378,6 +455,7 @@ _DISCOVERY_COMMANDS = {
     "query": _cmd_query,
     "outline": _cmd_outline,
     "dump": _cmd_dump,
+    "lint": _cmd_lint,
     "clean": _cmd_clean,
 }
 
@@ -386,7 +464,12 @@ def _discovery_main(argv: list[str]) -> int:
     from .discovery import DiscoveryConfig, DiscoveryEngine
     from .discovery.source import SourceError
 
-    args = _build_discovery_parser().parse_args(argv)
+    parser = _build_discovery_parser()
+    args = parser.parse_args(argv)
+    if args.command == "lint" and not args.source and not _split_pkg_values(args.pkg):
+        # No implicit default: linting every default source would
+        # trigger several GitHub fetches.
+        parser.error("lint requires SOURCE or --pkg")
     engine = DiscoveryEngine(DiscoveryConfig())
     try:
         return _DISCOVERY_COMMANDS[args.command](engine, args)
