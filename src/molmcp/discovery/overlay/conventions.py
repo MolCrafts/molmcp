@@ -31,9 +31,7 @@ from ..schema import (
     UnresolvedRef,
     node_id,
 )
-from . import OverlayContribution
-
-_CATALOG_FILE = "<catalog>"
+from . import CATALOG_FILE, OverlayContribution
 
 
 @dataclass(slots=True)
@@ -98,7 +96,7 @@ def build_convention_contribution(
 
     contribution = OverlayContribution()
     for convention in conventions:
-        conv_id = node_id(_CATALOG_FILE, convention.id, NodeKind.CONVENTION)
+        conv_id = node_id(CATALOG_FILE, convention.id, NodeKind.CONVENTION)
         contribution.nodes.append(
             Node(
                 id=conv_id,
@@ -106,7 +104,7 @@ def build_convention_contribution(
                 name=convention.id,
                 qualname=convention.id,
                 language="convention",
-                file=_CATALOG_FILE,
+                file=CATALOG_FILE,
                 start_line=0,
                 end_line=0,
                 summary=convention.title,

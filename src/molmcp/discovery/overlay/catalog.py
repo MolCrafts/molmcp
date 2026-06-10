@@ -32,14 +32,12 @@ from ..schema import (
     node_id,
 )
 from ..source import Snapshot
-from . import OverlayContribution
+from . import CATALOG_FILE, OverlayContribution
 from .conventions import (
     Convention,
     build_convention_contribution,
     load_conventions,
 )
-
-_CATALOG_FILE = "<catalog>"
 
 
 @dataclass(slots=True)
@@ -86,7 +84,7 @@ def build_contribution(
 
     contribution = OverlayContribution()
     for capability in capabilities:
-        cap_id = node_id(_CATALOG_FILE, capability.id, NodeKind.CAPABILITY)
+        cap_id = node_id(CATALOG_FILE, capability.id, NodeKind.CAPABILITY)
         contribution.nodes.append(
             Node(
                 id=cap_id,
@@ -94,7 +92,7 @@ def build_contribution(
                 name=capability.id,
                 qualname=capability.id,
                 language="capability",
-                file=_CATALOG_FILE,
+                file=CATALOG_FILE,
                 start_line=0,
                 end_line=0,
                 summary=capability.summary or capability.title,
@@ -123,7 +121,7 @@ def build_contribution(
                 )
         for index, example_path in enumerate(capability.examples, 1):
             example_id = node_id(
-                _CATALOG_FILE,
+                CATALOG_FILE,
                 f"{capability.id} (example {index})",
                 NodeKind.EXAMPLE,
             )
