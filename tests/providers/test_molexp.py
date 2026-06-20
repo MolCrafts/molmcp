@@ -152,10 +152,15 @@ class TestProtocol:
             MolexpProvider(_FakeWorkspace()).register(MagicMock())
 
     def test_tool_set(self):
-        """The slim catalog: only molexp_list_projects and molexp_list_runs."""
+        """The slim catalog: runtime queries + the layout contract/linter."""
         server = _build_server(_FakeWorkspace())
         names = {t.name for t in _list_tools(server)}
-        assert names == {"molexp_list_projects", "molexp_list_runs"}
+        assert names == {
+            "molexp_list_projects",
+            "molexp_list_runs",
+            "molexp_workspace_layout",
+            "molexp_check_layout",
+        }
 
     def test_all_tools_have_read_only_annotation(self):
         server = _build_server(_FakeWorkspace())
@@ -444,3 +449,86 @@ class TestMolexpListRuns:
         server = _build_server(ws)
         rows = _tool(server, "molexp_list_runs")(scope_kind="workspace", limit=2)
         assert len(rows) == 2
+
+
+class TestMolexpWorkspaceLayout:
+    """The layout-contract tool is pure (needs no workspace)."""
+
+    def test_returns_four_tier_hierarchy(self):
+        server = _build_server(_FakeWorkspace())
+        spec = _tool(server, "molexp_workspace_layout")()
+        assert spec["hierarchy"] == ["workspace", "project", "experiment", "run"]
+        kinds = [lvl["kind"] for lvl in spec["levels"]]
+        assert kinds == ["workspace", "project", "experiment", "run"]
+
+    def test_run_level_carries_mandatory_prefix(self):
+        server = _build_server(_FakeWorkspace())
+        spec = _tool(server, "molexp_workspace_layout")()
+        run = next(lvl for lvl in spec["levels"] if lvl["kind"] == "run")
+        assert run["container"] == "runs"
+        assert run["dir_template"] == "run-<run_id>"
+        assert run["entity_file"] == "run.json"
+        assert run["children_index_file"] is None
+        assert "run-<run_id>" in spec["tree"]
+
+    def test_entity_vs_children_index_distinction(self):
+        server = _build_server(_FakeWorkspace())
+        spec = _tool(server, "molexp_workspace_layout")()
+        ws = next(lvl for lvl in spec["levels"] if lvl["kind"] == "workspace")
+        # Workspace's own file is workspace.json; its children index is project.json
+        assert ws["entity_file"] == "workspace.json"
+        assert ws["children_index_file"] == "project.json"
+
+
+class TestMolexpCheckLayout:
+    """The linter walks the filesystem read-only; needs no molexp."""
+
+    def _make_workspace_tree(self, root: Path) -> None:
+        (root / "workspace.json").write_text("{}")
+        run = (
+            root / "projects" / "qm9" / "experiments" / "baseline" / "runs" / "run-a3f2"
+        )
+        run.mkdir(parents=True)
+        (root / "projects" / "qm9" / "project.json").write_text("{}")
+        (run.parent.parent / "experiment.json").write_text("{}")
+        (run / "run.json").write_text("{}")
+
+    def test_missing_path(self, tmp_path):
+        server = _build_server(_FakeWorkspace())
+        out = _tool(server, "molexp_check_layout")(path=str(tmp_path / "nope"))
+        assert out["exists"] is False
+        assert out["conforms"] is False
+
+    def test_conforming_workspace(self, tmp_path):
+        self._make_workspace_tree(tmp_path)
+        server = _build_server(_FakeWorkspace())
+        out = _tool(server, "molexp_check_layout")(path=str(tmp_path))
+        assert out["is_workspace"] is True
+        assert out["conforms"] is True
+        assert out["violations"] == []
+
+    def test_run_dir_missing_prefix_is_flagged(self, tmp_path):
+        self._make_workspace_tree(tmp_path)
+        # add a sibling run dir that violates the run- prefix law
+        bad = (
+            tmp_path / "projects" / "qm9" / "experiments" / "baseline" / "runs" / "a3f2"
+        )
+        bad.mkdir()
+        (bad / "run.json").write_text("{}")
+        server = _build_server(_FakeWorkspace())
+        out = _tool(server, "molexp_check_layout")(path=str(tmp_path))
+        assert out["conforms"] is False
+        rules = {v["rule"] for v in out["violations"]}
+        assert "run_prefix" in rules
+
+    def test_arbitrary_dir_gets_proposed_mapping(self, tmp_path):
+        # depth-3 plain directory tree, no workspace.json
+        (tmp_path / "projA" / "expA" / "runA").mkdir(parents=True)
+        server = _build_server(_FakeWorkspace())
+        out = _tool(server, "molexp_check_layout")(path=str(tmp_path))
+        assert out["is_workspace"] is False
+        assert out["proposed_mapping"] is not None
+        proj = out["proposed_mapping"]["projects"][0]
+        assert proj["target_id"] == "projA"
+        run = proj["experiments"][0]["runs"][0]
+        assert run["target_dir"] == "run-runA"
