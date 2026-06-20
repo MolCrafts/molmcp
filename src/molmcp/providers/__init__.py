@@ -23,6 +23,9 @@ Currently shipped:
   call-time — no hardcoded class lists.
 * :class:`MolpackProvider` — runtime-discovered restraint catalog plus
   a ``.inp`` script-execution shim around ``molpack.load_script``.
+* :class:`MolrsProvider` — read-only catalog of molrs's compute
+  operators, neighbor algorithms, and file readers/writers, plus a
+  structure-file reader executor over the native ``molrs`` extension.
 
 All providers are *lazy facades* — importing them does not require
 their domain dep (where one exists); that probe happens at
@@ -40,6 +43,7 @@ from .molexp import MolexpProvider
 from .molpack import MolpackProvider
 from .molpy import MolpyProvider
 from .molq import MolqProvider
+from .molrs import MolrsProvider
 
 __all__ = [
     "LammpsProvider",
@@ -47,4 +51,5 @@ __all__ = [
     "MolpackProvider",
     "MolpyProvider",
     "MolqProvider",
+    "MolrsProvider",
 ]
