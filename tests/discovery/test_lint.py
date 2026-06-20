@@ -7,6 +7,7 @@ import json
 import random
 
 import pytest
+
 from molmcp.discovery.lint import (
     MIN_MODULE_REFS,
     UNRESOLVED_THRESHOLD,
@@ -14,7 +15,6 @@ from molmcp.discovery.lint import (
     ModuleUnresolvedStat,
     lint_graph,
 )
-
 from molmcp.discovery.schema import (
     CodeGraph,
     Edge,
