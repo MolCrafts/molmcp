@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .config import DiscoveryConfig
 from .engine import DiscoveryEngine, IndexResult
+from .lint import LintReport, lint_graph
 from .overlay import CapabilityOverlay, OverlayContribution, load_overlays
 from .overlay.catalog import Capability, CatalogOverlay, load_catalog
 from .query import DiscoveryQuery
@@ -37,6 +38,7 @@ __all__ = [
     "EdgeKind",
     "FileRecord",
     "IndexResult",
+    "LintReport",
     "Node",
     "NodeKind",
     "OverlayContribution",
@@ -44,6 +46,7 @@ __all__ = [
     "Snapshot",
     "SourceError",
     "UnresolvedRef",
+    "lint_graph",
     "load_catalog",
     "load_overlays",
 ]

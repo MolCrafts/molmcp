@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 # Bump when analyzer output changes — invalidates the extraction cache.
 ANALYZER_VERSION = 1
 
@@ -38,6 +38,7 @@ class NodeKind(StrEnum):
     EXAMPLE = "example"
     TEST = "test"
     CAPABILITY = "capability"
+    CONVENTION = "convention"
 
 
 class EdgeKind(StrEnum):
@@ -57,6 +58,7 @@ class EdgeKind(StrEnum):
     EXEMPLIFIES = "exemplifies"
     TESTS = "tests"
     PROVIDES_CAPABILITY = "provides_capability"
+    GOVERNS = "governs"
 
 
 class Provenance(StrEnum):

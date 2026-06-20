@@ -124,7 +124,8 @@ HOWTOS: tuple[Howto, ...] = (
             "`compute bond/local` (and analogues) plus group filters.",
         ),
         doc_refs=(
-            "compute_pressure", "compute_stress_atom",
+            "compute_pressure",
+            "compute_stress_atom",
         ),
         related_commands=(
             ("compute", "pressure"),

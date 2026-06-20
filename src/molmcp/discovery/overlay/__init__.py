@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 OVERLAY_ENTRY_POINT_GROUP = "molmcp.overlays"
 
+# Synthetic-file sentinel for overlay-born nodes. Feeds node_id(), so
+# it is defined exactly once — a diverging redeclaration would silently
+# split the overlay node-id namespace.
+CATALOG_FILE = "<catalog>"
+
 
 @dataclass(slots=True)
 class OverlayContribution:
@@ -68,9 +73,7 @@ def load_overlays() -> list[CapabilityOverlay]:
             logger.warning("Failed to load overlay %r: %s", ep.name, exc)
             continue
         if not isinstance(instance, CapabilityOverlay):
-            logger.warning(
-                "Entry point %r is not a CapabilityOverlay", ep.name
-            )
+            logger.warning("Entry point %r is not a CapabilityOverlay", ep.name)
             continue
         discovered.append(instance)
     return discovered

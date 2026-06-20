@@ -77,9 +77,7 @@ class Howto:
             )
 
     def search_text(self) -> str:
-        return " ".join(
-            [self.title, self.rationale, *self.tags, self.slug]
-        ).lower()
+        return " ".join([self.title, self.rationale, *self.tags, self.slug]).lower()
 
     def to_summary_dict(self) -> dict:
         return {
@@ -135,10 +133,17 @@ def _load_all() -> tuple[Howto, ...]:
         rerun,
         transport,
     )
+
     aggregated: list[Howto] = []
     for module in (
-        debug, mechanics, transport, equilibration, rerun,
-        forcefield, polymer, output,
+        debug,
+        mechanics,
+        transport,
+        equilibration,
+        rerun,
+        forcefield,
+        polymer,
+        output,
     ):
         aggregated.extend(getattr(module, "HOWTOS", ()))
     seen: dict[tuple[str, str], Howto] = {}
@@ -180,9 +185,7 @@ def list_categories() -> dict:
     }
 
 
-def find(
-    query: str, category: str | None = None, limit: int = 25
-) -> dict:
+def find(query: str, category: str | None = None, limit: int = 25) -> dict:
     norm = query.strip().lower()
     matches: list[tuple[float, Howto]] = []
     for r in all_howtos():
@@ -211,9 +214,7 @@ def find(
     }
 
 
-def get(
-    category: str, slug: str, version: str = urls.DEFAULT_VERSION
-) -> dict:
+def get(category: str, slug: str, version: str = urls.DEFAULT_VERSION) -> dict:
     for r in all_howtos():
         if r.category == category and r.slug == slug:
             return r.to_full_dict(version)

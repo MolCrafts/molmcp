@@ -87,9 +87,7 @@ class LammpsProvider:
             return urls.doc_map(version)
 
         @mcp.tool(annotations=ro)
-        def get_command_doc(
-            name: str, version: str = default_version
-        ) -> dict:
+        def get_command_doc(name: str, version: str = default_version) -> dict:
             """Resolve a top-level LAMMPS command to its doc URL + sections to read.
 
             Args:
@@ -128,9 +126,7 @@ class LammpsProvider:
             return urls.style_url(category, name, version)
 
         @mcp.tool(annotations=ro)
-        def get_howto_doc(
-            topic: str, version: str = default_version
-        ) -> dict:
+        def get_howto_doc(topic: str, version: str = default_version) -> dict:
             """Resolve a LAMMPS howto topic to its ``Howto_<topic>.html`` doc URL.
 
             Args:
@@ -145,9 +141,7 @@ class LammpsProvider:
             return urls.howto_url(topic, version)
 
         @mcp.tool(annotations=ro)
-        def plan_task(
-            description: str, version: str = default_version
-        ) -> dict:
+        def plan_task(description: str, version: str = default_version) -> dict:
             """Plan a free-text LAMMPS task into doc URLs + workflow tag.
 
             Args:
@@ -164,9 +158,7 @@ class LammpsProvider:
             return router.plan(description, version)
 
         @mcp.tool(annotations=ro)
-        def get_workflow_outline(
-            kind: str, version: str = default_version
-        ) -> dict:
+        def get_workflow_outline(kind: str, version: str = default_version) -> dict:
             """Return a canonical command-sequence outline for a workflow kind.
 
             Args:
@@ -198,9 +190,7 @@ class LammpsProvider:
             return parser.tokenize(content)
 
         @mcp.tool(annotations=ro)
-        def validate_script(
-            content: str, version: str = default_version
-        ) -> dict:
+        def validate_script(content: str, version: str = default_version) -> dict:
             """Lint a LAMMPS input script for structural issues.
 
             Args:
@@ -222,9 +212,7 @@ class LammpsProvider:
             return linter.lint(content, version)
 
         @mcp.tool(annotations=ro)
-        def explain_command(
-            line: str, version: str = default_version
-        ) -> dict:
+        def explain_command(line: str, version: str = default_version) -> dict:
             """Explain one LAMMPS command line by parsing + linking the docs.
 
             Args:
@@ -273,9 +261,7 @@ class LammpsProvider:
             return howto.find(query, category, min(limit, 50))
 
         @mcp.tool(annotations=ro)
-        def get_howto(
-            category: str, slug: str, version: str = default_version
-        ) -> dict:
+        def get_howto(category: str, slug: str, version: str = default_version) -> dict:
             """Return one howto in full.
 
             Args:
@@ -292,9 +278,7 @@ class LammpsProvider:
             return howto.get(category, slug, version)
 
         @mcp.tool(annotations=ro)
-        def explain_error(
-            message: str, version: str = default_version
-        ) -> dict:
+        def explain_error(message: str, version: str = default_version) -> dict:
             """Match a LAMMPS error string against curated cause hints.
 
             Args:

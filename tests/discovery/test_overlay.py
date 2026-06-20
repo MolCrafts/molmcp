@@ -77,22 +77,14 @@ def test_overlay_links_provides_capability_edge(overlay_engine):
     engine, repo = overlay_engine
     graph = engine.get_graph(repo)
     rdf = next(n for n in graph.nodes if n.qualname == "compute.RDF")
-    provides = {
-        e.target
-        for e in graph.edges
-        if e.kind == "provides_capability"
-    }
+    provides = {e.target for e in graph.edges if e.kind == "provides_capability"}
     assert rdf.id in provides
 
 
 def test_unresolved_capability_target_is_kept(overlay_engine):
     engine, repo = overlay_engine
     graph = engine.get_graph(repo)
-    names = {
-        u.name
-        for u in graph.unresolved
-        if u.kind == "provides_capability"
-    }
+    names = {u.name for u in graph.unresolved if u.kind == "provides_capability"}
     assert "does.not.Exist" in names
 
 
@@ -114,9 +106,7 @@ def test_find_capability_surfaces_overlay(overlay_engine):
     engine, repo = overlay_engine
     query = engine.query(repo)
     result = EvidenceBuilder(query).find_capability("radial distribution", 8)
-    assert any(
-        m["node"]["qualname"] == "compute.rdf" for m in result["matches"]
-    )
+    assert any(m["node"]["qualname"] == "compute.rdf" for m in result["matches"])
 
 
 def test_custom_overlay_protocol(tmp_path):

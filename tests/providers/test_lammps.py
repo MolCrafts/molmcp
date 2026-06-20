@@ -228,9 +228,7 @@ def test_parser_strips_comments_outside_quotes():
 
 def test_parser_continuation_lines_joined():
     text = (
-        "fix av all ave/time 100 5 1000 &\n"
-        "  c_thermo_press[1] &\n"
-        "  c_thermo_press[2]\n"
+        "fix av all ave/time 100 5 1000 &\n  c_thermo_press[1] &\n  c_thermo_press[2]\n"
     )
     p = parser.tokenize(text)
     assert len(p["commands"]) == 1
@@ -326,8 +324,7 @@ def test_linter_emits_content_check_pointers_with_correct_url():
     )
     result = linter.lint(text, version="stable")
     info_diags = [
-        d for d in result["diagnostics"]
-        if d["source"] == "content_check_required"
+        d for d in result["diagnostics"] if d["source"] == "content_check_required"
     ]
     urls_seen = {d["doc_url"] for d in info_diags}
     # pair_style lj/cut → pair_lj.html, fix npt → fix_nh.html
@@ -424,8 +421,14 @@ def test_howto_categories_seeded():
     out = howto.list_categories()
     names = {c["name"] for c in out["categories"]}
     expected = {
-        "debug", "mechanics", "transport", "equilibration",
-        "rerun", "forcefield", "polymer", "output",
+        "debug",
+        "mechanics",
+        "transport",
+        "equilibration",
+        "rerun",
+        "forcefield",
+        "polymer",
+        "output",
     }
     assert names == expected
 
@@ -485,8 +488,14 @@ def test_howto_doc_refs_resolve_to_real_slugs():
     }
     valid_slugs |= {
         # extra non-command pages we cite by slug
-        "Build_package", "Run_options", "Howto_bonded", "atom_style",
-        "kspace_style", "comm_modify", "thermo_modify", "neigh_modify",
+        "Build_package",
+        "Run_options",
+        "Howto_bonded",
+        "atom_style",
+        "kspace_style",
+        "comm_modify",
+        "thermo_modify",
+        "neigh_modify",
     }
     for r in howto.all_howtos():
         for slug in r.doc_refs:

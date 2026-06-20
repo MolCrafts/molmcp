@@ -103,9 +103,7 @@ class DiscoveryProvider:
         finally:
             query.store.close()
         if query.snapshot is not None:
-            payload["snapshot"] = _snapshot_block(
-                query.snapshot, query.freshness
-            )
+            payload["snapshot"] = _snapshot_block(query.snapshot, query.freshness)
         return payload
 
     # -- registration ------------------------------------------------
@@ -196,9 +194,7 @@ class DiscoveryProvider:
 
             def build(q: DiscoveryQuery) -> dict:
                 root = q.snapshot.root_dir if q.snapshot else None
-                detail = EvidenceBuilder(q).describe(
-                    qualname, include_source, root
-                )
+                detail = EvidenceBuilder(q).describe(qualname, include_source, root)
                 if detail is None:
                     return {
                         "error": f"symbol not found: {qualname}",
@@ -237,15 +233,23 @@ class DiscoveryProvider:
 
             def build(q: DiscoveryQuery) -> dict:
                 if relation in ("implementers", "subclasses"):
-                    nodes = q.implementers(qualname, limit)
+                    pairs = q.implementers_pairs(qualname, limit)
                 elif relation == "impact":
-                    nodes = q.impact(qualname, depth=hops, limit=limit)
+                    pairs = q.impact_pairs(qualname, depth=hops, limit=limit)
                 else:
-                    nodes = getattr(q, _METHOD[relation])(qualname, limit)
-                if relation == "examples":
-                    items = [example_view(n) for n in nodes]
-                else:
-                    items = [node_brief(n) for n in nodes]
+                    pairs = getattr(q, _PAIRS_METHOD[relation])(qualname, limit)
+                items = []
+                for node, edge in pairs:
+                    item = (
+                        example_view(node)
+                        if relation == "examples"
+                        else node_brief(node)
+                    )
+                    item["provenance"] = str(edge.provenance)
+                    via = edge.metadata.get("via")
+                    if via:
+                        item["via"] = via
+                    items.append(item)
                 return {
                     "of": qualname,
                     "relation": relation,
@@ -256,9 +260,7 @@ class DiscoveryProvider:
             return self._with_query(source, build)
 
         @mcp.tool(annotations=_READ_ONLY)
-        def molmcp_outline(
-            source: str | None = None, path: str | None = None
-        ) -> dict:
+        def molmcp_outline(source: str | None = None, path: str | None = None) -> dict:
             """Map a source's packages/modules to their symbols.
 
             The "where do I look" tool — call this first to see what a
@@ -315,11 +317,11 @@ class DiscoveryProvider:
             return payload
 
 
-_METHOD = {
-    "callers": "callers",
-    "callees": "callees",
-    "implementations": "implementations",
-    "references": "references",
-    "examples": "examples_of",
-    "tests": "tests_of",
+_PAIRS_METHOD = {
+    "callers": "callers_pairs",
+    "callees": "callees_pairs",
+    "implementations": "implementations_pairs",
+    "references": "references_pairs",
+    "examples": "examples_pairs",
+    "tests": "tests_pairs",
 }

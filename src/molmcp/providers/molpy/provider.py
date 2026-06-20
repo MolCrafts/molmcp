@@ -106,9 +106,7 @@ def _summarize_frame(frame: object, reader_name: str, path: Path) -> dict:
     metadata = getattr(frame, "metadata", None)
     if metadata:
         try:
-            summary["metadata"] = {
-                k: str(v) for k, v in dict(metadata).items()
-            }
+            summary["metadata"] = {k: str(v) for k, v in dict(metadata).items()}
         except Exception:
             pass
     return summary

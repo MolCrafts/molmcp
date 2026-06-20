@@ -35,9 +35,23 @@ class DocQuery:
             key = ("command", self.name)
             if key in urls.PAGE_SLUGS:
                 out["url"] = urls.build_url(urls.PAGE_SLUGS[key], version)
-        elif self.kind in {"fix", "compute", "dump", "pair_style", "bond_style",
-                           "angle_style", "dihedral_style", "improper_style",
-                           "kspace_style", "atom_style", "region"} and self.name:
+        elif (
+            self.kind
+            in {
+                "fix",
+                "compute",
+                "dump",
+                "pair_style",
+                "bond_style",
+                "angle_style",
+                "dihedral_style",
+                "improper_style",
+                "kspace_style",
+                "atom_style",
+                "region",
+            }
+            and self.name
+        ):
             key = (self.kind, self.name)
             if key in urls.PAGE_SLUGS:
                 out["url"] = urls.build_url(urls.PAGE_SLUGS[key], version)
@@ -62,9 +76,7 @@ KEYWORD_TO_QUERIES: dict[str, tuple[DocQuery, ...]] = {
         DocQuery("fix", "nvt", None, None, "NVT ensemble (shared fix_nh page)"),
         DocQuery("howto_topic", "thermostat", None, None, "ensemble choice rationale"),
     ),
-    "nve": (
-        DocQuery("fix", "nve", None, None, "constant-energy integrator"),
-    ),
+    "nve": (DocQuery("fix", "nve", None, None, "constant-energy integrator"),),
     "nph": (
         DocQuery("fix", "nph", None, None, "constant-pressure (shared fix_nh page)"),
     ),
@@ -83,9 +95,7 @@ KEYWORD_TO_QUERIES: dict[str, tuple[DocQuery, ...]] = {
         DocQuery("fix", "deform", None, None, "applied deformation"),
         DocQuery("howto_topic", "elastic", None, None, "elastic constants protocol"),
     ),
-    "deform": (
-        DocQuery("fix", "deform", None, None, "applied deformation"),
-    ),
+    "deform": (DocQuery("fix", "deform", None, None, "applied deformation"),),
     "elastic": (
         DocQuery("howto_topic", "elastic", None, None, "elastic constants protocol"),
         DocQuery("fix", "deform", None, None, "strain application"),
@@ -94,9 +104,7 @@ KEYWORD_TO_QUERIES: dict[str, tuple[DocQuery, ...]] = {
         DocQuery("compute", "stress/atom", None, None, "per-atom stress tensor"),
         DocQuery("compute", "pressure", None, None, "system pressure"),
     ),
-    "strain": (
-        DocQuery("fix", "deform", None, None, "imposed strain"),
-    ),
+    "strain": (DocQuery("fix", "deform", None, None, "imposed strain"),),
     "long-range": (
         DocQuery("command", "kspace_style", None, None, "long-range solvers"),
     ),
@@ -105,15 +113,12 @@ KEYWORD_TO_QUERIES: dict[str, tuple[DocQuery, ...]] = {
     ),
     "coulomb": (
         DocQuery("command", "kspace_style", None, None, "long-range Coulomb"),
-        DocQuery("style", None, "pair_style", "*coul*",
-                 "pair styles with explicit Coulomb"),
+        DocQuery(
+            "style", None, "pair_style", "*coul*", "pair styles with explicit Coulomb"
+        ),
     ),
-    "ewald": (
-        DocQuery("command", "kspace_style", None, None, "Ewald summation"),
-    ),
-    "pppm": (
-        DocQuery("command", "kspace_style", None, None, "P3M solver"),
-    ),
+    "ewald": (DocQuery("command", "kspace_style", None, None, "Ewald summation"),),
+    "pppm": (DocQuery("command", "kspace_style", None, None, "P3M solver"),),
     "thermostat": (
         DocQuery("howto_topic", "thermostat", None, None, "thermostat options"),
         DocQuery("fix", "langevin", None, None, "Langevin thermostat"),
@@ -123,9 +128,7 @@ KEYWORD_TO_QUERIES: dict[str, tuple[DocQuery, ...]] = {
         DocQuery("howto_topic", "barostat", None, None, "barostat options"),
         DocQuery("fix", "press/berendsen", None, None, "Berendsen barostat"),
     ),
-    "langevin": (
-        DocQuery("fix", "langevin", None, None, "Langevin thermostat"),
-    ),
+    "langevin": (DocQuery("fix", "langevin", None, None, "Langevin thermostat"),),
     "rerun": (
         DocQuery("command", "rerun", None, None, "post-hoc trajectory analysis"),
         DocQuery("command", "read_dump", None, None, "load trajectory frames"),
@@ -142,16 +145,12 @@ KEYWORD_TO_QUERIES: dict[str, tuple[DocQuery, ...]] = {
     "polymer melt": (
         DocQuery("bond_style", "fene", None, None, "FENE bonds for melts"),
     ),
-    "tip3p": (
-        DocQuery("howto_topic", "tip3p", None, None, "TIP3P water setup"),
-    ),
+    "tip3p": (DocQuery("howto_topic", "tip3p", None, None, "TIP3P water setup"),),
     "tip4p": (
         DocQuery("howto_topic", "tip4p", None, None, "TIP4P water setup"),
         DocQuery("pair_style", "lj/cut/tip4p/long", None, None, "TIP4P pair_style"),
     ),
-    "spc": (
-        DocQuery("howto_topic", "spc", None, None, "SPC/SPC-E water setup"),
-    ),
+    "spc": (DocQuery("howto_topic", "spc", None, None, "SPC/SPC-E water setup"),),
     "amber": (
         DocQuery("howto_topic", "amber2lammps", None, None, "AMBER → LAMMPS"),
         DocQuery("howto_topic", "bioFF", None, None, "biomolecular force fields"),
@@ -168,9 +167,7 @@ KEYWORD_TO_QUERIES: dict[str, tuple[DocQuery, ...]] = {
         DocQuery("pair_style", "reaxff", None, None, "ReaxFF pair_style"),
         DocQuery("fix", "qeq/reaxff", None, None, "charge equilibration"),
     ),
-    "eam": (
-        DocQuery("pair_style", "eam", None, None, "EAM metallic potentials"),
-    ),
+    "eam": (DocQuery("pair_style", "eam", None, None, "EAM metallic potentials"),),
     "viscosity": (
         DocQuery("howto_topic", "viscosity", None, None, "viscosity calculation"),
     ),
@@ -181,18 +178,10 @@ KEYWORD_TO_QUERIES: dict[str, tuple[DocQuery, ...]] = {
         DocQuery("howto_topic", "diffusion", None, None, "diffusion coefficient"),
         DocQuery("compute", "msd", None, None, "mean-squared displacement"),
     ),
-    "rdf": (
-        DocQuery("compute", "rdf", None, None, "radial distribution"),
-    ),
-    "msd": (
-        DocQuery("compute", "msd", None, None, "mean-squared displacement"),
-    ),
-    "shake": (
-        DocQuery("fix", "shake", None, None, "constrain bonds/angles"),
-    ),
-    "rigid": (
-        DocQuery("fix", "rigid", None, None, "rigid bodies"),
-    ),
+    "rdf": (DocQuery("compute", "rdf", None, None, "radial distribution"),),
+    "msd": (DocQuery("compute", "msd", None, None, "mean-squared displacement"),),
+    "shake": (DocQuery("fix", "shake", None, None, "constrain bonds/angles"),),
+    "rigid": (DocQuery("fix", "rigid", None, None, "rigid bodies"),),
     "wall": (
         DocQuery("fix", "wall/lj93", None, None, "LJ 9-3 wall"),
         DocQuery("howto_topic", "walls", None, None, "wall protocols"),
@@ -205,15 +194,11 @@ KEYWORD_TO_QUERIES: dict[str, tuple[DocQuery, ...]] = {
         DocQuery("fix", "deform", None, None, "shear via deform"),
         DocQuery("howto_topic", "nemd", None, None, "shear flow"),
     ),
-    "2d": (
-        DocQuery("howto_topic", "2d", None, None, "two-dimensional simulations"),
-    ),
+    "2d": (DocQuery("howto_topic", "2d", None, None, "two-dimensional simulations"),),
     "triclinic": (
         DocQuery("howto_topic", "triclinic", None, None, "non-orthogonal boxes"),
     ),
-    "replica": (
-        DocQuery("howto_topic", "replica", None, None, "replica-exchange"),
-    ),
+    "replica": (DocQuery("howto_topic", "replica", None, None, "replica-exchange"),),
     "data file": (
         DocQuery("command", "read_data", None, None, "load system from data file"),
     ),
@@ -272,9 +257,7 @@ def _unmatched_keywords(text: str, matched: list[str]) -> list[str]:
     residual = norm
     for kw in matched:
         residual = residual.replace(kw, " ")
-    candidates = [
-        w for w in re.findall(r"[a-z][a-z0-9/_\-]+", residual) if len(w) >= 4
-    ]
+    candidates = [w for w in re.findall(r"[a-z][a-z0-9/_\-]+", residual) if len(w) >= 4]
     return sorted(set(candidates))
 
 

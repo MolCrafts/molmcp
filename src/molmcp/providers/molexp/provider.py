@@ -13,6 +13,22 @@ Tools:
 * ``molexp_list_projects`` — top-level navigation.
 * ``molexp_list_runs`` — query runs by scope, joining catalog rows
   with per-run parameters.
+* ``molexp_workspace_layout`` — the canonical on-disk layout *contract*
+  (tree + naming law + authoritative-vs-derived files) an agent follows
+  when restructuring an arbitrary data directory into molexp shape.
+* ``molexp_check_layout`` — read-only linter: conformance + concrete
+  violations for an existing workspace, or a heuristic
+  project/experiment/run mapping for a directory that is not one yet.
+
+The last two are the **read-only** counterpart to the
+``mol:adopt-workspace`` skill: they serve molexp's directory-structure
+requirements and validate a candidate tree, but never write — per the
+provider-design contract, the actual integrity-checked migration runs
+through that skill or molexp's Python API, not an MCP tool. They earn a
+slot because the layout is a *contract* the discovery engine cannot
+synthesize into an actionable spec/linter, and onboarding/organizing
+data into a FAIR workspace is a recurring operation; the spec is sourced
+from a frozen molexp invariant (see :mod:`.layout`).
 
 Everything else (``list_experiments``, ``get_run``, ``get_metrics``,
 ``get_asset_text``) was deliberately dropped — agents that need those
@@ -33,6 +49,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+
+from . import layout
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -68,9 +86,7 @@ def _project_for_experiment(
     return None
 
 
-def _enriched_run_row(
-    workspace: Workspace, entry: dict[str, Any]
-) -> dict[str, Any]:
+def _enriched_run_row(workspace: Workspace, entry: dict[str, Any]) -> dict[str, Any]:
     """Catalog row + on-disk parameters as a single flat dict.
 
     Run catalog rows store ``experiment_id`` but not ``project_id``;
@@ -215,3 +231,33 @@ class MolexpProvider:
                 if len(out) >= limit:
                     break
             return out
+
+        @mcp.tool(annotations=read_only)
+        def molexp_workspace_layout() -> dict[str, Any]:
+            """Canonical molexp workspace on-disk layout contract.
+
+            Returns the frozen four-tier directory tree, the naming law
+            (container subdir, the mandatory ``run-`` prefix, and how
+            entity vs children-index filenames are derived), and the
+            authoritative-vs-derived file classification. Follow this when
+            restructuring an arbitrary data directory into a molexp
+            workspace; the ``mol:adopt-workspace`` skill or molexp's Python
+            API performs the actual, integrity-checked migration.
+            """
+            return layout.layout_spec()
+
+        @mcp.tool(annotations=read_only)
+        def molexp_check_layout(path: str) -> dict[str, Any]:
+            """Read-only check of ``path`` against the molexp layout spec.
+
+            Reports whether ``path`` is already a molexp workspace, whether
+            it conforms to the naming law, the concrete violations, and —
+            for a directory that is not a workspace yet — a heuristic
+            project/experiment/run mapping to hand to ``mol:adopt-workspace``.
+            Writes nothing.
+
+            Args:
+                path: Absolute (or non-traversing relative) directory path
+                    to inspect.
+            """
+            return layout.check_layout(path)

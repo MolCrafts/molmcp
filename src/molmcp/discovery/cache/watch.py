@@ -61,9 +61,7 @@ class LocalWatcher:
 
     def _loop(self) -> None:
         while not self._stop.wait(self.interval):
-            if self._snapshot is None or not FreshnessTracker.is_stale(
-                self._snapshot
-            ):
+            if self._snapshot is None or not FreshnessTracker.is_stale(self._snapshot):
                 continue
             if self._stop.wait(self.debounce):
                 break

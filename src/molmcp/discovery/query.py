@@ -6,7 +6,7 @@ This is what the MCP tools and the CLI both call.
 
 from __future__ import annotations
 
-from .schema import EdgeKind, Node, NodeKind
+from .schema import Edge, EdgeKind, Node, NodeKind
 from .source import Snapshot
 from .store import GraphStore
 
@@ -15,6 +15,7 @@ _KIND_ORDER: dict[str, int] = {
     NodeKind.MODULE: 1,
     NodeKind.NAMESPACE: 2,
     NodeKind.CAPABILITY: 2,
+    NodeKind.CONVENTION: 2,
     NodeKind.CLASS: 3,
     NodeKind.STRUCT: 3,
     NodeKind.INTERFACE: 3,
@@ -75,63 +76,126 @@ class DiscoveryQuery:
         candidates = self.store.nodes_by_qualname(qualname)
         if not candidates:
             return None
-        return sorted(
-            candidates, key=lambda n: (_KIND_ORDER.get(n.kind, 7), n.id)
-        )[0]
+        return sorted(candidates, key=lambda n: (_KIND_ORDER.get(n.kind, 7), n.id))[0]
+
+    def conventions_for(self, qualname: str, limit: int = 10) -> list[Node]:
+        """Convention nodes whose scope prefix covers ``qualname``.
+
+        Matching is dot-boundary-safe (scope ``a.b`` does not match
+        ``a.b2.x``) and works at any symbol depth via the convention's
+        metadata scopes — ``governs`` edges only attach at
+        package/module granularity. Most specific scope first.
+        """
+        matches: list[tuple[int, Node]] = []
+        for node in self.store.nodes_by_kind(NodeKind.CONVENTION):
+            best = -1
+            for scope in node.metadata.get("scope", []):
+                if qualname == scope or qualname.startswith(scope + "."):
+                    best = max(best, len(scope))
+            if best >= 0:
+                matches.append((best, node))
+        matches.sort(key=lambda pair: (-pair[0], pair[1].qualname))
+        return [node for _, node in matches[:limit]]
 
     # -- relationship walks ------------------------------------------
 
     def callers(self, qualname: str, limit: int = 40) -> list[Node]:
-        return self._incoming(qualname, EdgeKind.CALLS, limit)
+        return _nodes(self.callers_pairs(qualname, limit))
+
+    def callers_pairs(self, qualname: str, limit: int = 40) -> list[tuple[Node, Edge]]:
+        """Direct callers, each paired with its ``CALLS`` edge."""
+        return self._incoming_pairs(qualname, EdgeKind.CALLS, limit)
+
+    def caller_counts(self, node_ids: list[str]) -> dict[str, int]:
+        """Batched incoming ``CALLS``-edge counts keyed by node id."""
+        return self.store.incoming_edge_counts(node_ids, EdgeKind.CALLS)
 
     def callees(self, qualname: str, limit: int = 40) -> list[Node]:
-        return self._outgoing(qualname, EdgeKind.CALLS, limit)
+        return _nodes(self.callees_pairs(qualname, limit))
+
+    def callees_pairs(self, qualname: str, limit: int = 40) -> list[tuple[Node, Edge]]:
+        """Symbols this one calls, each paired with its ``CALLS`` edge."""
+        return self._outgoing_pairs(qualname, EdgeKind.CALLS, limit)
 
     def implementers(self, qualname: str, limit: int = 40) -> list[Node]:
+        return _nodes(self.implementers_pairs(qualname, limit))
+
+    def implementers_pairs(
+        self, qualname: str, limit: int = 40
+    ) -> list[tuple[Node, Edge]]:
+        """Subclasses/implementers, paired with the ``EXTENDS`` or
+        ``IMPLEMENTS`` edge that links them."""
         node = self.get_node(qualname)
         if node is None:
             return []
-        ids = [
-            e.source
+        pairs = [
+            (e.source, e)
             for e in self.store.edges_to(node.id, EdgeKind.EXTENDS)
             + self.store.edges_to(node.id, EdgeKind.IMPLEMENTS)
         ]
-        return self._load(ids, limit)
+        return self._load_pairs(pairs, limit)
 
     # "subclasses" is the same walk under a friendlier name.
     subclasses = implementers
+    subclasses_pairs = implementers_pairs
 
     def implementations(self, qualname: str, limit: int = 40) -> list[Node]:
         """Symbols that implement a ``capability`` node."""
-        return self._outgoing(qualname, EdgeKind.PROVIDES_CAPABILITY, limit)
+        return _nodes(self.implementations_pairs(qualname, limit))
+
+    def implementations_pairs(
+        self, qualname: str, limit: int = 40
+    ) -> list[tuple[Node, Edge]]:
+        """Like :meth:`implementations`, paired with the
+        ``PROVIDES_CAPABILITY`` edge."""
+        return self._outgoing_pairs(qualname, EdgeKind.PROVIDES_CAPABILITY, limit)
 
     def references(self, qualname: str, limit: int = 40) -> list[Node]:
+        return _nodes(self.references_pairs(qualname, limit))
+
+    def references_pairs(
+        self, qualname: str, limit: int = 40
+    ) -> list[tuple[Node, Edge]]:
+        """Any referrer (every edge kind except ``CONTAINS``), paired
+        with the referencing edge."""
         node = self.get_node(qualname)
         if node is None:
             return []
-        ids = [
-            e.source
+        pairs = [
+            (e.source, e)
             for e in self.store.edges_to(node.id)
             if e.kind != EdgeKind.CONTAINS
         ]
-        return self._load(ids, limit)
+        return self._load_pairs(pairs, limit)
 
     def examples_of(self, qualname: str, limit: int = 20) -> list[Node]:
-        return self._incoming(qualname, EdgeKind.EXEMPLIFIES, limit)
+        return _nodes(self.examples_pairs(qualname, limit))
+
+    def examples_pairs(self, qualname: str, limit: int = 20) -> list[tuple[Node, Edge]]:
+        """Example snippets, paired with their ``EXEMPLIFIES`` edge."""
+        return self._incoming_pairs(qualname, EdgeKind.EXEMPLIFIES, limit)
 
     def tests_of(self, qualname: str, limit: int = 20) -> list[Node]:
-        return self._incoming(qualname, EdgeKind.TESTS, limit)
+        return _nodes(self.tests_pairs(qualname, limit))
 
-    def impact(
-        self, qualname: str, depth: int = 2, limit: int = 60
-    ) -> list[Node]:
+    def tests_pairs(self, qualname: str, limit: int = 20) -> list[tuple[Node, Edge]]:
+        """Covering tests, paired with their ``TESTS`` edge."""
+        return self._incoming_pairs(qualname, EdgeKind.TESTS, limit)
+
+    def impact(self, qualname: str, depth: int = 2, limit: int = 60) -> list[Node]:
         """Transitive callers + subclasses up to ``depth`` hops."""
+        return _nodes(self.impact_pairs(qualname, depth=depth, limit=limit))
+
+    def impact_pairs(
+        self, qualname: str, depth: int = 2, limit: int = 60
+    ) -> list[tuple[Node, Edge]]:
+        """Like :meth:`impact`, paired with the first-reaching edge."""
         node = self.get_node(qualname)
         if node is None:
             return []
         seen: set[str] = {node.id}
         frontier: list[str] = [node.id]
-        collected: list[str] = []
+        collected: list[tuple[str, Edge]] = []
         for _ in range(max(depth, 1)):
             nxt: list[str] = []
             for nid in frontier:
@@ -141,11 +205,11 @@ class DiscoveryQuery:
                     if edge.source not in seen:
                         seen.add(edge.source)
                         nxt.append(edge.source)
-                        collected.append(edge.source)
+                        collected.append((edge.source, edge))
             frontier = nxt
             if not frontier:
                 break
-        return self._load(collected, limit)
+        return self._load_pairs(collected, limit)
 
     # -- structural --------------------------------------------------
 
@@ -194,24 +258,43 @@ class DiscoveryQuery:
     # -- internals ---------------------------------------------------
 
     def _children(self, node_id: str) -> list[Node]:
-        ids = [
-            e.target for e in self.store.edges_from(node_id, EdgeKind.CONTAINS)
-        ]
+        ids = [e.target for e in self.store.edges_from(node_id, EdgeKind.CONTAINS)]
         return self._load(ids, limit=None)
 
-    def _incoming(self, qualname: str, kind: str, limit: int) -> list[Node]:
+    def _incoming_pairs(
+        self, qualname: str, kind: str, limit: int
+    ) -> list[tuple[Node, Edge]]:
         node = self.get_node(qualname)
         if node is None:
             return []
-        ids = [e.source for e in self.store.edges_to(node.id, kind)]
-        return self._load(ids, limit)
+        pairs = [(e.source, e) for e in self.store.edges_to(node.id, kind)]
+        return self._load_pairs(pairs, limit)
 
-    def _outgoing(self, qualname: str, kind: str, limit: int) -> list[Node]:
+    def _outgoing_pairs(
+        self, qualname: str, kind: str, limit: int
+    ) -> list[tuple[Node, Edge]]:
         node = self.get_node(qualname)
         if node is None:
             return []
-        ids = [e.target for e in self.store.edges_from(node.id, kind)]
-        return self._load(ids, limit)
+        pairs = [(e.target, e) for e in self.store.edges_from(node.id, kind)]
+        return self._load_pairs(pairs, limit)
+
+    def _load_pairs(
+        self, pairs: list[tuple[str, Edge]], limit: int | None
+    ) -> list[tuple[Node, Edge]]:
+        out: list[tuple[Node, Edge]] = []
+        seen: set[str] = set()
+        for node_id, edge in pairs:
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+            node = self.store.get_node(node_id)
+            if node is None:
+                continue
+            out.append((node, edge))
+            if limit is not None and len(out) >= limit:
+                break
+        return out
 
     def _load(self, ids: list[str], limit: int | None) -> list[Node]:
         out: list[Node] = []
@@ -227,6 +310,10 @@ class DiscoveryQuery:
             if limit is not None and len(out) >= limit:
                 break
         return out
+
+
+def _nodes(pairs: list[tuple[Node, Edge]]) -> list[Node]:
+    return [node for node, _ in pairs]
 
 
 def _path_matches(file: str, path: str | None) -> bool:

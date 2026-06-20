@@ -55,7 +55,5 @@ class PathSafetyMiddleware(Middleware):
                 logger.warning(
                     "PathSafety rejected call to %s: %s=%r", params.name, key, val
                 )
-                raise ToolError(
-                    f"Refusing path-traversal in argument {key!r}: {val!r}"
-                )
+                raise ToolError(f"Refusing path-traversal in argument {key!r}: {val!r}")
         return await call_next(context)

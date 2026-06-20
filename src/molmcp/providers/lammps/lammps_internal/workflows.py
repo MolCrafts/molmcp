@@ -39,9 +39,7 @@ class CommandRef:
                     if (k, n) != (self.kind, self.base)
                 ]
                 if shared:
-                    out["shared_with"] = [
-                        f"{e['kind']} {e['name']}" for e in shared
-                    ]
+                    out["shared_with"] = [f"{e['kind']} {e['name']}" for e in shared]
         if slug is not None:
             out["url"] = urls.build_url(slug, version)
         return out
@@ -263,9 +261,7 @@ WORKFLOWS: dict[str, Workflow] = {
                 commands=(
                     CommandRef("fix nvt", kind="fix", base="nvt"),
                     CommandRef("fix deform", kind="fix", base="deform"),
-                    CommandRef(
-                        "compute pressure", kind="compute", base="pressure"
-                    ),
+                    CommandRef("compute pressure", kind="compute", base="pressure"),
                     CommandRef(
                         "compute stress/atom",
                         kind="compute",
@@ -295,9 +291,7 @@ WORKFLOWS: dict[str, Workflow] = {
             _OUTPUT_SECTION,
             Section(
                 name="protocol",
-                commands=(
-                    CommandRef("rerun"),
-                ),
+                commands=(CommandRef("rerun"),),
             ),
         ),
         related_recipes=(("rerun", "analyze_trajectory"),),

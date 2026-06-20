@@ -67,13 +67,10 @@ def explain(line: str, version: str = urls.DEFAULT_VERSION) -> dict:
                 for (k, n) in urls.SHARED_WITH.get(slug, ())
                 if (k, n) != key
             ]
-            rationale = (
-                f"alias-map hit for {style_kind} {style_name}"
-                + (
-                    f" (shared page covering {len(shared_with)} other variant(s))"
-                    if shared_with
-                    else ""
-                )
+            rationale = f"alias-map hit for {style_kind} {style_name}" + (
+                f" (shared page covering {len(shared_with)} other variant(s))"
+                if shared_with
+                else ""
             )
     else:
         key = ("command", command)

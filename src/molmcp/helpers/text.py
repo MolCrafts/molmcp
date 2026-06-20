@@ -11,8 +11,4 @@ def fence_untrusted(content: str, label: str = "untrusted file content") -> str:
     returns raw file content (e.g. PDB headers, comment lines) that an
     attacker could have written.
     """
-    return (
-        f"<!-- BEGIN {label} -->\n"
-        f"{content}\n"
-        f"<!-- END {label} -->"
-    )
+    return f"<!-- BEGIN {label} -->\n{content}\n<!-- END {label} -->"

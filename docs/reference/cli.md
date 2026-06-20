@@ -191,6 +191,43 @@ unresolved references). Writes to `--output` if given, otherwise stdout.
 molmcp discovery dump pkg:molpy --output graph.json
 ```
 
+### `lint [SOURCE] [--pkg NAME[,NAME...]] [--json] [--strict]`
+
+Report a source's discoverability health — the upstream-facing
+feedback channel for coding discipline. molmcp does not enforce
+docstring or testing conventions in source repos; this command only
+measures them, in three dimensions:
+
+- **undocumented exports** — exported symbols with no docstring or
+  summary; these are invisible to full-text capability search
+- **untested public symbols** — public classes/functions with no
+  linked test (direct `tests` edge)
+- **high-unresolved modules** — modules where more than half of the
+  references failed to resolve (ignoring modules with fewer than 5
+  references)
+
+Give either a `SOURCE` spec or `--pkg` (repeatable or
+comma-separated, mapped through the same package resolver as
+`serve`); omitting both is a usage error — there is no implicit
+default because linting every default source would trigger several
+GitHub fetches.
+
+```bash
+molmcp discovery lint pkg:molpy
+molmcp discovery lint --pkg molpy,molexp --json
+molmcp discovery lint pkg:molpy --strict   # CI gate in the upstream repo
+```
+
+Output is a human-readable table by default; `--json` emits a
+machine-readable report (`reports[]` with `source`, `summary`, and the
+three finding arrays, plus a top-level `total_findings`).
+
+**Exit codes:** advisory by default — always `0`, even with findings,
+so it never breaks a pipeline that did not opt in. With `--strict`,
+exits `1` when any finding exists, letting an upstream repo promote
+the report to a CI gate. Source-resolution failures exit `1` as in
+every other subcommand.
+
 ### `clean [--all]`
 
 Prune old cached snapshots. With `--all`, remove the entire discovery

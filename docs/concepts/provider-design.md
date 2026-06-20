@@ -38,17 +38,33 @@ invocation.
 
 ## What's currently shipped
 
-Two providers, three tools:
+Two providers, five tools:
 
 | Provider | Tool | Why it earned a slot |
 |---|---|---|
 | `MolqProvider` | `molq_list_jobs` | "What's in the queue?" — primary dashboard query. Filters are stable, output is a flat list. |
 | `MolexpProvider` | `molexp_list_projects` | Top-level workspace navigation. No inputs. |
 | `MolexpProvider` | `molexp_list_runs` | Per-project / per-experiment run query. Stable filter set, flat output. |
+| `MolexpProvider` | `molexp_workspace_layout` | The workspace on-disk *contract* (tree + naming law). No inputs, frozen output. |
+| `MolexpProvider` | `molexp_check_layout` | Read-only lint of a directory against that contract. One path arg, single-shot verdict. |
 
-Both providers exist **only** because their answers depend on local
+The first three exist **only** because their answers depend on local
 runtime state (`~/.molq/jobs.db`, a workspace's catalog) that no amount
 of introspection over upstream source can recover.
+
+The last two are a different category — a layout **contract + linter**,
+the read-only counterpart to the `mol:adopt-workspace` skill. They are
+not stateful dashboard queries, so condition 3 ("every-session
+frequency") is read against the *task*, not the session: whenever an
+agent organizes or onboards data into a FAIR workspace it needs the
+layout spec first and lints as it goes. The contract is sourced from a
+*frozen* molexp invariant (a drift test pins the mirror to the live
+classes), so condition 1 holds despite the spec living partly in
+upstream; and both tools are strictly read-only (condition 2) — the
+actual, integrity-checked migration runs through the skill or molexp's
+Python API, never an MCP write tool. This is the same reference/lint
+category as the doc tools, not the runtime-query category the
+four-condition gate was written for.
 
 Things that were deliberately *not* shipped despite living in earlier
 revisions:

@@ -3,7 +3,8 @@
 #
 # CI source of truth: .github/workflows/ci.yml
 #   - uv sync --extra dev
-#   - uv run ruff check src tests   (Lint)   -> pre-commit
+#   - uv run ruff check src tests          (Lint)   -> pre-commit
+#   - uv run ruff format --check src tests (Lint)   -> pre-commit
 #   - uv run pytest -v              (Test)   -> pre-push
 # Version parity is guaranteed by uv.lock (uv run resolves the locked env).
 
@@ -25,6 +26,14 @@ repos:
       - id: ruff-check
         name: ruff check src tests (CI Lint)
         entry: uv run ruff check src tests
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      # CI: "Lint" step — uv run ruff format --check src tests
+      - id: ruff-format
+        name: ruff format --check src tests (CI Lint)
+        entry: uv run ruff format --check src tests
         language: system
         pass_filenames: false
         types: [python]

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from molmcp.discovery import DiscoveryConfig, DiscoveryEngine
+from molmcp.discovery.schema import SCHEMA_VERSION
 
 
 def _write(path: Path, text: str) -> None:
@@ -45,7 +46,7 @@ def test_index_writes_db_and_manifest(tmp_path):
     assert engine.cache.manifest_path(sid).is_file()
 
     manifest = engine.cache.read_manifest(sid)
-    assert manifest["schema_version"] == 1
+    assert manifest["schema_version"] == SCHEMA_VERSION
     assert manifest["node_count"] == result.node_count
     assert manifest["origin"] == "local"
 
@@ -96,12 +97,6 @@ def test_index_resolves_internal_calls(tmp_path):
     engine = _engine(tmp_path)
     result = engine.index(str(_repo(tmp_path)))
     add = next(n for n in result.graph.nodes if n.qualname == "calc.add")
-    run = next(
-        n for n in result.graph.nodes if n.qualname == "calc.Calc.run"
-    )
-    calls = {
-        (e.source, e.target)
-        for e in result.graph.edges
-        if e.kind == "calls"
-    }
+    run = next(n for n in result.graph.nodes if n.qualname == "calc.Calc.run")
+    calls = {(e.source, e.target) for e in result.graph.edges if e.kind == "calls"}
     assert (run.id, add.id) in calls

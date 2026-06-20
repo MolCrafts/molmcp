@@ -52,15 +52,11 @@ class FreshnessTracker:
         return ChangeSet(
             added=sorted(p for p in current if p not in previous),
             changed=sorted(
-                p
-                for p in current
-                if p in previous and current[p] != previous[p]
+                p for p in current if p in previous and current[p] != previous[p]
             ),
             removed=sorted(p for p in previous if p not in current),
             unchanged=sorted(
-                p
-                for p in current
-                if p in previous and current[p] == previous[p]
+                p for p in current if p in previous and current[p] == previous[p]
             ),
         )
 

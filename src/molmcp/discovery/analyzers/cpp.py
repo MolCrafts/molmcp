@@ -12,9 +12,7 @@ from .base import AnalyzerNotAvailable, AnalyzerResult
 
 class CppAnalyzer:
     language = "cpp"
-    extensions = frozenset(
-        {".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"}
-    )
+    extensions = frozenset({".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"})
 
     def analyze(self, file: FileRecord, source: str) -> AnalyzerResult:
         raise AnalyzerNotAvailable(

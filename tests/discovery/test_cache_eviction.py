@@ -22,9 +22,7 @@ def _snapshot_dirs(cache_dir: Path) -> list[Path]:
 def test_evicts_beyond_max_snapshots_per_spec(tmp_path):
     repo = tmp_path / "repo"
     _write(repo / "m.py", "x = 0\n")
-    config = DiscoveryConfig(
-        cache_dir=tmp_path / "cache", max_snapshots_per_spec=2
-    )
+    config = DiscoveryConfig(cache_dir=tmp_path / "cache", max_snapshots_per_spec=2)
     engine = DiscoveryEngine(config)
 
     for i in range(4):
@@ -36,9 +34,7 @@ def test_evicts_beyond_max_snapshots_per_spec(tmp_path):
 
 def test_evict_keeps_newest_snapshot(tmp_path):
     repo = tmp_path / "repo"
-    config = DiscoveryConfig(
-        cache_dir=tmp_path / "cache", max_snapshots_per_spec=1
-    )
+    config = DiscoveryConfig(cache_dir=tmp_path / "cache", max_snapshots_per_spec=1)
     engine = DiscoveryEngine(config)
 
     _write(repo / "m.py", "x = 1\n")
