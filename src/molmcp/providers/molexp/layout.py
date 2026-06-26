@@ -1,21 +1,26 @@
 """Canonical molexp workspace layout — the on-disk contract, read-only.
 
 This module re-encodes the **frozen** four-tier ``Folder`` family invariant
-documented in molexp's CLAUDE.md ("On-disk layout" / "Layout naming law"):
-``Workspace → Project → Experiment → Run``. molexp is the source of truth;
-this is a vetted mirror so an agent restructuring an arbitrary data
-directory can, without writing a byte:
+documented in molexp's CLAUDE.md ("On-disk layout" / "Layout naming law")
+together with the **Open Knowledge Format (OKF)** concept model that molexp
+now layers on top of it: ``Workspace → Project → Experiment → Run`` are OKF
+Concepts, every concept directory carries a ``meta.yaml`` type marker and an
+optional ``index.md`` narrative, and notes/literature are first-class OKF
+Concepts (``Note`` / ``ReferenceConcept``) reached through the ``Bundle``
+façade. molexp is the source of truth; this is a vetted mirror so an agent
+restructuring an arbitrary data directory can, without writing a byte:
 
-* read the spec (:func:`layout_spec`) — the tree, the four naming
-  derivations, and the authoritative-vs-derived file classification; and
-* lint a candidate directory (:func:`check_layout`) — conformance,
-  concrete violations, and a heuristic project/experiment/run mapping it
-  can hand to the ``mol:adopt-workspace`` skill (which owns the actual,
+* read the spec (:func:`layout_spec`) — the tree, the naming derivations,
+  the OKF concept markers, the knowledge concepts, and the
+  authoritative-vs-derived file classification; and
+* lint a candidate directory (:func:`validate_workspace`) — conformance and
+  concrete violations, consumed by :mod:`.curate` to build the OKF curation
+  plan it hands to the ``mol:adopt-workspace`` skill (which owns the actual,
   integrity-checked migration).
 
 The layout being mirrored is a *frozen* invariant, so drift risk is low;
-``tests/providers/test_molexp_layout.py`` additionally asserts this
-constant matches the live molexp classes whenever the real package is
+``tests/providers/test_molexp_layout.py`` additionally asserts these
+constants match the live molexp classes whenever the real package is
 installed. Mutating the on-disk tree is deliberately **not** offered here:
 per molmcp's provider-design contract, file writes belong in the upstream
 API / the migration skill, never an MCP tool.
@@ -33,13 +38,12 @@ from typing import Any
 # obviously non-conforming directory name, not to re-implement slugify.
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
-# Bounds for the heuristic mapping of an arbitrary directory, so the tool
-# can never return an unbounded payload (the response-limit middleware
-# would otherwise truncate it opaquely). Exceeding any bound sets the
-# ``truncated`` flag — never a silent cap.
-_MAX_PROJECTS = 100
-_MAX_EXPERIMENTS = 100
-_MAX_RUNS = 200
+# OKF concept markers (every concept directory carries these). Names mirror
+# molexp's ``workspace.folder`` constants (META_YAML_FILENAME / INDEX_FILENAME)
+# and the ``_ops`` operational sidecar.
+META_YAML = "meta.yaml"
+INDEX_MD = "index.md"
+OPS_DIR = "_ops"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +52,9 @@ class LayoutLevel:
 
     kind: str
     """Folder kind: ``workspace`` | ``project`` | ``experiment`` | ``run``."""
+
+    concept_type: str
+    """OKF concept ``type`` stamped in this level's ``meta.yaml`` (registry id)."""
 
     container: str | None
     """Parent-relative subdir holding this level's dirs (``None`` at root)."""
@@ -68,10 +75,12 @@ class LayoutLevel:
     """How this level's id is formed."""
 
 
-# The frozen contract. Order is the dependency chain root → leaf.
+# The frozen contract. Order is the dependency chain root → leaf. ``concept_type``
+# mirrors molexp's WORKSPACE_*_KIND constants (workspace.folder).
 WORKSPACE_LAYOUT: tuple[LayoutLevel, ...] = (
     LayoutLevel(
         kind="workspace",
+        concept_type="workspace.root",
         container=None,
         dir_template=None,
         entity_file="workspace.json",
@@ -81,6 +90,7 @@ WORKSPACE_LAYOUT: tuple[LayoutLevel, ...] = (
     ),
     LayoutLevel(
         kind="project",
+        concept_type="workspace.project",
         container="projects",
         dir_template="<project_id>",
         entity_file="project.json",
@@ -90,6 +100,7 @@ WORKSPACE_LAYOUT: tuple[LayoutLevel, ...] = (
     ),
     LayoutLevel(
         kind="experiment",
+        concept_type="workspace.experiment",
         container="experiments",
         dir_template="<experiment_id>",
         entity_file="experiment.json",
@@ -99,6 +110,7 @@ WORKSPACE_LAYOUT: tuple[LayoutLevel, ...] = (
     ),
     LayoutLevel(
         kind="run",
+        concept_type="workspace.run",
         container="runs",
         dir_template="run-<run_id>",
         entity_file="run.json",
@@ -109,20 +121,61 @@ WORKSPACE_LAYOUT: tuple[LayoutLevel, ...] = (
     ),
 )
 
+# OKF markers present in *every* concept directory (the four tiers above plus
+# the knowledge concepts below). meta.yaml is mandatory and written eagerly;
+# index.md is the additive narrative and appears only once content is added.
+CONCEPT_MARKERS: tuple[dict[str, str], ...] = (
+    {
+        "path": "<concept>/meta.yaml",
+        "what": "OKF concept type marker: the registered 'type' + 'id'. "
+        "Mandatory — every concept dir has one.",
+    },
+    {
+        "path": "<concept>/index.md",
+        "what": "OKF narrative; its markdown links ARE the knowledge graph "
+        "(the concept's out-edges). Additive — written when content/links exist.",
+    },
+)
+
+# Notes & literature are OKF Concepts, NOT the removed per-scope library/.
+# Each is a directory whose path is its identity, reached via the Bundle façade.
+KNOWLEDGE_CONCEPTS: tuple[dict[str, str], ...] = (
+    {
+        "concept_type": "note.note",
+        "class": "Note",
+        "shape": "a concept dir with meta.yaml (type: note.note) + index.md "
+        "(the note body); cite(ref) appends a markdown link → out-edge.",
+    },
+    {
+        "concept_type": "reference.reference",
+        "class": "ReferenceConcept",
+        "shape": "a concept dir with meta.yaml carrying ReferenceMeta bib "
+        "fields (title/authors/year/doi/venue/url/pdf_path/source/source_key) "
+        "+ index.md (citation text). PDFs are POINTED-AT via pdf_path, never "
+        "copied.",
+    },
+)
+
 # Files that are the single source of truth (never regenerated from elsewhere).
 AUTHORITATIVE_FILES: tuple[dict[str, str], ...] = (
     {"path": "<level>/<entity_file>", "what": "per-node entity metadata"},
-    {"path": "<scope>/assets.json", "what": "per-scope asset manifest"},
-    {"path": "<scope>/library/references.json", "what": "molexp-native bib records"},
-    {"path": "<scope>/library/notes/<slug>.md", "what": "NoteAsset files"},
+    {"path": "<concept>/meta.yaml", "what": "OKF concept type marker (type + id)"},
+    {"path": "<concept>/index.md", "what": "OKF narrative + markdown-link graph"},
+    {"path": "<scope>/assets.json", "what": "per-scope asset manifest (lazy)"},
+    {
+        "path": "runs/run-<run_id>/_ops/run.json",
+        "what": "run hot-state sidecar — status / ownership / heartbeat / "
+        "executions; the read source for run status (lazy-created, not "
+        "derivable from run.json)",
+    },
 )
 
 # Files that are derived and rebuildable by scanning the authoritative ones.
 DERIVED_FILES: tuple[dict[str, str], ...] = (
     {"path": "catalog/index.sqlite", "what": "workspace-wide asset catalog"},
     {"path": "<parent>/<child_index_file>", "what": "children index"},
-    {"path": "<scope>/library/index.json", "what": "machine library index"},
-    {"path": "<scope>/library/INDEX.md", "what": "human/agent library index"},
+    {"path": "<knowledge_bundle>/index.json", "what": "machine bundle index"},
+    {"path": "<knowledge_bundle>/INDEX.md", "what": "human/agent bundle index"},
 )
 
 LAYOUT_RULES: tuple[str, ...] = (
@@ -136,34 +189,51 @@ LAYOUT_RULES: tuple[str, ...] = (
     "The children-index file in a parent dir is the CHILD class name "
     "snake_case + '.json'; same basename as the child's entity file but in "
     "the parent dir and a different role.",
-    "Entity *.json and per-scope assets.json are authoritative; every index "
-    "(catalog/index.sqlite, children indexes, library/index.json, INDEX.md) "
-    "is derived and rebuildable.",
+    "Every concept directory carries an OKF meta.yaml (its registered 'type' "
+    "+ 'id'); workspace/project/experiment/run map to types workspace.root / "
+    "workspace.project / workspace.experiment / workspace.run.",
+    "index.md is the optional OKF narrative whose markdown links ARE the "
+    "knowledge graph (a concept's out-edges).",
+    "Notes and literature are OKF Concepts (Note=note.note, "
+    "ReferenceConcept=reference.reference) reached via the Bundle façade — "
+    "directories whose path is their identity; PDFs are pointed-at via "
+    "meta.yaml pdf_path, never copied. The legacy per-scope library/ "
+    "subsystem was removed (wsokf-11).",
+    "A run's hot operational state (status / ownership / heartbeat / "
+    "executions) lives in its _ops/run.json sidecar — the read source — not "
+    "in the run.json entity file.",
+    "Entity *.json and per-scope assets.json + every meta.yaml/index.md are "
+    "authoritative; every index (catalog/index.sqlite, children indexes, the "
+    "knowledge bundle index.json/INDEX.md) is derived and rebuildable.",
     "Per-attempt state lives under runs/run-<id>/executions/<exec_id>/ "
     "(exec_id = 'exec-<run_id>' with an optional '-N' for reruns).",
 )
 
 
 def render_tree() -> str:
-    """A compact ASCII rendering of the canonical workspace tree."""
+    """A compact ASCII rendering of the canonical OKF workspace tree."""
     return (
         "workspace_root/\n"
-        "├── workspace.json                # workspace entity metadata\n"
-        "├── project.json                  # children index of projects (derived)\n"
-        "├── assets.json                   # workspace-scoped asset manifest\n"
-        "├── catalog/index.sqlite          # ws.catalog (derived)\n"
-        "├── library/                      # per-scope notes + literature\n"
-        "└── projects/<project_id>/        # container 'projects/', slug, no prefix\n"
-        "    ├── project.json              # project entity metadata\n"
-        "    ├── experiment.json           # children index of experiments (derived)\n"
+        "├── workspace.json          # entity metadata\n"
+        "├── meta.yaml               # OKF marker (workspace.root)\n"
+        "├── index.md                # OKF narrative; links = knowledge graph\n"
+        "├── project.json            # children index (derived)\n"
+        "├── catalog/index.sqlite    # ws.catalog (derived)\n"
+        "├── <note>/                 # OKF Note (meta.yaml + index.md)\n"
+        "├── <reference>/            # OKF Reference (meta.yaml + index.md)\n"
+        "└── projects/<project_id>/  # 'projects/' container, slug, no prefix\n"
+        "    ├── project.json        # project entity metadata\n"
+        "    ├── meta.yaml           # OKF marker (workspace.project)\n"
+        "    ├── experiment.json     # children index (derived)\n"
         "    └── experiments/<experiment_id>/\n"
-        "        ├── experiment.json       # experiment entity metadata\n"
-        "        ├── run.json              # children index of runs (derived)\n"
-        "        └── runs/run-<run_id>/    # 'run-' prefix is mandatory\n"
-        "            ├── run.json          # run entity metadata\n"
-        "            ├── assets.json       # run-scoped asset manifest\n"
-        "            ├── artifacts/        # final products\n"
-        "            ├── cache/            # per-run cache\n"
+        "        ├── experiment.json # experiment entity metadata\n"
+        "        ├── meta.yaml       # OKF marker (workspace.experiment)\n"
+        "        ├── run.json        # children index (derived)\n"
+        "        └── runs/run-<run_id>/      # 'run-' prefix mandatory\n"
+        "            ├── run.json    # run entity (identity/provenance)\n"
+        "            ├── meta.yaml   # OKF marker (workspace.run)\n"
+        "            ├── _ops/run.json       # hot-state (status/heartbeat)\n"
+        "            ├── assets.json # run-scoped asset manifest\n"
         "            └── executions/<exec_id>/   # exec-<run_id>[-N]\n"
     )
 
@@ -172,13 +242,14 @@ def layout_spec() -> dict[str, Any]:
     """Structured, self-contained molexp workspace-layout spec."""
     return {
         "summary": "Canonical molexp workspace on-disk layout (frozen "
-        "four-tier Folder hierarchy). Restructure a directory to match this; "
-        "the mol:adopt-workspace skill or molexp's Python API performs the "
-        "actual, integrity-checked migration.",
+        "four-tier Folder hierarchy + OKF concept model). Restructure a "
+        "directory to match this; the mol:adopt-workspace skill or molexp's "
+        "Python API performs the actual, integrity-checked migration.",
         "hierarchy": ["workspace", "project", "experiment", "run"],
         "levels": [
             {
                 "kind": lvl.kind,
+                "concept_type": lvl.concept_type,
                 "container": lvl.container,
                 "dir_template": lvl.dir_template,
                 "entity_file": lvl.entity_file,
@@ -189,6 +260,8 @@ def layout_spec() -> dict[str, Any]:
             for lvl in WORKSPACE_LAYOUT
         ],
         "rules": list(LAYOUT_RULES),
+        "concept_markers": [dict(m) for m in CONCEPT_MARKERS],
+        "knowledge_concepts": [dict(c) for c in KNOWLEDGE_CONCEPTS],
         "authoritative_files": [dict(f) for f in AUTHORITATIVE_FILES],
         "derived_files": [dict(f) for f in DERIVED_FILES],
         "tree": render_tree(),
@@ -196,7 +269,9 @@ def layout_spec() -> dict[str, Any]:
 
 
 @dataclass(slots=True)
-class _Findings:
+class Findings:
+    """Accumulator for conformance violations during a lint pass."""
+
     violations: list[dict[str, str]] = field(default_factory=list)
     truncated: bool = False
 
@@ -204,155 +279,65 @@ class _Findings:
         self.violations.append({"path": str(path), "rule": rule, "detail": detail})
 
 
-def _is_slug(name: str) -> bool:
+def is_slug(name: str) -> bool:
     return bool(_SLUG_RE.match(name))
 
 
-def _child_dirs(parent: Path) -> list[Path]:
-    """Sorted real subdirectories (no symlinks, no dotfiles)."""
+def child_dirs(parent: Path) -> list[Path]:
+    """Sorted real subdirectories (no symlinks, no dotfiles, no _ops)."""
     if not parent.is_dir():
         return []
-    out = [
+    return [
         p
         for p in sorted(parent.iterdir())
-        if p.is_dir() and not p.is_symlink() and not p.name.startswith(".")
+        if p.is_dir()
+        and not p.is_symlink()
+        and not p.name.startswith(".")
+        and p.name != OPS_DIR
     ]
-    return out
 
 
-def _validate_workspace(root: Path, found: _Findings) -> None:
-    """Lint an existing molexp workspace against the naming law."""
+def _require(dir_path: Path, *, entity_file: str, found: Findings) -> None:
+    """Flag a concept dir missing its entity file or OKF meta.yaml marker."""
+    if not (dir_path / entity_file).is_file():
+        found.add(dir_path, "missing_entity_file", f"missing {entity_file}")
+    if not (dir_path / META_YAML).is_file():
+        found.add(
+            dir_path,
+            "missing_meta_yaml",
+            f"missing OKF {META_YAML} concept marker (type + id)",
+        )
+
+
+def validate_workspace(root: Path, found: Findings) -> None:
+    """Lint an existing molexp workspace against the naming + OKF laws.
+
+    Checks the mandatory, eagerly-written files only — entity ``*.json`` and
+    the OKF ``meta.yaml`` marker at every tier. ``index.md``, ``_ops/run.json``
+    and ``assets.json`` are additive/lazy and their absence is NOT a violation.
+    """
+    if not (root / META_YAML).is_file():
+        found.add(
+            root,
+            "missing_meta_yaml",
+            f"workspace root missing OKF {META_YAML} (type: workspace.root)",
+        )
     projects_dir = root / "projects"
     if not projects_dir.is_dir():
         return  # an empty workspace is conformant; nothing to walk
-    for proj in _child_dirs(projects_dir):
-        if not _is_slug(proj.name):
+    for proj in child_dirs(projects_dir):
+        if not is_slug(proj.name):
             found.add(proj, "project_dir_name", "project dir is not a kebab slug")
-        if not (proj / "project.json").is_file():
-            found.add(proj, "missing_entity_file", "missing project.json")
-        exps_dir = proj / "experiments"
-        for exp in _child_dirs(exps_dir):
-            if not _is_slug(exp.name):
+        _require(proj, entity_file="project.json", found=found)
+        for exp in child_dirs(proj / "experiments"):
+            if not is_slug(exp.name):
                 found.add(exp, "experiment_dir_name", "experiment dir is not a slug")
-            if not (exp / "experiment.json").is_file():
-                found.add(exp, "missing_entity_file", "missing experiment.json")
-            runs_dir = exp / "runs"
-            for run in _child_dirs(runs_dir):
+            _require(exp, entity_file="experiment.json", found=found)
+            for run in child_dirs(exp / "runs"):
                 if not run.name.startswith("run-"):
                     found.add(
                         run,
                         "run_prefix",
                         "run dir must be named 'run-<run_id>' (missing 'run-')",
                     )
-                if not (run / "run.json").is_file():
-                    found.add(run, "missing_entity_file", "missing run.json")
-
-
-def _propose_mapping(root: Path) -> tuple[dict[str, Any], bool]:
-    """Heuristic project/experiment/run mapping for an arbitrary directory.
-
-    Depth-based and intentionally simple: top-level dirs become projects,
-    their subdirs experiments, and the next level runs. It is a *suggestion*
-    to seed an operator-reviewed migration, never an assertion of intent.
-    """
-    truncated = False
-    projects: list[dict[str, Any]] = []
-    for proj in _child_dirs(root):
-        if len(projects) >= _MAX_PROJECTS:
-            truncated = True
-            break
-        experiments: list[dict[str, Any]] = []
-        for exp in _child_dirs(proj):
-            if len(experiments) >= _MAX_EXPERIMENTS:
-                truncated = True
-                break
-            runs: list[dict[str, str]] = []
-            for run in _child_dirs(exp):
-                if len(runs) >= _MAX_RUNS:
-                    truncated = True
-                    break
-                runs.append({"source_dir": run.name, "target_dir": f"run-{run.name}"})
-            experiments.append({"name": exp.name, "target_id": exp.name, "runs": runs})
-        projects.append(
-            {"name": proj.name, "target_id": proj.name, "experiments": experiments}
-        )
-    return {"projects": projects}, truncated
-
-
-def check_layout(path: str | Path) -> dict[str, Any]:
-    """Read-only conformance check + restructuring proposal for ``path``.
-
-    Returns a single dict: whether ``path`` is already a molexp workspace,
-    whether it conforms to the naming law, a list of concrete violations,
-    and — for a directory that is not yet a workspace — a heuristic
-    project/experiment/run mapping to feed an operator-reviewed migration.
-    No filesystem writes occur.
-    """
-    root = Path(path)
-    if not root.exists():
-        return {
-            "path": str(root),
-            "exists": False,
-            "is_workspace": False,
-            "conforms": False,
-            "violations": [
-                {"path": str(root), "rule": "exists", "detail": "path does not exist"}
-            ],
-            "proposed_mapping": None,
-            "truncated": False,
-            "summary": "Path does not exist.",
-        }
-    if not root.is_dir():
-        return {
-            "path": str(root),
-            "exists": True,
-            "is_workspace": False,
-            "conforms": False,
-            "violations": [
-                {
-                    "path": str(root),
-                    "rule": "is_dir",
-                    "detail": "path is not a directory",
-                }
-            ],
-            "proposed_mapping": None,
-            "truncated": False,
-            "summary": "Path is not a directory.",
-        }
-
-    found = _Findings()
-    is_workspace = (root / "workspace.json").is_file()
-    proposed: dict[str, Any] | None = None
-
-    if is_workspace:
-        _validate_workspace(root, found)
-        conforms = not found.violations
-        summary = (
-            "Conforms to the molexp layout spec."
-            if conforms
-            else f"molexp workspace with {len(found.violations)} layout violation(s)."
-        )
-    else:
-        found.add(
-            root,
-            "missing_workspace_json",
-            "no workspace.json — not a molexp workspace; see proposed_mapping",
-        )
-        proposed, found.truncated = _propose_mapping(root)
-        conforms = False
-        n_proj = len(proposed["projects"])
-        summary = (
-            f"Not a molexp workspace. Proposed {n_proj} project(s) from "
-            "directory structure; hand to mol:adopt-workspace to materialize."
-        )
-
-    return {
-        "path": str(root),
-        "exists": True,
-        "is_workspace": is_workspace,
-        "conforms": conforms,
-        "violations": found.violations,
-        "proposed_mapping": proposed,
-        "truncated": found.truncated,
-        "summary": summary,
-    }
+                _require(run, entity_file="run.json", found=found)

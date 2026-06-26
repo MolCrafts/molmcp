@@ -14,19 +14,21 @@ Tools:
 * ``molexp_list_runs`` — query runs by scope, joining catalog rows
   with per-run parameters.
 * ``molexp_workspace_layout`` — the canonical on-disk layout *contract*
-  (tree + naming law + authoritative-vs-derived files) an agent follows
-  when restructuring an arbitrary data directory into molexp shape.
-* ``molexp_check_layout`` — read-only linter: conformance + concrete
-  violations for an existing workspace, or a heuristic
-  project/experiment/run mapping for a directory that is not one yet.
+  (tree + naming law + the OKF concept model: meta.yaml/index.md markers,
+  Note/Reference knowledge concepts, authoritative-vs-derived files) an
+  agent follows when restructuring an arbitrary data directory.
+* ``molexp_check_layout`` — read-only linter + **OKF curation planner**:
+  conformance + concrete violations for an existing workspace, or, for a
+  directory that is not one yet, a plan to (re)build the index files,
+  OKF markers, notes, and knowledge per current conventions.
 
 The last two are the **read-only** counterpart to the
 ``mol:adopt-workspace`` skill: they serve molexp's directory-structure
-requirements and validate a candidate tree, but never write — per the
+requirements and propose a curation plan, but never write — per the
 provider-design contract, the actual integrity-checked migration runs
 through that skill or molexp's Python API, not an MCP tool. They earn a
 slot because the layout is a *contract* the discovery engine cannot
-synthesize into an actionable spec/linter, and onboarding/organizing
+synthesize into an actionable spec/planner, and onboarding/organizing
 data into a FAIR workspace is a recurring operation; the spec is sourced
 from a frozen molexp invariant (see :mod:`.layout`).
 
@@ -50,7 +52,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from . import layout
+from . import curate, layout
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -234,30 +236,40 @@ class MolexpProvider:
 
         @mcp.tool(annotations=read_only)
         def molexp_workspace_layout() -> dict[str, Any]:
-            """Canonical molexp workspace on-disk layout contract.
+            """Canonical molexp workspace on-disk layout contract (OKF).
 
             Returns the frozen four-tier directory tree, the naming law
             (container subdir, the mandatory ``run-`` prefix, and how
-            entity vs children-index filenames are derived), and the
-            authoritative-vs-derived file classification. Follow this when
-            restructuring an arbitrary data directory into a molexp
-            workspace; the ``mol:adopt-workspace`` skill or molexp's Python
-            API performs the actual, integrity-checked migration.
+            entity vs children-index filenames are derived), the OKF
+            concept model (per-dir ``meta.yaml`` type marker + ``index.md``
+            narrative whose links are the knowledge graph; ``Note`` /
+            ``ReferenceConcept`` knowledge concepts; the ``_ops/run.json``
+            hot-state sidecar), and the authoritative-vs-derived file
+            classification. Follow this when restructuring an arbitrary data
+            directory into a molexp workspace; the ``mol:adopt-workspace``
+            skill or molexp's Python API performs the actual,
+            integrity-checked migration.
             """
             return layout.layout_spec()
 
         @mcp.tool(annotations=read_only)
         def molexp_check_layout(path: str) -> dict[str, Any]:
-            """Read-only check of ``path`` against the molexp layout spec.
+            """Read-only check of ``path`` + OKF curation plan.
 
             Reports whether ``path`` is already a molexp workspace, whether
-            it conforms to the naming law, the concrete violations, and —
-            for a directory that is not a workspace yet — a heuristic
-            project/experiment/run mapping to hand to ``mol:adopt-workspace``.
-            Writes nothing.
+            it conforms to the naming + OKF laws, the concrete violations,
+            and a ``proposed_curation`` plan to hand to ``mol:adopt-workspace``
+            (or molexp's Python API) to materialize. The plan is
+            ``kind='build'`` for a non-workspace tree (a project/experiment/run
+            mapping tagged with concept types) or ``kind='repair'`` for an
+            existing workspace with gaps, and in both cases enumerates the OKF
+            ``meta.yaml`` / ``index.md`` markers and derived indexes to
+            (re)build, the existing files to ingest as ``Note`` /
+            ``ReferenceConcept`` knowledge concepts, and per-scope
+            LLM-summary notes to generate. Writes nothing.
 
             Args:
                 path: Absolute (or non-traversing relative) directory path
                     to inspect.
             """
-            return layout.check_layout(path)
+            return curate.check_layout(path)

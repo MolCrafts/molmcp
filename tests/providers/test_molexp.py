@@ -484,14 +484,19 @@ class TestMolexpCheckLayout:
     """The linter walks the filesystem read-only; needs no molexp."""
 
     def _make_workspace_tree(self, root: Path) -> None:
+        # An OKF-conformant tree: every concept dir carries meta.yaml.
         (root / "workspace.json").write_text("{}")
-        run = (
-            root / "projects" / "qm9" / "experiments" / "baseline" / "runs" / "run-a3f2"
-        )
+        (root / "meta.yaml").write_text("type: workspace.root\nid: ws\n")
+        proj = root / "projects" / "qm9"
+        run = proj / "experiments" / "baseline" / "runs" / "run-a3f2"
         run.mkdir(parents=True)
-        (root / "projects" / "qm9" / "project.json").write_text("{}")
-        (run.parent.parent / "experiment.json").write_text("{}")
+        (proj / "project.json").write_text("{}")
+        (proj / "meta.yaml").write_text("type: workspace.project\nid: qm9\n")
+        exp = run.parent.parent
+        (exp / "experiment.json").write_text("{}")
+        (exp / "meta.yaml").write_text("type: workspace.experiment\nid: baseline\n")
         (run / "run.json").write_text("{}")
+        (run / "meta.yaml").write_text("type: workspace.run\nid: a3f2\n")
 
     def test_missing_path(self, tmp_path):
         server = _build_server(_FakeWorkspace())
@@ -521,14 +526,17 @@ class TestMolexpCheckLayout:
         rules = {v["rule"] for v in out["violations"]}
         assert "run_prefix" in rules
 
-    def test_arbitrary_dir_gets_proposed_mapping(self, tmp_path):
+    def test_arbitrary_dir_gets_curation_plan(self, tmp_path):
         # depth-3 plain directory tree, no workspace.json
         (tmp_path / "projA" / "expA" / "runA").mkdir(parents=True)
         server = _build_server(_FakeWorkspace())
         out = _tool(server, "molexp_check_layout")(path=str(tmp_path))
         assert out["is_workspace"] is False
-        assert out["proposed_mapping"] is not None
-        proj = out["proposed_mapping"]["projects"][0]
+        curation = out["proposed_curation"]
+        assert curation is not None
+        assert curation["kind"] == "build"
+        proj = curation["mapping"]["projects"][0]
         assert proj["target_id"] == "projA"
+        assert proj["concept_type"] == "workspace.project"
         run = proj["experiments"][0]["runs"][0]
         assert run["target_dir"] == "run-runA"
