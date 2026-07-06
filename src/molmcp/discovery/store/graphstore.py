@@ -284,20 +284,27 @@ class GraphStore:
             params = (node_id, str(kind))
         return [_row_to_edge(r) for r in self._conn().execute(sql, params)]
 
-    def incoming_edge_counts(self, node_ids: list[str], kind: str) -> dict[str, int]:
+    def incoming_edge_counts(
+        self, node_ids: list[str], kind: str, *, provenance: str | None = None
+    ) -> dict[str, int]:
         """Count incoming edges of ``kind`` per node id in one statement.
 
-        Ids with no matching in-edges are absent from the result.
+        When ``provenance`` is given, only edges with that provenance are
+        counted — callers use this to exclude guessed (heuristic) edges from
+        relevance signals. Ids with no matching in-edges are absent.
         """
         if not node_ids:
             return {}
         placeholders = ",".join("?" for _ in node_ids)
-        rows = self._conn().execute(
+        sql = (
             "SELECT target, COUNT(*) AS n FROM edges "
-            f"WHERE kind = ? AND target IN ({placeholders}) "
-            "GROUP BY target",
-            (str(kind), *node_ids),
+            f"WHERE kind = ? AND target IN ({placeholders})"
         )
+        params: tuple = (str(kind), *node_ids)
+        if provenance is not None:
+            sql += " AND provenance = ?"
+            params = (*params, str(provenance))
+        rows = self._conn().execute(sql + " GROUP BY target", params)
         return {row["target"]: row["n"] for row in rows}
 
     def search(
@@ -318,8 +325,14 @@ class GraphStore:
                     ids = [
                         r["node_id"]
                         for r in conn.execute(
+                            # Field-weighted bm25: a hit in the symbol NAME
+                            # far outweighs one buried in a docstring, so
+                            # `read_lammps_data` beats a reader that merely
+                            # mentions "frame" in prose. Column order is
+                            # (node_id, name, qualname, docstring, summary).
                             "SELECT node_id FROM nodes_fts WHERE nodes_fts "
-                            "MATCH ? ORDER BY rank LIMIT ?",
+                            "MATCH ? ORDER BY bm25(nodes_fts, 0.0, 10.0, 5.0, "
+                            "1.0, 2.0) LIMIT ?",
                             (match, fetch),
                         )
                     ]

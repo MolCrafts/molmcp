@@ -168,6 +168,11 @@ def test_incoming_edge_counts_only_requested_kind(query):
     assert calls == {add_id: 3}
 
 
-def test_caller_counts_delegates_to_store(query):
+def test_caller_counts_returns_resolved_callers_only(query):
+    # `add` has three incoming CALLS edges, but only the import-resolved
+    # caller (test_add, via `from calc import add`) is a resolved edge; the
+    # two same-file guesses (mul, Calc.run) are heuristic and must not count
+    # toward the relevance signal.
     add_id, base_id = _ids(query, "calc.add", "calc.Base")
-    assert query.caller_counts([add_id, base_id]) == {add_id: 3}
+    assert query.store.incoming_edge_counts([add_id], EdgeKind.CALLS) == {add_id: 3}
+    assert query.caller_counts([add_id, base_id]) == {add_id: 1}

@@ -6,7 +6,7 @@ This is what the MCP tools and the CLI both call.
 
 from __future__ import annotations
 
-from .schema import Edge, EdgeKind, Node, NodeKind
+from .schema import Edge, EdgeKind, Node, NodeKind, Provenance
 from .source import Snapshot
 from .store import GraphStore
 
@@ -107,8 +107,15 @@ class DiscoveryQuery:
         return self._incoming_pairs(qualname, EdgeKind.CALLS, limit)
 
     def caller_counts(self, node_ids: list[str]) -> dict[str, int]:
-        """Batched incoming ``CALLS``-edge counts keyed by node id."""
-        return self.store.incoming_edge_counts(node_ids, EdgeKind.CALLS)
+        """Batched RESOLVED incoming ``CALLS``-edge counts keyed by node id.
+
+        Only resolved edges count: this is a relevance signal, and a guessed
+        (heuristic) caller must never buy a symbol rank. Full caller lists
+        for display go through :meth:`callers_pairs`, which keeps every edge.
+        """
+        return self.store.incoming_edge_counts(
+            node_ids, EdgeKind.CALLS, provenance=Provenance.RESOLVED
+        )
 
     def callees(self, qualname: str, limit: int = 40) -> list[Node]:
         return _nodes(self.callees_pairs(qualname, limit))

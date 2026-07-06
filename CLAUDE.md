@@ -84,3 +84,20 @@ Layered; dependencies point inward only:
 
 <!-- Free-form additions below this line are preserved across re-runs.
      If a section grows past a screen, promote to .claude/notes/<topic>.md. -->
+
+## Discovery ranking & the call graph
+
+Capability discovery is a **retrieval** problem, not graph navigation. The
+spine is `search` (field-weighted bm25: a hit in a symbol name outweighs one
+in a docstring) refined by reliable signals (export status, example/test
+coverage, kind prior).
+
+The **call graph is an optional evidence feature, deliberately kept out of the
+ranking path.** `relations` (callers/callees/impact) and `describe_symbol`
+still expose it, every edge labelled by `provenance` (`resolved` vs the
+guessed `heuristic`). But guessed edges never feed relevance: `caller_counts`
+counts RESOLVED edges only, so a name-based guess can never inflate a symbol's
+rank. Without receiver-type inference an ambiguous `x.m()` is left unresolved
+rather than sunk onto an arbitrary same-name method. Real type inference
+(Jedi/PyCG/SCIP-style) is a future track — see
+`.claude/notes/` if/when it lands.

@@ -18,6 +18,18 @@ _MAX_SOURCE_CHARS = 12000
 _MAX_CONVENTIONS = 3
 _MAX_CONVENTION_CHARS = 1200
 
+# Modules/packages/namespaces are navigational, not capability entry points,
+# and capability nodes are surfaced by the capability-first stage — none of
+# them belong among symbol capability matches.
+_NON_CAPABILITY_KINDS = frozenset(
+    {
+        NodeKind.CAPABILITY,
+        NodeKind.MODULE,
+        NodeKind.PACKAGE,
+        NodeKind.NAMESPACE,
+    }
+)
+
 
 def _truncate(text: str, cap: int) -> str:
     """Cap ``text``, appending a marker when content was dropped."""
@@ -165,7 +177,7 @@ class EvidenceBuilder:
         hits = [
             n
             for n in self.query.search(task, limit=max_results * 3)
-            if n.kind != NodeKind.CAPABILITY and n.qualname not in skip
+            if n.kind not in _NON_CAPABILITY_KINDS and n.qualname not in skip
         ]
         counts = self.query.caller_counts([n.id for n in hits])
         evidence: dict[str, tuple[list[Node], list[Node]]] = {}

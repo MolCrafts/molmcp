@@ -144,10 +144,69 @@ class Resolver:
             edge = self._edge(ref, target, prov)
             edge.metadata["via"] = "import"
             return edge
-        target = self._pick(self._by_name.get(simple, []), ref.file, _CALLABLE_KINDS)
-        if target is None or target.id == ref.from_node:
+        instantiation = self._resolve_instantiation(ref, simple)
+        if instantiation is not None:
+            return instantiation
+        return self._resolve_callable_fallback(ref, simple)
+
+    def _resolve_instantiation(self, ref: UnresolvedRef, simple: str) -> Edge | None:
+        """A call whose target names a class is an instantiation.
+
+        Resolve it to the class node (its constructor). Prefer a class the
+        referencing file imports; else a class whose name is unique in the
+        snapshot. Class instantiations used to be dropped entirely because
+        the call resolver only accepted function/method targets — which lost
+        the one edge that reliably says *this function builds that reader*.
+        """
+        imports = self._imports_by_file.get(ref.file or "", {})
+        scoped = [
+            c
+            for c in imports.get(simple, [])
+            if c.kind in _TYPE_KINDS and c.id != ref.from_node
+        ]
+        if len(scoped) == 1:
+            edge = self._edge(ref, scoped[0], Provenance.RESOLVED)
+            edge.metadata["via"] = "import"
+            return edge
+        if len(scoped) > 1:
+            edge = self._edge(
+                ref, sorted(scoped, key=lambda n: n.id)[0], Provenance.HEURISTIC
+            )
+            edge.metadata["via"] = "import"
+            return edge
+        classes = [
+            c
+            for c in self._by_name.get(simple, [])
+            if c.kind in _TYPE_KINDS and c.id != ref.from_node
+        ]
+        if len(classes) == 1:
+            return self._edge(ref, classes[0], Provenance.RESOLVED)
+        return None
+
+    def _resolve_callable_fallback(
+        self, ref: UnresolvedRef, simple: str
+    ) -> Edge | None:
+        """Global same-name callable match — but never a blind sink.
+
+        An instance-method call like ``reader.read()`` whose receiver type we
+        cannot infer would otherwise land on whichever ``read`` sorts first by
+        file path, fabricating an edge and inflating a fake hub whose caller
+        count then poisons ranking. When the pool is genuinely ambiguous
+        (>1 candidate with no same-file disambiguation), leave the reference
+        unresolved rather than guess.
+        """
+        pool = [
+            c
+            for c in self._by_name.get(simple, [])
+            if c.kind in _CALLABLE_KINDS and c.id != ref.from_node
+        ]
+        if not pool:
             return None
-        return self._edge(ref, target, Provenance.HEURISTIC)
+        same_file = [c for c in pool if c.file == ref.file]
+        chosen = same_file or pool
+        if len(chosen) > 1:
+            return None
+        return self._edge(ref, chosen[0], Provenance.HEURISTIC)
 
     def _import_scoped_target(self, ref: UnresolvedRef) -> tuple[Node, bool] | None:
         """Resolve a call against the referencing file's imports.
