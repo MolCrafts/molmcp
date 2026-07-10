@@ -90,7 +90,7 @@ class MolexpProvider:
                     {
                         "project_id": p.id,
                         "name": p.name,
-                        "path": str(p.path),
+                        "path": str(p.resolve()),
                     }
                 )
             return rows
@@ -104,7 +104,7 @@ class MolexpProvider:
             from .scaffold import list_experiments
 
             ws = self._get_workspace(workspace)
-            return list_experiments(ws.path, project_id)
+            return list_experiments(ws.resolve(), project_id)
 
         @mcp.tool(annotations=read_only)
         def molexp_list_runs(
@@ -197,7 +197,7 @@ class MolexpProvider:
             from .scaffold import add_project
 
             ws = self._get_workspace(workspace)
-            return add_project(ws.path, name)
+            return add_project(ws.resolve(), name)
 
         @mcp.tool(annotations=scaffold)
         def molexp_add_experiment(
@@ -209,7 +209,7 @@ class MolexpProvider:
             from .scaffold import add_experiment
 
             ws = self._get_workspace(workspace)
-            return add_experiment(ws.path, project_id, name)
+            return add_experiment(ws.resolve(), project_id, name)
 
         @mcp.tool(annotations=scaffold)
         def molexp_create_run(
@@ -222,7 +222,7 @@ class MolexpProvider:
             from .scaffold import create_run
 
             ws = self._get_workspace(workspace)
-            return create_run(ws.path, project_id, experiment_id, params=params)
+            return create_run(ws.resolve(), project_id, experiment_id, params=params)
 
         @mcp.tool(annotations=read_only)
         def molexp_validate_workflow(source: str) -> dict[str, Any]:

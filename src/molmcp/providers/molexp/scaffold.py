@@ -21,11 +21,22 @@ def materialize_workspace(
     ws = Workspace(root, name=name)
     ws.materialize()
     return {
-        "path": str(root),
+        "path": str(ws.resolve()),
         "name": ws.name,
         "id": getattr(ws, "id", ws.name),
         "materialized": True,
     }
+
+
+def _folder_path(folder: object) -> str:
+    """``Folder.path`` is a method; prefer :meth:`resolve` for a Path."""
+    resolve = getattr(folder, "resolve", None)
+    if callable(resolve):
+        return str(resolve())
+    path = getattr(folder, "path", None)
+    if callable(path):
+        return str(path())
+    return str(path)
 
 
 def add_project(workspace: str | Path, name: str) -> dict[str, Any]:
@@ -35,7 +46,11 @@ def add_project(workspace: str | Path, name: str) -> dict[str, Any]:
     ws = Workspace(Path(workspace).expanduser().resolve())
     ws.materialize()
     project = ws.add_project(name)
-    return {"project_id": project.id, "name": project.name, "path": str(project.path)}
+    return {
+        "project_id": project.id,
+        "name": project.name,
+        "path": _folder_path(project),
+    }
 
 
 def add_experiment(
@@ -53,7 +68,7 @@ def add_experiment(
         "project_id": project.id,
         "experiment_id": experiment.id,
         "name": experiment.name,
-        "path": str(experiment.path),
+        "path": _folder_path(experiment),
     }
 
 
@@ -64,7 +79,11 @@ def list_experiments(workspace: str | Path, project_id: str) -> list[dict[str, A
     ws = Workspace(Path(workspace).expanduser().resolve())
     project = ws.get_project(project_id)
     return [
-        {"experiment_id": e.id, "name": e.name, "path": str(e.path)}
+        {
+            "experiment_id": e.id,
+            "name": e.name,
+            "path": _folder_path(e),
+        }
         for e in project.list_experiments()
     ]
 
