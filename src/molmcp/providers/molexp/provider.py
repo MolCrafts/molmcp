@@ -1,205 +1,118 @@
-"""``molexp`` MCP provider — minimal stateful queries over a molexp workspace.
+"""``molexp`` MCP provider — workspace navigation + idempotent scaffold.
 
-Scope is deliberately narrow: anything an agent could derive by reading
-``molexp``'s source via :class:`molmcp.IntrospectionProvider` does **not**
-belong here. This provider exists only because the agent cannot read the
-runtime contents of ``workspace.json`` and the catalog DB from source.
-Per ``docs/provider-design.md``, a tool earns a slot only if all four
-conditions hold (stable signature, read-only, every-session frequency,
-single-shot answer).
+**Not a science executor.** Scaffold tools create-or-get workspace tree
+nodes (materialize / add project / add experiment / seed a pending run).
+Layout tools are read-only. Full parameter sweeps, workflow runtime
+driving, harvest, and plotting stay in agent-written Python against
+the molexp / molplot APIs (see molexp ``examples/agent/code_loop_golden_path.py``).
 
-Tools:
-
-* ``molexp_list_projects`` — top-level navigation.
-* ``molexp_list_runs`` — query runs by scope, joining catalog rows
-  with per-run parameters.
-* ``molexp_workspace_layout`` — the canonical on-disk layout *contract*
-  (tree + naming law + the OKF concept model: meta.yaml/index.md markers,
-  Note/Reference knowledge concepts, authoritative-vs-derived files) an
-  agent follows when restructuring an arbitrary data directory.
-* ``molexp_check_layout`` — read-only linter + **OKF curation planner**:
-  conformance + concrete violations for an existing workspace, or, for a
-  directory that is not one yet, a plan to (re)build the index files,
-  OKF markers, notes, and knowledge per current conventions.
-
-The last two are the **read-only** counterpart to the
-``mol:adopt-workspace`` skill: they serve molexp's directory-structure
-requirements and propose a curation plan, but never write — per the
-provider-design contract, the actual integrity-checked migration runs
-through that skill or molexp's Python API, not an MCP tool. They earn a
-slot because the layout is a *contract* the discovery engine cannot
-synthesize into an actionable spec/planner, and onboarding/organizing
-data into a FAIR workspace is a recurring operation; the spec is sourced
-from a frozen molexp invariant (see :mod:`.layout`).
-
-Everything else (``list_experiments``, ``get_run``, ``get_metrics``,
-``get_asset_text``) was deliberately dropped — agents that need those
-should introspect ``molexp`` and read run dirs / call APIs directly.
-
-Workspace resolution (in order):
-
-1. The ``workspace`` argument passed to the constructor.
-2. The ``MOLEXP_WORKSPACE`` environment variable.
-3. The current working directory if it contains ``workspace.json``.
-
-Heavy molexp imports stay inside :meth:`register` and tool bodies so the
-provider remains cheap to instantiate (e.g. for ``--print-config``).
+Provider-design contract:
+- Navigation / layout: read-only.
+- Scaffold creates: idempotent create-or-get (not arbitrary mutation).
+- Never drive run batches or invoke workflow runtime from this package.
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
-from . import curate, layout
+from fastmcp import FastMCP
 
-if TYPE_CHECKING:
-    from fastmcp import FastMCP
-    from molexp.workspace import Workspace
-
-
-_ALLOWED_SCOPES = {"workspace", "project", "experiment"}
 _WORKSPACE_ENV_VAR = "MOLEXP_WORKSPACE"
+_ALLOWED_SCOPES = frozenset({"workspace", "project", "experiment"})
 
 
-def _open_workspace(path: str | Path) -> Workspace:
+def _open_workspace(path: str | Path):
     from molexp.workspace import Workspace
 
-    resolved = Path(path).resolve()
-    return Workspace(root=resolved)
+    return Workspace(Path(path).expanduser().resolve())
 
 
-def _coerce_status(value: Any) -> str:
-    return str(value) if value is not None else ""
+def _resolve_workspace(workspace: str | None = None):
+    from molexp.workspace import Workspace
 
-
-def _project_for_experiment(
-    workspace: Workspace, experiment_id: str | None
-) -> str | None:
-    """Resolve project_id for an experiment via the workspace catalog."""
-    if not experiment_id:
-        return None
-    catalog_data = workspace.catalog._load()  # noqa: SLF001 — read-only join
-    experiments = catalog_data.get("experiments") or {}
-    entry = experiments.get(experiment_id)
-    if isinstance(entry, dict):
-        return entry.get("project_id")
-    return None
-
-
-def _enriched_run_row(workspace: Workspace, entry: dict[str, Any]) -> dict[str, Any]:
-    """Catalog row + on-disk parameters as a single flat dict.
-
-    Run catalog rows store ``experiment_id`` but not ``project_id``;
-    we resolve the latter via the experiments section.
-    """
-    parameters: dict[str, Any] = dict(entry.get("parameters") or {})
-    experiment_id = entry.get("experiment_id")
-    run_id = entry.get("run_id")
-    project_id = entry.get("project_id") or _project_for_experiment(
-        workspace, experiment_id
+    if workspace:
+        return Workspace(Path(workspace).expanduser().resolve())
+    env_path = os.environ.get(_WORKSPACE_ENV_VAR)
+    if env_path:
+        return Workspace(Path(env_path).expanduser().resolve())
+    cwd = Path.cwd()
+    if (cwd / "workspace.json").is_file() or (cwd / "meta.yaml").is_file():
+        return Workspace(cwd)
+    raise RuntimeError(
+        "MolexpProvider could not resolve a workspace. Pass workspace= path, "
+        f"set {_WORKSPACE_ENV_VAR}, or run from a directory containing workspace.json."
     )
-    if not parameters and project_id and experiment_id and run_id:
-        project = workspace.get_project(project_id)
-        if project is not None:
-            experiment = project.get_experiment(experiment_id)
-            if experiment is not None:
-                run = experiment.get_run(run_id)
-                if run is not None:
-                    parameters = dict(getattr(run, "parameters", {}) or {})
-    return {
-        "run_id": run_id,
-        "project_id": project_id,
-        "experiment_id": experiment_id,
-        "status": _coerce_status(entry.get("status")),
-        "parameters": parameters,
-        "created_at": entry.get("created_at"),
-        "finished_at": entry.get("finished_at"),
-        "config_hash": entry.get("config_hash"),
-    }
 
 
 class MolexpProvider:
-    """Provider for molexp domain tools.
-
-    Args:
-        workspace: Workspace handle, path-like, or ``None`` to defer
-            resolution until :meth:`register` runs (uses
-            ``MOLEXP_WORKSPACE`` or CWD).
-    """
+    """Provider for molexp domain tools (scaffold + navigation)."""
 
     name = "molexp"
 
-    def __init__(
-        self,
-        workspace: "Workspace | str | Path | None" = None,
-    ) -> None:
-        self._workspace_arg = workspace
-        self._cached_workspace: Workspace | None = None
+    def __init__(self, workspace: str | Path | None = None) -> None:
+        self._workspace = Path(workspace).expanduser().resolve() if workspace else None
 
-    def _get_workspace(self) -> Workspace:
-        if self._cached_workspace is None:
-            self._cached_workspace = self._resolve_workspace()
-        return self._cached_workspace
+    def _get_workspace(self, workspace: str | None = None):
+        if workspace:
+            return _open_workspace(workspace)
+        if self._workspace is not None:
+            return _open_workspace(self._workspace)
+        return _resolve_workspace(None)
 
-    def _resolve_workspace(self) -> Workspace:
-        from molexp.workspace import Workspace
-
-        arg = self._workspace_arg
-        if isinstance(arg, Workspace):
-            return arg
-        if arg is not None:
-            return _open_workspace(arg)
-
-        env_path = os.environ.get(_WORKSPACE_ENV_VAR)
-        if env_path:
-            return _open_workspace(env_path)
-
-        cwd = Path.cwd()
-        if (cwd / "workspace.json").is_file():
-            return _open_workspace(cwd)
-
-        raise RuntimeError(
-            "MolexpProvider could not resolve a workspace. Pass one to the "
-            "constructor, set the MOLEXP_WORKSPACE environment variable, or "
-            "run from a directory containing workspace.json."
-        )
-
-    def register(self, mcp: "FastMCP") -> None:
-        """Register molexp domain tools on the host MCP server."""
-
+    def register(self, mcp: FastMCP) -> None:
         try:
-            import molexp  # noqa: F401 — eager probe; surface the missing dep
+            import molexp  # noqa: F401
         except ImportError as exc:
             raise RuntimeError(
-                "MolexpProvider requires the 'molcrafts-molexp' package. "
-                "Install with: pip install molcrafts-molexp"
+                "MolexpProvider requires molexp to be installed in this environment"
             ) from exc
 
         from mcp.types import ToolAnnotations
 
-        read_only = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+        read_only = ToolAnnotations(readOnlyHint=True, destructiveHint=False)
+        # Idempotent scaffold (create-or-get) — not a free-form write surface.
+        scaffold = ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+        )
 
         @mcp.tool(annotations=read_only)
-        def molexp_list_projects() -> list[dict[str, Any]]:
+        def molexp_list_projects(workspace: str | None = None) -> list[dict[str, Any]]:
             """Enumerate projects in the workspace."""
-            workspace = self._get_workspace()
-            return [
-                {
-                    "id": p.id,
-                    "name": getattr(p.metadata, "name", p.id),
-                    "description": getattr(p.metadata, "description", "") or "",
-                }
-                for p in workspace.list_projects()
-            ]
+            ws = self._get_workspace(workspace)
+            rows: list[dict[str, Any]] = []
+            for p in ws.list_projects():
+                rows.append(
+                    {
+                        "project_id": p.id,
+                        "name": p.name,
+                        "path": str(p.path),
+                    }
+                )
+            return rows
+
+        @mcp.tool(annotations=read_only)
+        def molexp_list_experiments(
+            project_id: str,
+            workspace: str | None = None,
+        ) -> list[dict[str, Any]]:
+            """List experiments under a project (read-only)."""
+            from .scaffold import list_experiments
+
+            ws = self._get_workspace(workspace)
+            return list_experiments(ws.path, project_id)
 
         @mcp.tool(annotations=read_only)
         def molexp_list_runs(
-            scope_kind: Literal["workspace", "project", "experiment"],
+            scope_kind: Literal["workspace", "project", "experiment"] = "workspace",
             scope_id: str = "",
             status: str | None = None,
             limit: int = 500,
+            workspace: str | None = None,
         ) -> list[dict[str, Any]]:
             """Query runs by scope.
 
@@ -212,64 +125,113 @@ class MolexpProvider:
                 limit: Maximum rows to return. Default 500.
             """
             if scope_kind not in _ALLOWED_SCOPES:
-                return [{"error": f"Unknown scope_kind '{scope_kind}'"}]
-
-            workspace = self._get_workspace()
-            catalog = workspace.catalog
-            if scope_kind == "experiment":
-                rows = catalog.query_runs(
-                    experiment_id=scope_id or None,
-                    status=status,
-                    limit=limit,
-                )
-            else:
-                rows = catalog.query_runs(status=status, limit=limit)
-
-            out: list[dict[str, Any]] = []
-            for row in rows:
-                if scope_kind == "project" and row.get("project_id") != scope_id:
-                    continue
-                out.append(_enriched_run_row(workspace, row))
-                if len(out) >= limit:
-                    break
-            return out
+                raise ValueError(f"scope_kind must be one of {sorted(_ALLOWED_SCOPES)}")
+            ws = self._get_workspace(workspace)
+            rows: list[dict[str, Any]] = []
+            projects = ws.list_projects()
+            if scope_kind == "project":
+                projects = [ws.get_project(scope_id)]
+            for project in projects:
+                experiments = project.list_experiments()
+                if scope_kind == "experiment":
+                    experiments = [
+                        e for e in experiments if e.id == scope_id or e.name == scope_id
+                    ]
+                for exp in experiments:
+                    for run in exp.list_runs():
+                        if status is not None and run.status != status:
+                            continue
+                        rows.append(
+                            {
+                                "run_id": run.id,
+                                "project_id": project.id,
+                                "experiment_id": exp.id,
+                                "status": run.status,
+                                "params": dict(run.parameters),
+                            }
+                        )
+                        if len(rows) >= limit:
+                            return rows
+            return rows
 
         @mcp.tool(annotations=read_only)
         def molexp_workspace_layout() -> dict[str, Any]:
-            """Canonical molexp workspace on-disk layout contract (OKF).
+            """Canonical molexp workspace on-disk layout contract (OKF)."""
+            from .layout import layout_spec
 
-            Returns the frozen four-tier directory tree, the naming law
-            (container subdir, the mandatory ``run-`` prefix, and how
-            entity vs children-index filenames are derived), the OKF
-            concept model (per-dir ``meta.yaml`` type marker + ``index.md``
-            narrative whose links are the knowledge graph; ``Note`` /
-            ``ReferenceConcept`` knowledge concepts; the ``_ops/run.json``
-            hot-state sidecar), and the authoritative-vs-derived file
-            classification. Follow this when restructuring an arbitrary data
-            directory into a molexp workspace; the ``mol:adopt-workspace``
-            skill or molexp's Python API performs the actual,
-            integrity-checked migration.
-            """
-            return layout.layout_spec()
+            return layout_spec()
 
         @mcp.tool(annotations=read_only)
         def molexp_check_layout(path: str) -> dict[str, Any]:
-            """Read-only check of ``path`` + OKF curation plan.
+            """Read-only lint of ``path`` against the layout contract."""
+            from .layout import validate_workspace
 
-            Reports whether ``path`` is already a molexp workspace, whether
-            it conforms to the naming + OKF laws, the concrete violations,
-            and a ``proposed_curation`` plan to hand to ``mol:adopt-workspace``
-            (or molexp's Python API) to materialize. The plan is
-            ``kind='build'`` for a non-workspace tree (a project/experiment/run
-            mapping tagged with concept types) or ``kind='repair'`` for an
-            existing workspace with gaps, and in both cases enumerates the OKF
-            ``meta.yaml`` / ``index.md`` markers and derived indexes to
-            (re)build, the existing files to ingest as ``Note`` /
-            ``ReferenceConcept`` knowledge concepts, and per-scope
-            LLM-summary notes to generate. Writes nothing.
+            root = Path(path).expanduser().resolve()
+            findings = validate_workspace(root)
+            is_ws = (root / "workspace.json").is_file() or (
+                root / "meta.yaml"
+            ).is_file()
+            return {
+                "path": str(root),
+                "is_workspace": is_ws,
+                "ok": len(findings.items) == 0 and is_ws,
+                "violations": findings.items,
+            }
 
-            Args:
-                path: Absolute (or non-traversing relative) directory path
-                    to inspect.
+        @mcp.tool(annotations=scaffold)
+        def molexp_materialize_workspace(
+            path: str,
+            name: str = "workspace",
+        ) -> dict[str, Any]:
+            """Create or open a molexp Workspace at ``path`` (idempotent)."""
+            from .scaffold import materialize_workspace
+
+            return materialize_workspace(path, name=name)
+
+        @mcp.tool(annotations=scaffold)
+        def molexp_add_project(
+            name: str,
+            workspace: str | None = None,
+        ) -> dict[str, Any]:
+            """Create-or-get a project under the workspace (idempotent on slug)."""
+            from .scaffold import add_project
+
+            ws = self._get_workspace(workspace)
+            return add_project(ws.path, name)
+
+        @mcp.tool(annotations=scaffold)
+        def molexp_add_experiment(
+            project_id: str,
+            name: str,
+            workspace: str | None = None,
+        ) -> dict[str, Any]:
+            """Create-or-get an experiment under a project (idempotent on slug)."""
+            from .scaffold import add_experiment
+
+            ws = self._get_workspace(workspace)
+            return add_experiment(ws.path, project_id, name)
+
+        @mcp.tool(annotations=scaffold)
+        def molexp_create_run(
+            project_id: str,
+            experiment_id: str,
+            params: dict[str, Any] | None = None,
+            workspace: str | None = None,
+        ) -> dict[str, Any]:
+            """Scaffold a pending run with params — does not drive the workflow."""
+            from .scaffold import create_run
+
+            ws = self._get_workspace(workspace)
+            return create_run(ws.path, project_id, experiment_id, params=params)
+
+        @mcp.tool(annotations=read_only)
+        def molexp_validate_workflow(source: str) -> dict[str, Any]:
+            """Compile-only validation of workflow source (no task bodies run).
+
+            Provide a Python snippet that builds a ``WorkflowCompiler`` as
+            ``wf`` (or any ``WorkflowCompiler`` instance) with ``@wf.task``
+            registrations. Returns ok/compiled without running science.
             """
-            return curate.check_layout(path)
+            from .scaffold import validate_workflow_source
+
+            return validate_workflow_source(source)

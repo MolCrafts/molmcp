@@ -21,7 +21,7 @@ tooling — all on stdio by default:
 | Layer | What the agent sees | When to use |
 |-------|---------------------|-------------|
 | **Discovery tools** (`DiscoveryProvider`) | Six graph-backed tools — `molmcp_find_capability`, `molmcp_search_symbols`, `molmcp_describe_symbol`, `molmcp_relations`, `molmcp_outline`, `molmcp_refresh` — over any indexed source. | "What does molpy provide for an RDF? Show me `molpy.compute.RDF`. What calls it?" — the default loop. |
-| **First-party Provider tools** | Stateful queries that discovery cannot answer: `molq_list_jobs`, `molexp_list_projects`, `molexp_list_runs`. | "What's running right now? What experiments are in this workspace?" |
+| **First-party Provider tools** | The five in-tree providers' tools: molq's `molq_list_jobs`; molexp's `molexp_list_projects` / `molexp_list_runs` / `molexp_workspace_layout` / `molexp_check_layout`; molpy's `list_compute_ops` / `list_readers` / `inspect_structure`; molpack's `list_restraints` / `list_formats` / `inspect_script`; and LAMMPS's 13 doc-navigation tools (`get_command_doc`, `plan_task`, `explain_error`, …). | "What's running? What experiments are in this workspace? What can molpy compute? How do I write this LAMMPS command?" |
 | **Third-party Providers** | Whatever any installed package contributes via the `molmcp.providers` entry-point group, gated on the four-condition rule in [Provider design](../concepts/provider-design.md). | When a downstream package legitimately needs to expose a stateful query. |
 
 There is no separate plugin-server CLI — historical `molmcp-molpy` /
@@ -38,12 +38,15 @@ of the discovery-first loop.
   ```bash
   pip install molcrafts-molpy molcrafts-molrs molcrafts-molpack
   ```
-- For the first-party Provider tools, install the matching MolCrafts
-  package — providers are lazy facades and skip themselves cleanly when
-  their dep is missing:
+- For the dep-backed Provider tools, install the matching MolCrafts
+  package — those providers are lazy facades and skip themselves cleanly
+  when their dep is missing (`LammpsProvider` has no dep and always
+  loads):
   ```bash
-  pip install molq      # enables MolqProvider
-  pip install molexp    # enables MolexpProvider
+  pip install molcrafts-molq      # enables MolqProvider
+  pip install molcrafts-molexp    # enables MolexpProvider
+  pip install molcrafts-molpy     # enables MolpyProvider
+  pip install molcrafts-molpack   # enables MolpackProvider
   ```
 
 !!! tip "Use a venv"
@@ -53,14 +56,15 @@ of the discovery-first loop.
     dependency tree predictable. With `uv`:
     ```bash
     uv venv && source .venv/bin/activate
-    uv pip install molcrafts-molmcp molcrafts-molpy molq molexp
+    uv pip install molcrafts-molmcp molcrafts-molpy molcrafts-molq molcrafts-molexp
     ```
 
 ## What the first-party providers expose
 
-Both register through the `molmcp.providers` entry-point group and are
-auto-discovered when their upstream dep is importable. Each provider's
-existence is justified against the four-condition rule — see
+The five in-tree providers register through the `molmcp.providers`
+entry-point group. The dep-backed ones auto-discover when their upstream
+dep is importable; `LammpsProvider` has no dep and always loads. Each
+provider's existence is justified against the four-condition rule — see
 [Provider design](../concepts/provider-design.md).
 
 === "molq (`MolqProvider`)"
@@ -78,16 +82,64 @@ existence is justified against the four-condition rule — see
 
 === "molexp (`MolexpProvider`)"
 
-    Reads a `workspace.json`-rooted molexp workspace catalog. Two
-    read-only tools:
+    Navigation + **idempotent scaffold** over a `workspace.json`-rooted
+    molexp workspace. **Not a science executor** — do not use these tools
+    to run sweeps or plots; agent-written Python against the molexp /
+    molplot APIs owns that path.
+
+    Read-only:
 
     - `molexp_list_projects` — top-level workspace navigation.
+    - `molexp_list_experiments` — experiments under a project.
     - `molexp_list_runs` — per-project / per-experiment run query,
       with a stable filter set and flat output.
+    - `molexp_workspace_layout` — the frozen on-disk layout contract
+      (tree + naming law + OKF concept model), no inputs.
+    - `molexp_check_layout` — read-only lint of a directory against
+      that contract.
+    - `molexp_validate_workflow` — compile-only workflow source check
+      (no task bodies run).
 
-    Per-run details (`get_run`, `get_metrics`, `get_asset_text`) are
-    derivable from `molexp_list_runs` plus discovery over
-    `molexp.workspace`.
+    Scaffold (idempotent create-or-get; does **not** execute science):
+
+    - `molexp_materialize_workspace` — create/open a Workspace at a path.
+    - `molexp_add_project` / `molexp_add_experiment` — create-or-get
+      on slug.
+    - `molexp_create_run` — seed a pending run with params only
+      (`executed: false`; no `RunSet.execute`).
+
+=== "molpy (`MolpyProvider`)"
+
+    Runtime catalog over the live `molpy` module. Three read-only tools:
+
+    - `list_compute_ops` — `molpy.compute.Compute` subclasses, walked
+      at call-time (name, signature, docstring head).
+    - `list_readers` — `molpy.io` `DataReader` / `BaseTrajectoryReader`
+      subclasses, walked at call-time.
+    - `inspect_structure(path, reader)` — run a named `molpy.io` reader
+      on a file and return a small `Frame` summary.
+
+=== "molpack (`MolpackProvider`)"
+
+    Runtime catalog + `.inp` inspector over `molpack`. Three read-only
+    tools:
+
+    - `list_restraints` — `*Restraint` classes discovered in the live
+      `molpack` module at call-time.
+    - `list_formats` — the script loader's I/O formats, mirroring
+      molpack's Rust `io.rs`.
+    - `inspect_script(path)` — parse a Packmol-compatible `.inp` via
+      `molpack.load_script` and summarise its targets.
+
+=== "lammps (`LammpsProvider`)"
+
+    A pure-function knowledge navigator over docs.lammps.org — no `lmp`
+    invocation, no network, no filesystem, no upstream dep. 13 read-only
+    tools: `get_doc_index`, `get_command_doc`, `get_style_doc`,
+    `get_howto_doc`, `plan_task`, `get_workflow_outline`, `parse_script`,
+    `validate_script`, `explain_command`, `list_howtos`, `search_howtos`,
+    `get_howto`, `explain_error`. Default doc version is configurable via
+    the `LAMMPS_MCP_DEFAULT_VERSION` env var.
 
 The six discovery tools cover every installed MolCrafts package
 by default — see [Quickstart](quickstart.md#3-the-six-discovery-tools).
@@ -113,11 +165,12 @@ What this command does:
   becomes the `mcp__<name>__<tool>` prefix the agent sees.
 - `--` — boundary between Claude Code's args and the spawn command.
   Everything after `--` is what Claude Code runs each session.
-- `python -m molmcp` — the molmcp foundation. Auto-detects whichever of
-  `{molpy, molpack, molrs, molq, molexp}` are installed and registers
-  graph-based discovery over them. Auto-discovered Providers
-  (`MolqProvider`, `MolexpProvider`, plus any third-party entry-point)
-  register on top.
+- `python -m molmcp` — the molmcp foundation. Indexes the MolCrafts
+  packages `{molpy, molpack, molrs, molq, molexp, molnex}` for
+  graph-based discovery — from a local install when present, from GitHub
+  otherwise. The in-tree Providers (`MolqProvider`, `MolexpProvider`,
+  `LammpsProvider`, `MolpyProvider`, `MolpackProvider`) plus any
+  third-party entry-point register on top.
 
 Verify:
 
@@ -191,7 +244,8 @@ Code session. Tool registration is read at session start.
 Providers at startup and *skips* (with a warning) any whose dep is
 missing or whose runtime state isn't reachable. Check the logs by
 running the spawn command interactively. Install the upstream package
-(`pip install molq` / `pip install molexp`) and restart the client.
+(`pip install molcrafts-molq` / `pip install molcrafts-molexp`) and
+restart the client.
 
 **"Tool name collision"** — happens if two servers expose tools under
 the same name. The `<name>` you pass to `claude mcp add` is the prefix;
