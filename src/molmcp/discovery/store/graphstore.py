@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import importlib.resources
 import json
+import os
 import re
 import sqlite3
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -32,9 +34,65 @@ def _dumps(value: object) -> str:
 
 def _fts_match(text: str) -> str:
     """Build a forgiving FTS5 prefix query from free text."""
-    tokens = re.findall(r"[A-Za-z0-9_]+", text)
-    terms = [f"{t}*" for t in tokens if len(t) >= 2]
+    # ``\w`` is Unicode-aware in Python.  The previous ASCII-only regex
+    # silently discarded Chinese scientific terms and made a multilingual
+    # collection impossible to search.
+    tokens = re.findall(r"\w+", text, flags=re.UNICODE)
+    terms = [f"{token}*" for token in tokens if len(token) >= 2 or not token.isascii()]
     return " OR ".join(terms)
+
+
+@contextmanager
+def _exclusive_file_lock(path: Path) -> Iterator[None]:
+    """Cross-process advisory lock for one graph destination.
+
+    The lock file deliberately survives the process.  Its contents are not
+    state; the OS lock is.  Keeping it avoids a create/unlink race between two
+    indexers targeting the same immutable snapshot.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as handle:
+        if os.name == "nt":  # pragma: no cover - exercised in Windows CI
+            import msvcrt
+
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:  # pragma: no branch - platform split
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _fsync_file(path: Path) -> None:
+    with path.open("rb") as handle:
+        os.fsync(handle.fileno())
+
+
+def _fsync_directory(path: Path) -> None:
+    """Best-effort durability for the atomic directory entry replacement."""
+    if not hasattr(os, "O_DIRECTORY"):
+        return
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:  # pragma: no cover - filesystem dependent
+        return
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def _build_fts(conn: sqlite3.Connection) -> bool:
@@ -96,13 +154,40 @@ class GraphStore:
     # -- creation ----------------------------------------------------
 
     def create(self, graph: CodeGraph, meta: dict) -> None:
-        """Write ``graph`` to a fresh database, replacing any existing one."""
+        """Atomically build and publish ``graph``.
+
+        A complete database is created next to the destination, fsynced, and
+        moved into place while holding a per-destination process lock.  Readers
+        therefore observe either the previous complete graph or the new one,
+        never a partially populated database.
+        """
+        self.close()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        if self.db_path.exists():
-            self.db_path.unlink()
-        with self.connect() as conn:
+        lock_path = self.db_path.with_suffix(self.db_path.suffix + ".lock")
+        with _exclusive_file_lock(lock_path):
+            fd, raw_tmp = tempfile.mkstemp(
+                prefix=f".{self.db_path.name}.",
+                suffix=".tmp",
+                dir=self.db_path.parent,
+            )
+            os.close(fd)
+            tmp_path = Path(raw_tmp)
+            try:
+                self._create_at(tmp_path, graph, meta)
+                _fsync_file(tmp_path)
+                os.replace(tmp_path, self.db_path)
+                _fsync_directory(self.db_path.parent)
+            finally:
+                tmp_path.unlink(missing_ok=True)
+
+    def _create_at(self, path: Path, graph: CodeGraph, meta: dict) -> None:
+        with sqlite3.connect(path, check_same_thread=False) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout=5000")
             conn.executescript(_SCHEMA_SQL)
-            conn.execute("PRAGMA journal_mode=WAL")
+            # The published graph is immutable.  WAL would leave sidecar files
+            # outside the atomic replacement boundary, so build in DELETE mode.
+            conn.execute("PRAGMA journal_mode=DELETE")
             self._insert_files(conn, graph.files)
             self._insert_nodes(conn, graph.nodes)
             self._insert_edges(conn, graph.edges)
@@ -142,7 +227,7 @@ class GraphStore:
     @staticmethod
     def _insert_nodes(conn: sqlite3.Connection, nodes: list[Node]) -> None:
         conn.executemany(
-            "INSERT OR IGNORE INTO nodes(id, kind, name, qualname, language, "
+            "INSERT INTO nodes(id, kind, name, qualname, language, "
             "file, start_line, end_line, signature, docstring, summary, "
             "decorators, bases, visibility, is_exported, is_async, "
             "is_abstract, metadata) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",

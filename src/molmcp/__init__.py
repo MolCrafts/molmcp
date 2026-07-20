@@ -1,35 +1,37 @@
-"""molmcp — the MCP foundation for the MolCrafts ecosystem."""
+"""MolMCP — MolCrafts registry, code intelligence, and LLM context plane."""
 
 from __future__ import annotations
 
-from .discovery import DiscoveryConfig, DiscoveryEngine
-from .discovery.provider import DiscoveryProvider
-from .helpers import SubprocessResult, fence_untrusted, run_safe
-from .middleware import (
-    MissingAnnotationsError,
-    PathSafetyMiddleware,
-    ResponseLimitMiddleware,
-    validate_tool_annotations,
+from .collection import CollectionIndex, ContextPack, SearchHit, SourceBinding
+from .config import AppConfig, ConfigurationError, load_config
+from .mcp_provider import MolCraftsContextProvider
+from .provider import PROVIDER_ENTRY_POINT_GROUP, Provider, discover_providers
+from .registry import (
+    CAPABILITY_ENTRY_POINT_GROUP,
+    CatalogItemV1,
+    ExecutableCapabilityV1,
+    Registry,
 )
-from .provider import ENTRY_POINT_GROUP, Provider, discover_providers
 from .server import create_server
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 __all__ = [
+    "CAPABILITY_ENTRY_POINT_GROUP",
+    "AppConfig",
+    "CatalogItemV1",
+    "CollectionIndex",
+    "ConfigurationError",
+    "ContextPack",
+    "ExecutableCapabilityV1",
+    "MolCraftsContextProvider",
+    "PROVIDER_ENTRY_POINT_GROUP",
+    "Provider",
+    "Registry",
+    "SearchHit",
+    "SourceBinding",
     "__version__",
     "create_server",
-    "Provider",
-    "DiscoveryProvider",
-    "DiscoveryEngine",
-    "DiscoveryConfig",
     "discover_providers",
-    "ENTRY_POINT_GROUP",
-    "PathSafetyMiddleware",
-    "ResponseLimitMiddleware",
-    "MissingAnnotationsError",
-    "validate_tool_annotations",
-    "run_safe",
-    "SubprocessResult",
-    "fence_untrusted",
+    "load_config",
 ]

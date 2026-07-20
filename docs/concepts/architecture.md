@@ -19,11 +19,12 @@ molmcp is the central piece of MCP infrastructure for the MolCrafts ecosystem. T
                 │  • run_safe / fence_untrusted      │
                 └──────────────┬─────────────────────┘
                                │
-            ┌──────────────────┼──────────────────────┐
-            ▼                  ▼                      ▼
-      MolqProvider      MolexpProvider     third-party providers
-      (jobs.db)         (workspace.json     (entry-point group
-                         catalog)            molmcp.providers)
+            ┌──────────────────┴──────────────────────┐
+            ▼                                          ▼
+   in-tree providers (entry points)          third-party providers
+   molq · molexp · lammps · molpy · molpack   (same entry-point group
+   — job DB, workspace catalog, LAMMPS docs,    molmcp.providers)
+     runtime capability catalogs
 ```
 
 ## Three responsibilities
@@ -38,7 +39,7 @@ molmcp delegates the wire-level work — JSON-RPC framing, transport adapters (s
 
 ### 3. The Provider contract (kept narrow)
 
-Every other tool molmcp registers is a Provider tool, gated by `Provider` Protocol + `molmcp.providers` entry-point auto-discovery + the four-condition design rule. Two providers ship in-tree (`MolqProvider`, `MolexpProvider`); third-party packages plug in identically. Default safety middleware — path-traversal guards, response-size limits, startup-time annotation validation — is mounted automatically when `create_server(...)` is called.
+Every other tool molmcp registers is a Provider tool, gated by `Provider` Protocol + `molmcp.providers` entry-point auto-discovery + the four-condition design rule. Five providers ship in-tree (`MolqProvider`, `MolexpProvider`, `LammpsProvider`, `MolpyProvider`, `MolpackProvider`); third-party packages plug in identically. Default safety middleware — path-traversal guards, response-size limits, startup-time annotation validation — is mounted automatically when `create_server(...)` is called.
 
 ## How a request flows through
 
@@ -73,13 +74,13 @@ The result would be: fragmented quality, inconsistent UX across packages, securi
 
 - A user runs **one** invocation pattern (`python -m molmcp ...`).
 - Security defaults are uniform across every MolCrafts package.
-- Multiple MolCrafts packages can be exposed via a single server with `mcp.mount(prefix=...)`. Agents see `molmcp_find_capability` and `molpack__pack_box` side by side.
+- Multiple MolCrafts packages can be exposed via a single server with `mcp.mount(namespace=...)`. Agents see `molmcp_find_capability` and `molpack_pack_box` side by side.
 - Updating the underlying transport library is a one-line dep bump in molmcp, not a coordinated change across N packages.
 
 ## What molmcp deliberately does *not* do
 
 - **No re-exported domain tools.** No structure I/O facade, no `compute_rdf`, no `parse_smiles`. Those are discoverable through the discovery engine plus a 3-line Python or CLI invocation — see [Provider design](provider-design.md) for why a tool catalog that mirrors upstream is a maintenance trap.
-- **No batteries-included science deps at the foundation layer.** molmcp's wheel pulls in only its server-framework dependency. The first-party `MolqProvider` / `MolexpProvider` are *lazy facades* — importing the provider class never imports the upstream dep; the probe happens at `register()` time, and a missing dep produces a clear runtime warning rather than a startup crash.
+- **No batteries-included science deps at the foundation layer.** molmcp's wheel pulls in only its server-framework dependency. The first-party `MolqProvider` / `MolexpProvider` / `MolpyProvider` / `MolpackProvider` are *lazy facades* — importing the provider class never imports the upstream dep; the probe happens at `register()` time, and a missing dep produces a clear runtime warning rather than a startup crash. (`LammpsProvider` is a pure-function doc navigator with no upstream dep at all.)
 - **No opinions about Provider internals.** A Provider can be 5 lines or 5,000 — molmcp only requires that it has a `name` and a `register(mcp)` method.
 - **No MolCrafts package import from the foundation.** Outside the in-tree providers (which are explicit, lazy, and entry-point-gated like third-party providers), molmcp imports nothing from `molpy`, `molcfg`, etc. That keeps it adoptable on any cadence.
 

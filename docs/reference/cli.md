@@ -19,10 +19,11 @@ The default invocation needs no flags:
 python -m molmcp
 ```
 
-molmcp auto-detects whichever of `{molpy, molpack, molrs, molq, molexp}` are
-importable, registers graph-based discovery over them, and loads any
-auto-discovered providers. The flags below are for *narrowing*, *extending*,
-or otherwise deviating from that default.
+molmcp indexes the MolCrafts packages `molpy`, `molpack`, `molrs`, `molq`,
+`molexp`, and `molnex` for graph-based discovery — from a local install when
+present, from GitHub otherwise — and loads any auto-discovered providers. The
+flags below are for *narrowing*, *extending*, or otherwise deviating from that
+default.
 
 ## Options
 
@@ -36,6 +37,23 @@ This becomes the prefix in client-side tool naming (e.g., Claude Code's `mcp__<n
 python -m molmcp --name molcrafts-dev
 ```
 
+### `--pkg NAME[,NAME...]`
+
+Restrict the server to specific MolCrafts packages. Repeatable, and each
+value may be comma-separated, so `--pkg molpy,molexp` and
+`--pkg molpy --pkg molexp` are equivalent (order preserved, duplicates
+collapse to first use). This narrows **both** the default discovery
+sources *and* the entry-point-discovered providers to the named
+packages. When omitted, every default package loads.
+
+```bash
+python -m molmcp --pkg molpy,molexp
+```
+
+An explicit `--source` still overrides the discovery sources outright,
+while provider filtering keeps honoring `--pkg`. The programmatic
+equivalent is `create_server(..., provider_names={...})`.
+
 ### `--source SPEC`
 
 A discovery source the engine should index. Repeatable. A spec is one of:
@@ -45,9 +63,13 @@ A discovery source the engine should index. Repeatable. A spec is one of:
 - `github:owner/repo[@ref]` — a GitHub repository, downloaded at a
   resolved commit SHA (`GITHUB_TOKEN` is used when set).
 
-If `--source` is omitted, molmcp defaults to whichever of
-`{molpy, molpack, molrs, molq, molexp}` are importable in the active
-environment, each as a `pkg:` spec.
+If neither `--source` nor `--pkg` is given, molmcp defaults to the
+MolCrafts packages `molpy`, `molpack`, `molrs`, `molq`, `molexp`, and
+`molnex` — each read from a **local install** (`pkg:<name>`) when it is
+importable in the active environment, and from its **GitHub repo**
+(`github:MolCrafts/<name>`) otherwise. `molnex` ships several packages
+under one repo with no single import name, so it is always indexed from
+GitHub.
 
 Pass `--source` explicitly when you want to:
 
@@ -68,7 +90,7 @@ Skip auto-discovery of Providers via the `molmcp.providers` entry point group. U
 python -m molmcp --no-discover
 ```
 
-The first-party `MolqProvider` / `MolexpProvider` are entry-point-discovered too, so `--no-discover` skips them as well; pass them explicitly via `create_server(providers=[...])` from a custom host script if you need them under a locked-down setup.
+The in-tree providers (`MolqProvider`, `MolexpProvider`, `LammpsProvider`, `MolpyProvider`, `MolpackProvider`) are entry-point-discovered too, so `--no-discover` skips them as well; pass any you still want explicitly via `create_server(providers=[...])` from a custom host script under a locked-down setup.
 
 ### `--no-validate-annotations`
 
@@ -106,6 +128,12 @@ python -m molmcp
 
 ```bash
 python -m molmcp --source pkg:molpy
+```
+
+### Narrow discovery *and* providers to a few packages
+
+```bash
+python -m molmcp --pkg molpy,molexp
 ```
 
 ### HTTP transport on port 9000

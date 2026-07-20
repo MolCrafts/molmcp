@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
+import re
 from typing import Protocol, runtime_checkable
 
 from fastmcp import FastMCP
 
-ENTRY_POINT_GROUP = "molmcp.providers"
+PROVIDER_ENTRY_POINT_GROUP = "molmcp.providers"
+PROVIDER_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
+RESERVED_PROVIDER_NAMES = frozenset({"molcrafts"})
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +23,7 @@ class Provider(Protocol):
     Implementations must expose:
 
     * ``name`` — short identifier used as the mount prefix (e.g. ``"molpy"``).
-      Tools registered by the provider become ``<name>__<tool>`` to avoid
+      Tools registered by the provider become ``<name>_<tool>`` to avoid
       collisions across providers.
     * ``register(mcp)`` — called once at server-build time. The provider
       should attach tools, resources, and prompts to ``mcp``.
@@ -35,7 +38,9 @@ class Provider(Protocol):
     def register(self, mcp: FastMCP) -> None: ...
 
 
-def discover_providers() -> list[Provider]:
+def discover_providers(
+    *, failures: list[dict[str, str]] | None = None
+) -> list[Provider]:
     """Enumerate Provider instances declared via the ``molmcp.providers`` entry point.
 
     Each entry point must resolve to a class; the class is instantiated with
@@ -43,9 +48,11 @@ def discover_providers() -> list[Provider]:
     """
     discovered: list[Provider] = []
     try:
-        eps = importlib.metadata.entry_points(group=ENTRY_POINT_GROUP)
+        eps = importlib.metadata.entry_points(group=PROVIDER_ENTRY_POINT_GROUP)
     except TypeError:
-        eps = importlib.metadata.entry_points().get(ENTRY_POINT_GROUP, [])  # type: ignore[attr-defined]
+        eps = importlib.metadata.entry_points().get(  # type: ignore[attr-defined]
+            PROVIDER_ENTRY_POINT_GROUP, []
+        )
 
     for ep in eps:
         try:
@@ -53,6 +60,14 @@ def discover_providers() -> list[Provider]:
             instance = cls()
         except Exception as e:
             logger.warning("Failed to load Provider %r: %s", ep.name, e)
+            if failures is not None:
+                failures.append(
+                    {
+                        "entry_point": ep.name,
+                        "phase": "load",
+                        "error_type": type(e).__name__,
+                    }
+                )
             continue
         if not isinstance(instance, Provider):
             logger.warning(
@@ -60,6 +75,29 @@ def discover_providers() -> list[Provider]:
                 ep.name,
                 type(instance).__name__,
             )
+            if failures is not None:
+                failures.append(
+                    {
+                        "entry_point": ep.name,
+                        "phase": "contract",
+                        "error_type": "InvalidProvider",
+                    }
+                )
+            continue
+        if instance.name != ep.name:
+            logger.warning(
+                "Entry point %r resolved to provider namespace %r; skipping",
+                ep.name,
+                instance.name,
+            )
+            if failures is not None:
+                failures.append(
+                    {
+                        "entry_point": ep.name,
+                        "phase": "authority",
+                        "error_type": "NamespaceMismatch",
+                    }
+                )
             continue
         discovered.append(instance)
     return discovered

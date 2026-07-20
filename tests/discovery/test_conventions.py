@@ -108,12 +108,12 @@ def convention_engine(tmp_path, mixed_catalog):
 # --- schema additions (ac-001) -------------------------------------------
 
 
-def test_schema_version_is_bumped_to_3():
-    assert SCHEMA_VERSION == 3
+def test_schema_version_is_bumped_to_4():
+    assert SCHEMA_VERSION == 4
 
 
-def test_analyzer_version_stays_at_1():
-    assert ANALYZER_VERSION == 1
+def test_analyzer_version_is_bumped_to_2():
+    assert ANALYZER_VERSION == 2
 
 
 def test_convention_node_kind_exists():

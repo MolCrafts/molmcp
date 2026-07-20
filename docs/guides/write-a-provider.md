@@ -155,7 +155,7 @@ def register(self, parent_mcp):
     @sub.tool(annotations=ToolAnnotations(readOnlyHint=True))
     def get_pack_target(workdir: str, name: str) -> dict: ...
 
-    parent_mcp.mount(sub, prefix=self.name)
+    parent_mcp.mount(sub, namespace=self.name)
 ```
 
 Now both tools appear as `molpack_list_pack_targets` and `molpack_get_pack_target`. This is the recommended pattern when multiple MolCrafts Providers will be loaded together.

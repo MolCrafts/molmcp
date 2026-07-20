@@ -1,23 +1,33 @@
-"""``create_server`` factory — the main public entry point of molmcp."""
+"""Build the clean MolMCP vNext FastMCP server."""
 
 from __future__ import annotations
 
+import hmac
 import logging
-from typing import TYPE_CHECKING, Iterable
+import os
+from collections.abc import Iterable
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastmcp import FastMCP
+from fastmcp.server.auth import AccessToken, TokenVerifier
 
-from .discovery.provider import DiscoveryProvider
+from .collection import CollectionIndex
+from .config import AppConfig, load_config
+from .mcp_provider import MolCraftsContextProvider
 from .middleware import (
     MissingAnnotationsError,
     PathSafetyMiddleware,
     ResponseLimitMiddleware,
     validate_tool_annotations,
 )
-from .provider import Provider, discover_providers
-
-if TYPE_CHECKING:
-    from .discovery import DiscoveryConfig
+from .provider import (
+    PROVIDER_NAME_PATTERN,
+    RESERVED_PROVIDER_NAMES,
+    Provider,
+    discover_providers,
+)
+from .runtime import build_collection, build_registry
 
 logger = logging.getLogger(__name__)
 
@@ -25,81 +35,104 @@ logger = logging.getLogger(__name__)
 def create_server(
     name: str = "molmcp",
     *,
-    discovery_sources: Iterable[str] | None = None,
-    discovery_config: "DiscoveryConfig | None" = None,
+    collection: CollectionIndex | None = None,
+    config: AppConfig | str | Path | None = None,
     providers: Iterable[Provider] | None = None,
     discover_entry_points: bool = True,
-    provider_names: set[str] | None = None,
+    provider_names: set[str] | frozenset[str] | None = None,
     enable_path_safety: bool = True,
     enable_response_limit: bool = True,
     response_limit_bytes: int = 256 * 1024,
     validate_annotations: bool = True,
     instructions: str | None = None,
 ) -> FastMCP:
-    """Build a fully configured FastMCP server.
+    """Build the vNext server around a collection and namespaced providers."""
+    app_config = (
+        _resolve_config(config) if config is not None or collection is None else None
+    )
+    if collection is None:
+        assert app_config is not None
+        registry = build_registry(app_config)
+        collection = build_collection(app_config, registry)
 
-    Args:
-        name: Server name advertised to MCP clients.
-        discovery_sources: Source specs the discovery engine may index —
-            local paths, ``pkg:<name>`` for installed packages, or
-            ``github:owner/repo[@ref]``. Empty/None disables discovery.
-        discovery_config: Optional :class:`DiscoveryConfig` for the
-            engine (cache directory, limits, ...).
-        providers: Explicit Provider instances to register, in order.
-            They run after auto-discovered providers.
-        discover_entry_points: If True, auto-discover providers via the
-            ``molmcp.providers`` entry point group.
-        provider_names: When set, restrict auto-discovered providers to
-            those whose ``name`` is in this set. ``None`` means no filter.
-            Explicit ``providers=`` are never filtered.
-        enable_path_safety: Mount :class:`PathSafetyMiddleware`.
-        enable_response_limit: Mount :class:`ResponseLimitMiddleware`.
-        response_limit_bytes: Per-response truncation threshold.
-        validate_annotations: After all providers register, ensure every
-            tool exposes ``readOnlyHint`` or ``destructiveHint``. Raises
-            :class:`MissingAnnotationsError` on violation.
-        instructions: Server-level instructions string sent to clients.
+    auth = _environment_auth(app_config) if app_config is not None else None
 
-    Returns:
-        Ready-to-run :class:`fastmcp.FastMCP` instance.
-    """
-    sources = list(discovery_sources) if discovery_sources else []
+    @asynccontextmanager
+    async def lifespan(_server):
+        collection.start()
+        try:
+            yield {}
+        finally:
+            collection.close()
 
+    runtime_status: dict[str, object] = {
+        "transport": (
+            app_config.server.transport if app_config is not None else "injected"
+        ),
+        "providers": {
+            "configured": (
+                sorted(app_config.providers)
+                if app_config is not None and app_config.providers is not None
+                else None
+            ),
+            "enabled": [],
+            "failed": [],
+        },
+    }
     mcp = FastMCP(
         name,
-        instructions=instructions
-        or _default_instructions(sources, providers, discover_entry_points),
+        instructions=instructions or _default_instructions(),
+        auth=auth,
+        lifespan=lifespan,
     )
-
     if enable_path_safety:
         mcp.add_middleware(PathSafetyMiddleware())
     if enable_response_limit:
         mcp.add_middleware(ResponseLimitMiddleware(max_bytes=response_limit_bytes))
 
-    if sources:
-        DiscoveryProvider(sources, discovery_config).register(mcp)
+    MolCraftsContextProvider(collection, runtime_status).register(mcp)
 
-    auto: list[Provider] = list(discover_providers()) if discover_entry_points else []
-    if provider_names is not None:
-        auto = [p for p in auto if p.name in provider_names]
-    explicit: list[Provider] = list(providers) if providers else []
+    allowed = provider_names
+    if allowed is None and app_config is not None:
+        allowed = app_config.providers
+    provider_failures: list[dict[str, str]] = []
+    automatic = (
+        list(discover_providers(failures=provider_failures))
+        if discover_entry_points
+        else []
+    )
+    if allowed is not None:
+        automatic = [provider for provider in automatic if provider.name in allowed]
+    explicit = list(providers or ())
     seen: set[str] = set()
-
-    for prov in auto + explicit:
-        if prov.name in seen:
-            logger.warning("Skipping duplicate provider %r", prov.name)
-            continue
-        seen.add(prov.name)
-        try:
-            prov.register(mcp)
-        except Exception as exc:
-            if prov in explicit:
-                raise
-            logger.warning(
-                "Skipping auto-discovered provider %r: %s: %s",
-                prov.name,
-                type(exc).__name__,
-                exc,
+    status = runtime_status["providers"]
+    assert isinstance(status, dict)
+    status["failed"] = provider_failures
+    for provider, is_explicit in [(provider, False) for provider in automatic] + [
+        (provider, True) for provider in explicit
+    ]:
+        if not PROVIDER_NAME_PATTERN.fullmatch(provider.name):
+            raise ValueError(
+                f"provider name must match ^[a-z][a-z0-9-]*$: {provider.name!r}"
+            )
+        if provider.name in RESERVED_PROVIDER_NAMES:
+            raise ValueError(f"reserved provider name: {provider.name}")
+        if provider.name in seen:
+            raise ValueError(f"duplicate provider name: {provider.name}")
+        seen.add(provider.name)
+        if _mount_provider(mcp, provider, explicit=is_explicit):
+            enabled = status["enabled"]
+            assert isinstance(enabled, list)
+            enabled.append(provider.name)
+        else:
+            failed = status["failed"]
+            assert isinstance(failed, list)
+            failed.append(
+                {
+                    "entry_point": provider.name,
+                    "phase": "register",
+                    "error_type": "ProviderRegistrationError",
+                }
             )
 
     if validate_annotations:
@@ -108,24 +141,64 @@ def create_server(
             raise MissingAnnotationsError(
                 "Tool annotation validation failed:\n  - " + "\n  - ".join(warnings)
             )
-
     return mcp
 
 
-def _default_instructions(
-    sources: list[str],
-    providers: Iterable[Provider] | None,
-    discover: bool,
-) -> str:
-    parts = ["molmcp server."]
-    if sources:
-        parts.append("Graph-indexed discovery sources: " + ", ".join(sources) + ".")
-        parts.append(
-            "Use molmcp_outline to see structure, molmcp_find_capability to "
-            "discover capabilities, then molmcp_search_symbols / "
-            "molmcp_describe_symbol / molmcp_relations to drill in. Resolve "
-            "every name from a prior tool result — never guess."
+def _resolve_config(config: AppConfig | str | Path | None) -> AppConfig:
+    if isinstance(config, AppConfig):
+        return config
+    return load_config(config)
+
+
+def _mount_provider(parent: FastMCP, provider: Provider, *, explicit: bool) -> bool:
+    child = FastMCP(f"{provider.name}-provider", on_duplicate="error")
+    try:
+        provider.register(child)
+    except Exception:
+        if explicit:
+            raise
+        logger.exception(
+            "Skipping provider %r after registration failure", provider.name
         )
-    if providers or discover:
-        parts.append("Domain tools provided by registered providers.")
-    return " ".join(parts)
+        return False
+    parent.mount(child, namespace=provider.name)
+    return True
+
+
+def _default_instructions() -> str:
+    return (
+        "MolCrafts context server. Start with molcrafts_explore for a task, "
+        "or molcrafts_search then molcrafts_describe. Use only exact refs from "
+        "results. A source symbol is evidence, never an executable capability; "
+        "only registry items with executable=true may be handed to Molexp."
+    )
+
+
+class _EnvironmentTokenVerifier(TokenVerifier):
+    """Single-secret bearer verification without logging or copying the secret."""
+
+    def __init__(self, environment_name: str) -> None:
+        super().__init__(required_scopes=["molmcp"])
+        self.environment_name = environment_name
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        expected = os.environ.get(self.environment_name)
+        if expected is None or not hmac.compare_digest(token, expected):
+            return None
+        return AccessToken(
+            token=token,
+            client_id="molmcp-static-client",
+            scopes=["molmcp"],
+            claims={"source": "environment"},
+        )
+
+
+def _environment_auth(config: AppConfig) -> TokenVerifier | None:
+    environment_name = config.server.auth_token_env
+    if environment_name is None:
+        return None
+    if not os.environ.get(environment_name):
+        raise ValueError(
+            f"configured bearer token environment variable is unset: {environment_name}"
+        )
+    return _EnvironmentTokenVerifier(environment_name)

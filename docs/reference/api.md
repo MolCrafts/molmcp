@@ -31,6 +31,7 @@ def create_server(
     discovery_config: DiscoveryConfig | None = None,
     providers: Iterable[Provider] | None = None,
     discover_entry_points: bool = True,
+    provider_names: set[str] | None = None,
     enable_path_safety: bool = True,
     enable_response_limit: bool = True,
     response_limit_bytes: int = 256 * 1024,
@@ -48,6 +49,7 @@ Build a fully configured `FastMCP` server.
 | `discovery_config` | Optional `DiscoveryConfig` for the engine (cache directory, limits, …). |
 | `providers` | Explicit `Provider` instances to register, in order. They run *after* auto-discovered Providers. |
 | `discover_entry_points` | If `True`, auto-discover Providers via the `molmcp.providers` entry point group. |
+| `provider_names` | When set, restrict auto-discovered Providers to those whose `name` is in this set. `None` means no filter. Explicit `providers=` are never filtered. |
 | `enable_path_safety` | Mount `PathSafetyMiddleware`. |
 | `enable_response_limit` | Mount `ResponseLimitMiddleware`. |
 | `response_limit_bytes` | Per-response truncation threshold. |

@@ -22,7 +22,7 @@ The base install pulls in molmcp itself plus its server-framework dependency. No
 
 | Extra | Purpose | Command |
 |-------|---------|---------|
-| `dev` | pytest + pytest-asyncio for the test suite | `pip install "molcrafts-molmcp[dev]"` |
+| `dev` | pytest + pytest-asyncio + ruff for the test suite and linting | `pip install "molcrafts-molmcp[dev]"` |
 | `docs` | local preview of this documentation site | `pip install "molcrafts-molmcp[docs]"` |
 
 ## Verify the install
@@ -46,7 +46,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-All collected tests should pass (currently 62).
+All collected tests should pass.
 
 ## Adopting molmcp in a MolCrafts package
 

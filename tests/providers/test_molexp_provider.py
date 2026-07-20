@@ -7,6 +7,11 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip(
+    "molexp",
+    reason="the optional Molexp provider contract requires the upstream package",
+)
+
 # Source package root for AST non-executor check
 _PROVIDER_PKG = (
     Path(__file__).resolve().parents[2] / "src" / "molmcp" / "providers" / "molexp"

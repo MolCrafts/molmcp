@@ -12,18 +12,15 @@ repo_url = "https://github.com/MolCrafts/molmcp"
 
 nav = [
     { "Home" = "index.md" },
-    { "Get started" = [
+    { "Tutorials" = [
         { "Installation" = "get-started/installation.md" },
         { "Quickstart" = "get-started/quickstart.md" },
         { "Deploy" = "get-started/deploy.md" },
-    ] },
-    { "Concepts" = [
         { "Architecture" = "concepts/architecture.md" },
+        { "Discovery" = "concepts/discovery.md" },
         { "Provider design" = "concepts/provider-design.md" },
         { "Providers" = "concepts/providers.md" },
         { "Middleware" = "concepts/middleware.md" },
-    ] },
-    { "Guides" = [
         { "Expose a package" = "guides/expose-a-package.md" },
         { "Write a Provider" = "guides/write-a-provider.md" },
         { "Security" = "guides/security.md" },
@@ -34,45 +31,21 @@ nav = [
     ] },
 ]
 
+# Shared MolCrafts theme (github.com/MolCrafts/molcrafts-zensical-theme): brand
+# palette, light/dark schemes, navigation features, and the home-page
+# hero/manual-home layout that docs/index.md uses. The theme already supplies
+# the features/palette/fonts — do not re-list them here. Install the theme to
+# build (see the `docs` optional-dependency group in pyproject.toml). Markdown
+# extensions below are orthogonal to the theme and stay as the site declares them.
 [project.theme]
+name = "molcrafts"
 language = "en"
-features = [
-    "announce.dismiss",
-    "content.action.edit",
-    "content.action.view",
-    "content.code.annotate",
-    "content.code.copy",
-    "content.code.select",
-    "content.footnote.tooltips",
-    "content.tabs.link",
-    "content.tooltips",
-    "navigation.footer",
-    "navigation.indexes",
-    "navigation.instant",
-    "navigation.instant.prefetch",
-    "navigation.path",
-    "navigation.sections",
-    "navigation.top",
-    "navigation.tracking",
-    "search.highlight",
-]
 
-[project.theme.icon]
-logo = "lucide/atom"
-
-[[project.theme.palette]]
-scheme = "default"
-primary = "indigo"
-accent = "indigo"
-toggle.icon = "lucide/sun"
-toggle.name = "Switch to dark mode"
-
-[[project.theme.palette]]
-scheme = "slate"
-primary = "indigo"
-accent = "indigo"
-toggle.icon = "lucide/moon"
-toggle.name = "Switch to light mode"
+# molmcp accent (indigo) for links, hovers, and hero eyebrows.
+[project.extra.molcrafts]
+product = "molmcp"
+accent = "#4f46e5"                        # primary (主) — molmcp signature colour
+accent_soft = "rgba(79, 70, 229, 0.14)"   # secondary (副) — soft fill behind it
 
 [[project.extra.social]]
 icon = "fontawesome/brands/github"

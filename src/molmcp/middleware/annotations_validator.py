@@ -17,18 +17,31 @@ class MissingAnnotationsError(RuntimeError):
     """Raised when a registered tool is missing required ToolAnnotations."""
 
 
-def _iter_tools(mcp: FastMCP):
+def _iter_tools(mcp: FastMCP, *, _seen: set[int] | None = None):
     """Walk fastmcp's provider tree synchronously and yield each Tool component.
 
     Uses provider ``_components`` storage directly because the public
     ``list_tools`` API is async and we need to validate at server build
     time (which is synchronous, often called from non-async contexts).
     """
+    seen = _seen if _seen is not None else set()
+    if id(mcp) in seen:
+        return
+    seen.add(id(mcp))
+
     for provider in getattr(mcp, "providers", []):
         components = getattr(provider, "_components", {})
         for component in components.values():
             if isinstance(component, Tool):
                 yield component
+
+        # ``FastMCP.mount`` wraps a child server in a private provider adapter.
+        # Walk through that adapter so startup validation covers namespaced
+        # package providers as well as tools registered directly on the root.
+        inner = getattr(provider, "_inner", None)
+        child = getattr(inner, "server", None)
+        if isinstance(child, FastMCP):
+            yield from _iter_tools(child, _seen=seen)
 
 
 def validate_tool_annotations(mcp: FastMCP, *, strict: bool = True) -> list[str]:

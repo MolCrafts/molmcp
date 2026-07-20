@@ -1,7 +1,7 @@
 """SnapshotCache — on-disk layout for indexed snapshots.
 
-<cache_dir>/snapshots/<slug>/manifest.json
-                            /graph.db
+<cache_dir>/snapshots/<slug>/profiles/<build-id>/manifest.json
+                                                /graph.db
                             /raw/         (GitHub sources)
                             /evidence/<query_hash>.json
 <cache_dir>/refs/<spec-slug>.json
@@ -50,11 +50,16 @@ class SnapshotCache:
     def snapshot_dir(self, snapshot_id: str) -> Path:
         return self.snapshots_root / slugify(snapshot_id)
 
-    def graph_db_path(self, snapshot_id: str) -> Path:
-        return self.snapshot_dir(snapshot_id) / "graph.db"
+    def profile_dir(self, snapshot_id: str, build_id: str | None = None) -> Path:
+        if build_id is None:
+            return self.snapshot_dir(snapshot_id)
+        return self.snapshot_dir(snapshot_id) / "profiles" / slugify(build_id)
 
-    def manifest_path(self, snapshot_id: str) -> Path:
-        return self.snapshot_dir(snapshot_id) / "manifest.json"
+    def graph_db_path(self, snapshot_id: str, build_id: str | None = None) -> Path:
+        return self.profile_dir(snapshot_id, build_id) / "graph.db"
+
+    def manifest_path(self, snapshot_id: str, build_id: str | None = None) -> Path:
+        return self.profile_dir(snapshot_id, build_id) / "manifest.json"
 
     def raw_dir(self, snapshot_id: str) -> Path:
         return self.snapshot_dir(snapshot_id) / "raw"
@@ -68,27 +73,31 @@ class SnapshotCache:
     def ref_path(self, spec: str) -> Path:
         return self.refs_root / f"{slugify(spec)}.json"
 
-    def ensure_dir(self, snapshot_id: str) -> Path:
-        d = self.snapshot_dir(snapshot_id)
+    def ensure_dir(self, snapshot_id: str, build_id: str | None = None) -> Path:
+        d = self.profile_dir(snapshot_id, build_id)
         d.mkdir(parents=True, exist_ok=True)
         return d
 
-    def has(self, snapshot_id: str) -> bool:
+    def has(self, snapshot_id: str, build_id: str | None = None) -> bool:
         """True when both a manifest and a graph.db are present."""
         return (
-            self.manifest_path(snapshot_id).is_file()
-            and self.graph_db_path(snapshot_id).is_file()
+            self.manifest_path(snapshot_id, build_id).is_file()
+            and self.graph_db_path(snapshot_id, build_id).is_file()
         )
 
-    def write_manifest(self, snapshot_id: str, manifest: dict) -> None:
-        self.ensure_dir(snapshot_id)
-        self.manifest_path(snapshot_id).write_text(
+    def write_manifest(
+        self, snapshot_id: str, manifest: dict, build_id: str | None = None
+    ) -> None:
+        self.ensure_dir(snapshot_id, build_id)
+        self.manifest_path(snapshot_id, build_id).write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
 
-    def read_manifest(self, snapshot_id: str) -> dict | None:
-        path = self.manifest_path(snapshot_id)
+    def read_manifest(
+        self, snapshot_id: str, build_id: str | None = None
+    ) -> dict | None:
+        path = self.manifest_path(snapshot_id, build_id)
         if not path.is_file():
             return None
         try:
@@ -121,13 +130,25 @@ class SnapshotCache:
         for directory in self.snapshots_root.iterdir():
             if not directory.is_dir():
                 continue
-            manifest_path = directory / "manifest.json"
-            if not manifest_path.is_file():
+            manifest_paths = [directory / "manifest.json"]
+            profiles = directory / "profiles"
+            if profiles.is_dir():
+                manifest_paths.extend(profiles.glob("*/manifest.json"))
+            manifests: list[dict] = []
+            for manifest_path in manifest_paths:
+                if not manifest_path.is_file():
+                    continue
+                try:
+                    manifests.append(
+                        json.loads(manifest_path.read_text(encoding="utf-8"))
+                    )
+                except (json.JSONDecodeError, OSError):
+                    continue
+            if not manifests:
                 continue
-            try:
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                continue
+            manifest = max(
+                manifests, key=lambda item: float(item.get("indexed_at", 0.0))
+            )
             entries.append(
                 _SnapshotEntry(
                     snapshot_id=manifest.get("snapshot_id", directory.name),

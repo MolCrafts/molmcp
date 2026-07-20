@@ -8,11 +8,12 @@ Stand up an MCP server that exposes the MolCrafts ecosystem to an agent, in 60 s
 python -m molmcp
 ```
 
-That's it — no flags needed. molmcp auto-detects whichever of
-`{molpy, molpack, molrs, molq, molexp}` are importable in the active
-environment and registers graph-based discovery over them. Auto-discovered
-providers (`MolqProvider`, `MolexpProvider`, and any third-party
-`molmcp.providers` entry point) load on top.
+That's it — no flags needed. molmcp indexes the MolCrafts packages
+`{molpy, molpack, molrs, molq, molexp, molnex}` for graph-based discovery
+— from a local install when present, from GitHub otherwise. The in-tree
+providers (`MolqProvider`, `MolexpProvider`, `LammpsProvider`,
+`MolpyProvider`, `MolpackProvider`) and any third-party `molmcp.providers`
+entry point load on top.
 
 The server stays in the foreground, talking MCP over stdin/stdout. `Ctrl+C` to stop.
 
@@ -37,7 +38,7 @@ Behind the scenes Claude calls:
 
 The `mcp__<name>__<tool>` prefix tracks the name you registered with (`molcrafts` here).
 
-For the full local-stdio walkthrough — verifying with `claude mcp list`, the in-tree `MolqProvider` / `MolexpProvider` tools, and per-client wiring — see [Deploy](deploy.md).
+For the full local-stdio walkthrough — verifying with `claude mcp list`, the in-tree provider tools, and per-client wiring — see [Deploy](deploy.md).
 
 ## 3. The six discovery tools
 

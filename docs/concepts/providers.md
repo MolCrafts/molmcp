@@ -1,6 +1,6 @@
 # Providers
 
-A **Provider** is the unit of MCP functionality contributed for stateful queries that introspection cannot answer. Each MolCrafts package whose runtime state lives outside its source (a local DB, ssh config, on-disk workspace) ships a Provider class plus an entry point. molmcp discovers them at startup and mounts them onto a single server.
+A **Provider** is the unit of MCP functionality a package contributes when the discovery engine cannot answer a question on its own — a stateful runtime query (a local DB, an on-disk workspace), a capability that lives in a native extension or external tool that source discovery can't read, or a small execution shim. The package ships a Provider class plus an entry point; molmcp discovers them at startup and mounts them onto a single server.
 
 > **Read [provider-design.md](provider-design.md) first.** That doc defines the four-condition rule that every tool must satisfy before earning a slot. Most ideas for new tools fail one of the four — the answer is usually "let the agent introspect and script it" instead of adding a tool.
 
@@ -67,7 +67,7 @@ class MolpackProvider:
             from molpack import pack
             return pack(spec, workdir).to_dict()
 
-        parent_mcp.mount(sub, prefix=self.name)
+        parent_mcp.mount(sub, namespace=self.name)
 ```
 
 The tool now appears as `molpack_pack_box`. Without `mount`, it's just `pack_box` — fine if you only have one Provider, fragile across the ecosystem. molmcp's recommended convention: every MolCrafts Provider mounts under its package name.
@@ -107,18 +107,26 @@ For locked-down environments, prefer explicit `providers=[...]` injection.
 
 ## First-party providers
 
-molmcp ships two Providers in-tree, both for stateful queries that
-introspection cannot answer:
+molmcp ships five Providers in-tree, each registered through the
+`molmcp.providers` entry point and each justified against the
+four-condition rule — because it answers something the discovery engine
+cannot: local runtime state, a native extension source discovery can't
+read, or an external DSL:
 
 | Provider class | Name | Reason it exists |
 |----------------|------|-----|
 | `MolqProvider` | `molq` | Reads `~/.molq/jobs.db` runtime state. |
-| `MolexpProvider` | `molexp` | Reads a workspace catalog rooted at `workspace.json`. |
+| `MolexpProvider` | `molexp` | Reads a workspace catalog rooted at `workspace.json`; also serves the frozen layout contract + a read-only linter. |
+| `LammpsProvider` | `lammps` | Doc navigator over docs.lammps.org — LAMMPS is a C++ binary with a DSL that source discovery cannot reach. Pure functions; no upstream dep. |
+| `MolpyProvider` | `molpy` | Runtime catalog of `molpy.compute` / `molpy.io` classes plus a structure-file reader executor — walked from the live module at call-time, not hardcoded. |
+| `MolpackProvider` | `molpack` | Runtime restraint catalog + `.inp` script inspector over `molpack.load_script`, plus a table mirroring molpack's Rust-side I/O formats. |
 
-For everything else (`molpy`, `molpack`, `molrs`) the agent uses the
-built-in `DiscoveryProvider`, which indexes the installed MolCrafts
-packages into a code graph — see [provider-design.md](provider-design.md)
-for the philosophy and [discovery.md](discovery.md) for the engine.
+`molrs` also has a `MolrsProvider` in the source tree, but it is **not**
+wired into the `molmcp.providers` entry points, so by default molrs
+capabilities are reached through the built-in `DiscoveryProvider`, which
+indexes the installed MolCrafts packages into a code graph — see
+[provider-design.md](provider-design.md) for the philosophy and
+[discovery.md](discovery.md) for the engine.
 
 Third parties writing their own MCP plugins should still use the
 `molmcp.providers` entry-point group; the same four-condition rule

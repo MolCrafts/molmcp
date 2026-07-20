@@ -40,18 +40,74 @@ source spec ─► SourceResolver ─► Snapshot ─► Extractor ─► Resolv
 
 ## The graph
 
-Every analyzer emits the same language-agnostic schema:
+The whole design rests on one idea: **represent code as a graph of
+symbols and their relationships, under a single language-agnostic
+schema** (`molmcp.discovery.schema`, `SCHEMA_VERSION = 3`). Symbols are
+nodes; the relationships between them are edges. Every analyzer — for
+any language — emits *only* this schema, so the store, the queries, and
+the tools never learn a language.
 
-- **Nodes** — `file`, `package`, `module`, `class`, `function`,
-  `method`, `property`, `field`, `constant`, `example`, `test`,
-  `capability`, and more. Each carries kind, qualname, file, line span,
-  signature, docstring, and flags.
-- **Edges** — `contains`, `calls`, `extends`, `imports`, `exemplifies`,
-  `tests`, `provides_capability`, and more. Each carries a `provenance`
-  (`ast` / `heuristic` / `resolved`).
+The vocabulary is fixed: **21 node kinds** and **15 edge kinds**.
 
-`example` and `test` are first-class node kinds, so an agent can ask
-"show me usage of X" and "what tests X" as graph queries.
+**Node kinds.** The structural symbols an agent looks up:
+
+| Group | Kinds |
+|-------|-------|
+| Containers | `package`, `module`, `namespace`, `file` |
+| Types | `class`, `struct`, `interface`, `trait`, `enum` |
+| Callables & members | `function`, `method`, `property`, `field` |
+| Values & aliases | `constant`, `type_alias`, `import`, `export` |
+| Discovery-first extras | `example`, `test`, `capability`, `convention` |
+
+Each node carries its kind, qualname, file, line span, signature,
+docstring/summary, and flags (exported, async, abstract, visibility).
+
+**Edge kinds.** The relationships a query walks:
+
+| Group | Kinds |
+|-------|-------|
+| Structure | `contains`, `imports`, `exports` |
+| Behavior | `calls`, `extends`, `implements`, `overrides`, `references`, `returns`, `instantiates`, `decorates` |
+| Discovery-first | `exemplifies`, `tests`, `provides_capability`, `governs` |
+
+`example` and `test` being first-class **node** kinds — linked by the
+`exemplifies` and `tests` **edges** — is what makes *"show me usage of
+X"* and *"what tests X"* ordinary graph walks rather than text search.
+
+The schema is a forward-looking contract shared by every analyzer. With
+the Python analyzer live today, the kinds actually populated are the
+nodes `package, module, class, function, method, property, field,
+constant, test, example` plus the overlay-injected `capability` and
+`convention`, and the edges `contains, imports, calls, extends, tests,
+exemplifies, provides_capability, governs`. The rest are reserved for
+the other-language analyzers and later resolution passes — reserving
+them in the schema is what lets a new analyzer slot in without a store
+or tool change.
+
+**Provenance.** Every edge is tagged with how it was established —
+`ast` (parsed directly from syntax), `resolved` (uniquely linked to a
+definition in the snapshot), or `heuristic` (a best-guess match by
+name) — and every node span points at real source. References that stay
+genuinely dynamic are kept in a separate `unresolved` set rather than
+dropped, so the graph never fabricates a link and degrades gracefully.
+
+## How the graph is stored
+
+The graph is written once to a per-snapshot SQLite `graph.db` — four
+tables plus a search index:
+
+| Table | Holds |
+|-------|-------|
+| `nodes` | every symbol, keyed `file#qualname#kind`, with signature/docstring/flags; indexed on `kind`, `qualname`, `name`, `file` |
+| `edges` | `source → target` with `kind` and `provenance`; indexed on `(source, kind)` and `(target, kind)` |
+| `files` | one row per walked file with its language and content hash |
+| `unresolved` | references that could not be linked, kept for transparency |
+| `nodes_fts` | a derived FTS5 index over name/qualname/docstring/summary for symbol search |
+
+FTS5 powers `search`; where a SQLite build lacks FTS5 the store falls
+back to a `LIKE` scan automatically, so search always works. Because the
+`graph.db` is plain SQLite, you can open it in any browser and inspect
+the `nodes`, `edges`, and `files` tables directly.
 
 ## Snapshots, cache, and freshness
 

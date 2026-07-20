@@ -54,7 +54,7 @@ def test_age_based_eviction(tmp_path):
 
     snapshot_id = engine.index(str(repo)).snapshot.snapshot_id
 
-    manifest_path = engine.cache.manifest_path(snapshot_id)
+    manifest_path = engine.cache.manifest_path(snapshot_id, engine.build_id)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["indexed_at"] = time.time() - 40 * 86400
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")

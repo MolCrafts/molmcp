@@ -10,9 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 # Bump when analyzer output changes — invalidates the extraction cache.
-ANALYZER_VERSION = 1
+ANALYZER_VERSION = 2
 
 
 class NodeKind(StrEnum):
@@ -39,6 +39,10 @@ class NodeKind(StrEnum):
     TEST = "test"
     CAPABILITY = "capability"
     CONVENTION = "convention"
+    DOCUMENT = "document"
+    SECTION = "section"
+    CONFIG = "config"
+    CONFIG_KEY = "config_key"
 
 
 class EdgeKind(StrEnum):
@@ -65,6 +69,8 @@ class Provenance(StrEnum):
     """How an edge was established."""
 
     AST = "ast"
+    TREE_SITTER = "tree_sitter"
+    SCIP = "scip"
     HEURISTIC = "heuristic"
     RESOLVED = "resolved"
 
