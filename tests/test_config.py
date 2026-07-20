@@ -4,12 +4,42 @@ import json
 
 import pytest
 
-from molmcp.config import AppConfig, ConfigurationError, load_config
+from molmcp.config import (
+    _SOURCE_NAME_RE,
+    AppConfig,
+    ConfigurationError,
+    _resolve_source_spec,
+    load_config,
+)
+from molmcp.environment import DiscoveredSource, EnvironmentReport
+
+
+def _env_report(
+    sources=(),
+    *,
+    locator=None,
+    site_paths=(),
+    skipped=(),
+    excluded=(),
+) -> EnvironmentReport:
+    return EnvironmentReport(
+        locator=locator,
+        is_self=locator is None,
+        site_paths=tuple(site_paths),
+        sources=tuple(sources),
+        skipped=tuple(skipped),
+        excluded=tuple(excluded),
+    )
 
 
 def test_default_config_indexes_current_workspace(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MOLMCP_ENV", raising=False)
+    monkeypatch.setattr(
+        "molmcp.environment.discover_sources", lambda locator=None: _env_report()
+    )
     config = load_config()
+    # Workspace is unconditional; an empty discovery report folds nothing.
     assert config.sources == {"workspace": str(tmp_path.resolve())}
     assert config.server.transport == "stdio"
 
@@ -228,3 +258,129 @@ def test_duplicate_config_keys_fail_closed(tmp_path):
 def test_names_and_duplicates_fail_closed(tmp_path, payload, match):
     with pytest.raises(ConfigurationError, match=match):
         AppConfig.from_dict(payload, workspace_root=tmp_path)
+
+
+def test_no_file_folds_auto_discovered_sources(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    pkg_dir = tmp_path / "molfoo"
+    pkg_dir.mkdir()
+    report = _env_report(
+        sources=(
+            DiscoveredSource(
+                name="molpy",
+                spec="pkg:molpy",
+                identified_by=("entry_point",),
+                distribution="molpy",
+                version="1.0.0",
+            ),
+            DiscoveredSource(
+                name="molfoo",
+                spec=f"local:{pkg_dir}",
+                identified_by=("keyword",),
+                distribution="molfoo",
+                version="0.2.0",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "molmcp.environment.discover_sources", lambda locator=None: report
+    )
+    config = load_config()
+    assert config.sources == {
+        "workspace": str(tmp_path.resolve()),
+        "molpy": "pkg:molpy",
+        "molfoo": f"local:{pkg_dir}",
+    }
+    assert config.discovery is not None
+    identified = {
+        source["name"]: source["identified_by"]
+        for source in config.discovery["sources"]
+    }
+    assert identified["molpy"] == ["entry_point"]
+    assert identified["molfoo"] == ["keyword"]
+
+
+def test_explicit_config_is_not_augmented(tmp_path, monkeypatch):
+    path = tmp_path / "molcrafts.json"
+    path.write_text(
+        json.dumps({"schema_version": "1", "sources": {"project": "."}}),
+        encoding="utf-8",
+    )
+    calls: list[str | None] = []
+
+    def fake(locator=None):
+        calls.append(locator)
+        return _env_report()
+
+    monkeypatch.setattr("molmcp.environment.discover_sources", fake)
+    config = load_config(path)
+    assert config.sources == {"project": str(tmp_path.resolve())}
+    assert config.discovery is None
+    assert calls == []
+
+
+def test_default_dedupes_discovered_names_colliding_with_workspace(tmp_path):
+    config = AppConfig.default(
+        tmp_path,
+        discovered=[("workspace", "pkg:a"), ("workspace", "pkg:b")],
+    )
+    root = str(tmp_path.resolve())
+    assert config.sources["workspace"] == root
+    assert config.sources["workspace-2"] == "pkg:a"
+    assert config.sources["workspace-3"] == "pkg:b"
+    assert all(_SOURCE_NAME_RE.fullmatch(name) for name in config.sources)
+
+
+def test_default_dedupes_mutually_colliding_discovered_names(tmp_path):
+    config = AppConfig.default(
+        tmp_path,
+        discovered=[("molpy", "pkg:x"), ("molpy", "pkg:y")],
+    )
+    assert config.sources["workspace"] == str(tmp_path.resolve())
+    assert config.sources["molpy"] == "pkg:x"
+    assert config.sources["molpy-2"] == "pkg:y"
+    assert all(_SOURCE_NAME_RE.fullmatch(name) for name in config.sources)
+
+
+def test_bad_locator_propagates_configuration_error(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    def fake(locator=None):
+        raise ConfigurationError(f"environment locator does not exist: {locator}")
+
+    monkeypatch.setattr("molmcp.environment.discover_sources", fake)
+    with pytest.raises(ConfigurationError, match="does not exist"):
+        load_config(env_locator="bad")
+
+
+def test_env_locator_falls_back_to_molmcp_env(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MOLMCP_ENV", "/envs/foo")
+    captured: dict[str, str | None] = {}
+
+    def fake(locator=None):
+        captured["locator"] = locator
+        return _env_report()
+
+    monkeypatch.setattr("molmcp.environment.discover_sources", fake)
+    load_config()
+    assert captured["locator"] == "/envs/foo"
+
+
+def test_explicit_env_locator_beats_env_var(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MOLMCP_ENV", "/envs/foo")
+    captured: dict[str, str | None] = {}
+
+    def fake(locator=None):
+        captured["locator"] = locator
+        return _env_report()
+
+    monkeypatch.setattr("molmcp.environment.discover_sources", fake)
+    load_config(env_locator="/envs/explicit")
+    assert captured["locator"] == "/envs/explicit"
+
+
+def test_resolve_source_spec_passes_through_local_prefix(tmp_path):
+    spec = "local:/abs/pkg/dir"
+    assert _resolve_source_spec(spec, tmp_path.resolve()) == spec

@@ -1,6 +1,6 @@
 ---
 title: Environment auto-discovery — wire into app assembly (wire)
-status: approved
+status: done
 created: 2026-07-20
 slug: env-auto-discovery-02-wire
 depends_on: env-auto-discovery-01-discover
@@ -79,15 +79,16 @@ grilled: true
 
 ## Tasks
 
-- [ ] Write failing tests for no-file auto-discovery folding and explicit-config-not-augmented (tests/test_config.py)
-- [ ] Generalize AppConfig.default, load_config, and _resolve_source_spec plus the discovery field in src/molmcp/config.py
-- [ ] Write failing tests for --env flag, MOLMCP_ENV precedence, and bad-locator exit 2 (tests/test_cli_vnext.py)
-- [ ] Wire --env onto _config_argument and thread env_locator into load_config in src/molmcp/cli.py
-- [ ] Write failing tests for auto-discovery diagnostics in build_collection, config_summary, and info (tests/test_runtime.py)
-- [ ] Surface EnvironmentReport diagnostics via build_collection metadata and config_summary in src/molmcp/runtime.py
-- [ ] Add a direct resolve_pkg unit test for the pkg: spec path (tests/discovery/test_local_source.py)
-- [ ] Add regression example regressions/env-auto-discovery-02-wire.py (synthetic env locator, public API only)
-- [ ] Run full check + test suite
+- [x] Write failing tests for no-file auto-discovery folding and explicit-config-not-augmented (tests/test_config.py)
+- [x] Generalize AppConfig.default, load_config, and _resolve_source_spec plus the discovery field in src/molmcp/config.py
+- [x] Write failing tests for --env flag, MOLMCP_ENV precedence, and bad-locator exit 2 (tests/test_cli_vnext.py)
+- [x] Wire --env onto _config_argument and thread env_locator into load_config in src/molmcp/cli.py
+- [x] Write failing tests for auto-discovery diagnostics in build_collection, config_summary, and info (tests/test_runtime.py)
+- [x] Surface EnvironmentReport diagnostics via build_collection metadata and config_summary in src/molmcp/runtime.py
+- [x] Add a direct resolve_pkg unit test for the pkg: spec path (tests/discovery/test_local_source.py)
+- [x] Add regression example regressions/env-auto-discovery-02-wire.py (synthetic env locator, public API only)
+- [x] Run full check + test suite
+- [x] Hygiene: /mol:simplify applied 1 fix (None-narrowing assert); 1 manual handoff (EnvironmentReport fixture dedup → /mol:refactor)
 
 ## Testing strategy
 

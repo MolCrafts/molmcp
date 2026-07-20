@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -217,11 +219,23 @@ class AppConfig:
     watch: bool = True
     excludes: tuple[str, ...] = ()
     server: ServerConfig = field(default_factory=ServerConfig)
+    discovery: dict[str, Any] | None = None
 
     @classmethod
-    def default(cls, workspace_root: str | Path) -> AppConfig:
+    def default(
+        cls,
+        workspace_root: str | Path,
+        *,
+        discovered: Iterable[tuple[str, str]] = (),
+        discovery: dict[str, Any] | None = None,
+    ) -> AppConfig:
         root = Path(workspace_root).expanduser().resolve()
-        return cls(workspace_root=root, sources={"workspace": str(root)})
+        sources: dict[str, str] = {"workspace": str(root)}
+        for name, spec in discovered:
+            sources[_dedupe_source_name(name, sources)] = _resolve_source_spec(
+                spec, root
+            )
+        return cls(workspace_root=root, sources=sources, discovery=discovery)
 
     @classmethod
     def from_dict(cls, data: object, *, workspace_root: str | Path) -> AppConfig:
@@ -326,9 +340,19 @@ def _resolve_path(value: str, root: Path) -> Path:
 
 
 def _resolve_source_spec(spec: str, root: Path) -> str:
-    if spec.startswith(("pkg:", "github:")):
+    if spec.startswith(("pkg:", "github:", "local:")):
         return spec
     return str(_resolve_path(spec, root))
+
+
+def _dedupe_source_name(name: str, taken: dict[str, str]) -> str:
+    """Return ``name`` or the minimal ``name-2``/``name-3``/... free of collisions."""
+    if name not in taken:
+        return name
+    suffix = 2
+    while f"{name}-{suffix}" in taken:
+        suffix += 1
+    return f"{name}-{suffix}"
 
 
 def _resolve_registry_source(
@@ -346,7 +370,9 @@ def _resolve_registry_source(
     )
 
 
-def load_config(path: str | Path | None = None) -> AppConfig:
+def load_config(
+    path: str | Path | None = None, *, env_locator: str | None = None
+) -> AppConfig:
     """Load ``molcrafts.json`` or return a current-workspace default."""
     config_path = Path(path or DEFAULT_CONFIG_NAME).expanduser()
     if not config_path.is_absolute():
@@ -354,7 +380,19 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     if not config_path.is_file():
         if path is not None:
             raise ConfigurationError(f"configuration file not found: {config_path}")
-        return AppConfig.default(Path.cwd())
+        # Function-level import breaks the config <-> environment cycle:
+        # environment.py imports ConfigurationError from this module.
+        from .environment import discover_sources
+
+        locator = (
+            env_locator if env_locator is not None else os.environ.get("MOLMCP_ENV")
+        )
+        report = discover_sources(locator)
+        return AppConfig.default(
+            Path.cwd(),
+            discovered=[(source.name, source.spec) for source in report.sources],
+            discovery=report.to_dict(),
+        )
     try:
         data = json.loads(
             config_path.read_text(encoding="utf-8"),

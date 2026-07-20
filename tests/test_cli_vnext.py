@@ -3,6 +3,23 @@ from __future__ import annotations
 import json
 
 from molmcp import cli
+from molmcp.environment import EnvironmentReport
+
+
+def _empty_report(locator=None) -> EnvironmentReport:
+    return EnvironmentReport(
+        locator=locator,
+        is_self=locator is None,
+        site_paths=(),
+        sources=(),
+        skipped=(),
+        excluded=(),
+    )
+
+
+class _FakeCollection:
+    def info(self):
+        return {}
 
 
 def _config(tmp_path):
@@ -90,3 +107,64 @@ def test_non_loopback_override_requires_auth(monkeypatch, tmp_path, capsys):
     )
     assert code == 2
     assert "requires server.auth_token_env" in capsys.readouterr().err
+
+
+def _patch_collection(monkeypatch):
+    monkeypatch.setattr(cli, "build_registry", lambda config: object())
+    monkeypatch.setattr(
+        cli, "build_collection", lambda config, registry: _FakeCollection()
+    )
+
+
+def test_env_flag_is_threaded_into_discovery(monkeypatch, tmp_path):
+    captured: dict[str, str | None] = {}
+
+    def fake(locator=None):
+        captured["locator"] = locator
+        return _empty_report(locator)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MOLMCP_ENV", raising=False)
+    monkeypatch.setattr("molmcp.environment.discover_sources", fake)
+    _patch_collection(monkeypatch)
+    assert cli.main(["info", "--env", "/envs/x"]) == 0
+    assert captured["locator"] == "/envs/x"
+
+
+def test_molmcp_env_used_when_flag_absent(monkeypatch, tmp_path):
+    captured: dict[str, str | None] = {}
+
+    def fake(locator=None):
+        captured["locator"] = locator
+        return _empty_report(locator)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MOLMCP_ENV", "/envs/y")
+    monkeypatch.setattr("molmcp.environment.discover_sources", fake)
+    _patch_collection(monkeypatch)
+    assert cli.main(["info"]) == 0
+    assert captured["locator"] == "/envs/y"
+
+
+def test_locator_is_none_without_flag_or_env(monkeypatch, tmp_path):
+    captured: dict[str, str | None] = {}
+
+    def fake(locator=None):
+        captured["locator"] = locator
+        return _empty_report(locator)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MOLMCP_ENV", raising=False)
+    monkeypatch.setattr("molmcp.environment.discover_sources", fake)
+    _patch_collection(monkeypatch)
+    assert cli.main(["info"]) == 0
+    assert captured["locator"] is None
+
+
+def test_bad_env_locator_exits_two(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MOLMCP_ENV", raising=False)
+    missing = tmp_path / "nonexistent-env"
+    code = cli.main(["info", "--env", str(missing)])
+    assert code == 2
+    assert "molmcp:" in capsys.readouterr().err

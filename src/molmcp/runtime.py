@@ -189,6 +189,7 @@ def build_collection(
             "configured_providers": (
                 sorted(config.providers) if config.providers is not None else None
             ),
+            "discovery": config.discovery,
         },
     )
 
@@ -203,6 +204,7 @@ def config_summary(config: AppConfig) -> str:
             "providers": sorted(config.providers) if config.providers else None,
             "watch": config.watch,
             "transport": config.server.transport,
+            "discovery": config.discovery,
         },
         ensure_ascii=False,
         sort_keys=True,

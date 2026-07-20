@@ -85,10 +85,20 @@ def _config_argument(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Path to molcrafts.json (default: ./molcrafts.json when present).",
     )
+    parser.add_argument(
+        "--env",
+        metavar="LOCATOR",
+        default=None,
+        help=(
+            "Python environment to auto-discover MolCrafts packages from: a "
+            "virtualenv root, a python executable, or a site-packages directory "
+            "(default: the current environment)."
+        ),
+    )
 
 
-def _load(path: Path | None) -> AppConfig:
-    return load_config(path)
+def _load(args: argparse.Namespace) -> AppConfig:
+    return load_config(args.config, env_locator=args.env)
 
 
 def _emit(value: Any) -> None:
@@ -100,7 +110,7 @@ def _optional(values: list[str]) -> list[str] | None:
 
 
 def _serve(args: argparse.Namespace) -> int:
-    config = _load(args.config)
+    config = _load(args)
     server = create_server(
         config=config,
         discover_entry_points=not args.no_providers,
@@ -125,7 +135,7 @@ def _serve(args: argparse.Namespace) -> int:
 
 
 def _collection(args: argparse.Namespace):
-    config = _load(args.config)
+    config = _load(args)
     registry = build_registry(config)
     return config, build_collection(config, registry)
 
@@ -192,7 +202,7 @@ def _registry(args: argparse.Namespace) -> int:
         manifest = load_manifest(args.manifest)
         _emit(manifest.to_dict())
         return 0
-    config = _load(args.config)
+    config = _load(args)
     registry = build_registry(config)
     _emit(
         {
