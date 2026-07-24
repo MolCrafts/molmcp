@@ -13,3 +13,6 @@ dist/
 htmlcov/
 site/
 uv.lock
+
+.tox/
+.venv/

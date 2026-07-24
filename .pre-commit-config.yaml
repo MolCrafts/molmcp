@@ -1,47 +1,40 @@
-# Mirrors every check in .github/workflows/*.yml. Any divergence is a bug —
-# when you add/modify a CI step, update this file in the same commit.
+# Managed by prek: `prek install`
+# Gates via tox from pyproject optional-dependencies `dev`
+#   commit/pre-push: uv run --extra dev tox -e lint
+#   pre-push:        uv run --extra dev tox -e py
 #
-# CI source of truth: .github/workflows/ci.yml
-#   - uv sync --extra dev
-#   - uv run ruff check src tests          (Lint)   -> pre-commit
-#   - uv run ruff format --check src tests (Lint)   -> pre-commit
-#   - uv run pytest -v              (Test)   -> pre-push
-# Version parity is guaranteed by uv.lock (uv run resolves the locked env).
+# Install: prek install
 
 default_install_hook_types: [pre-commit, pre-push]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
-      - id: check-toml
+        args: ['--unsafe']
       - id: check-added-large-files
+        args: ['--maxkb=1024']
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+      - id: check-toml
+      - id: check-json
 
   - repo: local
     hooks:
-      # CI: "Lint" step — uv run ruff check src tests
-      - id: ruff-check
-        name: ruff check src tests (CI Lint)
-        entry: uv run ruff check src tests
+      - id: tox-lint
+        name: "CI lint (uv run --extra dev tox -e lint)"
+        entry: uv run --extra dev tox -e lint
         language: system
         pass_filenames: false
-        types: [python]
+        always_run: true
+        stages: [pre-commit, pre-push]
 
-      # CI: "Lint" step — uv run ruff format --check src tests
-      - id: ruff-format
-        name: ruff format --check src tests (CI Lint)
-        entry: uv run ruff format --check src tests
-        language: system
-        pass_filenames: false
-        types: [python]
-
-      # CI: "Test" step — uv run pytest -v
-      - id: pytest
-        name: pytest -v (CI Test)
-        entry: uv run pytest -v
+      - id: tox-py
+        name: "CI test (uv run --extra dev tox -e py)"
+        entry: uv run --extra dev tox -e py
         language: system
         pass_filenames: false
         always_run: true

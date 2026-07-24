@@ -50,6 +50,7 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.23.0",
     "ruff>=0.6",
+  "tox>=4.23",
 ]
 docs = [
     "zensical>=0.0.45",
@@ -97,3 +98,46 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+# Isolated gates — prek + CI: uv run --extra dev tox -e lint|py
+[tool.tox]
+requires = ["tox>=4.23"]
+env_list = ["lint", "py"]
+
+[tool.tox.env.lint]
+description = "CI lint"
+skip_install = true
+base_python = ["python3.12"]
+deps = [
+  "ruff>=0.6",
+  "pytest>=7.0.0",
+  "pytest-asyncio>=0.23.0",
+]
+commands = [
+  ["ruff", "check", "src", "tests"],
+  ["ruff", "format", "--check", "src", "tests"],
+]
+
+[tool.tox.env.py]
+description = "CI test (non-editable package when package=wheel)"
+base_python = ["python3.12"]
+pass_env = [
+  "HOME",
+  "PATH",
+  "SSH_AUTH_SOCK",
+  "TERM",
+  "VIRTUAL_ENV",
+  "UV_*",
+]
+package = "wheel"
+extras = ["dev"]
+commands_pre = [
+  [
+    "{envpython}",
+    "-c",
+    "import pathlib, site; sps=site.getsitepackages(); print('site-packages', sps)",
+  ],
+]
+commands = [
+  ["{envpython}", "-m", "pytest", "-v"],
+]
