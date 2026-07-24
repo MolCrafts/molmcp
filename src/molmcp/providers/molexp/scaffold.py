@@ -6,17 +6,45 @@ runs, sweeps, or science workflows.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
+
+_WORKSPACE_ENV_VAR = "MOLEXP_WORKSPACE"
 
 
 def materialize_workspace(
     path: str | Path, *, name: str = "workspace"
 ) -> dict[str, Any]:
-    """Create or open a Workspace at *path* (idempotent)."""
+    """Create or open a Workspace at *path* (idempotent).
+
+    Refuses to nest a new workspace under the session workspace pointed
+    at by ``MOLEXP_WORKSPACE`` (or under a path that already has a
+    parent ``workspace.json``). "Create a project" is
+    :func:`add_project`, not a nested workspace.
+    """
     from molexp.workspace import Workspace
 
     root = Path(path).expanduser().resolve()
+    session = os.environ.get(_WORKSPACE_ENV_VAR, "").strip()
+    if session:
+        session_root = Path(session).expanduser().resolve()
+        if root != session_root and _is_relative_to(root, session_root):
+            raise RuntimeError(
+                f"refusing to nest a workspace at {root} under the session "
+                f"workspace {session_root}. To create a *project*, call "
+                f"molexp_add_project(name=…) with workspace omitted (uses "
+                f"{_WORKSPACE_ENV_VAR}) or workspace={session_root!s}. "
+                f"Only pass molexp_materialize_workspace when opening a "
+                f"brand-new top-level workspace path."
+            )
+    parent_ws = _nearest_workspace_root(root.parent)
+    if parent_ws is not None and parent_ws != root:
+        raise RuntimeError(
+            f"refusing to nest a workspace at {root} inside existing "
+            f"workspace {parent_ws}. Use molexp_add_project under that "
+            f"workspace instead of materialize_workspace."
+        )
     root.mkdir(parents=True, exist_ok=True)
     ws = Workspace(root, name=name)
     ws.materialize()
@@ -26,6 +54,29 @@ def materialize_workspace(
         "id": getattr(ws, "id", ws.name),
         "materialized": True,
     }
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _nearest_workspace_root(start: Path) -> Path | None:
+    """Walk parents for ``workspace.json`` / OKF ``meta.yaml`` marker."""
+    cur = start.resolve()
+    for _ in range(32):
+        if (cur / "workspace.json").is_file() or (cur / "meta.yaml").is_file():
+            # meta.yaml alone is not enough if it's a project/experiment;
+            # prefer workspace.json when present, else treat meta as weak.
+            if (cur / "workspace.json").is_file():
+                return cur
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return None
 
 
 def _folder_path(folder: object) -> str:
@@ -62,7 +113,7 @@ def add_experiment(
     from molexp.workspace import Workspace
 
     ws = Workspace(Path(workspace).expanduser().resolve())
-    project = ws.get_project(project_id)
+    project = _require_project(ws, project_id)
     experiment = project.add_experiment(name)
     return {
         "project_id": project.id,
@@ -77,7 +128,7 @@ def list_experiments(workspace: str | Path, project_id: str) -> list[dict[str, A
     from molexp.workspace import Workspace
 
     ws = Workspace(Path(workspace).expanduser().resolve())
-    project = ws.get_project(project_id)
+    project = _require_project(ws, project_id)
     return [
         {
             "experiment_id": e.id,
@@ -98,16 +149,45 @@ def create_run(
     from molexp.workspace import Workspace
 
     ws = Workspace(Path(workspace).expanduser().resolve())
-    experiment = ws.get_project(project_id).get_experiment(experiment_id)
+    project = _require_project(ws, project_id)
+    try:
+        experiment = project.get_experiment(experiment_id)
+    except Exception as exc:
+        available = [e.id for e in project.list_experiments()]
+        raise RuntimeError(
+            f"experiment {experiment_id!r} not found under project "
+            f"{project.id!r} in workspace {ws.resolve()}. "
+            f"Available experiments: {available}. "
+            f"Call molexp_add_experiment(project_id={project.id!r}, name=…) first."
+        ) from exc
     run = experiment.add_run(params=params or {})
     return {
-        "project_id": project_id,
-        "experiment_id": experiment_id,
+        "project_id": project.id,
+        "experiment_id": experiment.id,
         "run_id": run.id,
         "status": run.status,
         "params": dict(run.parameters),
         "executed": False,
     }
+
+
+def _require_project(ws: object, project_id: str) -> object:
+    """Resolve *project_id* or raise a clean, actionable error (no traceback spam)."""
+    get_project = getattr(ws, "get_project")
+    list_projects = getattr(ws, "list_projects")
+    resolve = getattr(ws, "resolve")
+    try:
+        return get_project(project_id)
+    except Exception:
+        available = [p.id for p in list_projects()]
+        root = resolve() if callable(resolve) else resolve
+        raise RuntimeError(
+            f"project {project_id!r} not found in workspace {root}. "
+            f"Available projects: {available}. "
+            f"Call molexp_add_project(name=…) first (do NOT materialize a "
+            f"nested workspace under this path), or pass the correct "
+            f"workspace= absolute path from the session Workspace: line."
+        ) from None
 
 
 def validate_workflow_source(source: str) -> dict[str, Any]:

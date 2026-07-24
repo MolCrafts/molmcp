@@ -428,6 +428,37 @@ def test_molmcp_discover_force_exclude_uses_pep503_normalization(tmp_path, monke
     assert "mol-py" in {_norm(str(entry)) for entry in report.excluded}
 
 
+def test_molrs_not_auto_discovered_as_python_api_source(tmp_path, monkeypatch):
+    """molrs is MolCrafts-family but not a public Python API surface.
+
+    Agents use ``molpy.Frame``; auto-discovery must not index ``molrs`` as a
+    codegraph source. ``MOLMCP_DISCOVER=+molrs`` can re-enable for debugging.
+    """
+    monkeypatch.delenv("MOLMCP_DISCOVER", raising=False)
+    site_packages = tmp_path / "sp"
+    site_packages.mkdir()
+    _make_pkg(site_packages, "molrs")
+    _make_pkg(site_packages, "molpy")
+    _write_dist(
+        site_packages, "molcrafts-molrs", keywords="molcrafts", top_level="molrs"
+    )
+    _write_dist(
+        site_packages, "molcrafts-molpy", keywords="molcrafts", top_level="molpy"
+    )
+
+    report = discover_sources(str(site_packages))
+    by_dist = _by_distribution(report)
+    assert any("molpy" in d for d in by_dist)
+    assert not any("molrs" in d for d in by_dist)
+    assert any("molrs" in _norm(str(e)) for e in report.excluded)
+
+    # Explicit opt-in re-enables molrs as a source.
+    monkeypatch.setenv("MOLMCP_DISCOVER", "+molcrafts-molrs")
+    report2 = discover_sources(str(site_packages))
+    by2 = _by_distribution(report2)
+    assert any("molrs" in d for d in by2)
+
+
 # --------------------------------------------------------------------------- #
 # identified_by literal contract (Task 5).
 # --------------------------------------------------------------------------- #

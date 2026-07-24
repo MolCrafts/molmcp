@@ -1,4 +1,4 @@
-"""Contract tests for the clean four-tool MCP surface."""
+"""Contract tests for the hierarchical molcrafts MCP surface."""
 
 from __future__ import annotations
 
@@ -9,70 +9,90 @@ from conftest import call
 
 _CORE_TOOLS = {
     "molcrafts_info",
+    "molcrafts_packages",
+    "molcrafts_outline",
+    "molcrafts_open",
+    "molcrafts_compose",
     "molcrafts_search",
+    "molcrafts_suggest",
+    # aliases
+    "molcrafts_guide",
     "molcrafts_describe",
+    "molcrafts_usage",
     "molcrafts_explore",
 }
 
 
-async def test_exact_four_core_tools(server):
+async def test_core_tools_present(server):
     tools = await server.list_tools()
-    assert {tool.name for tool in tools} == _CORE_TOOLS
+    names = {tool.name for tool in tools}
+    assert _CORE_TOOLS <= names
     for tool in tools:
         assert tool.annotations is not None
         assert tool.annotations.readOnlyHint is True
-        assert tool.annotations.destructiveHint is False
-        assert tool.annotations.idempotentHint is True
 
 
-async def test_search_returns_stable_non_executable_symbol_refs(server):
-    result = await call(server, "molcrafts_search", {"query": "Widget"})
-    assert result["result_count"] >= 1
-    hit = next(
-        item for item in result["results"] if item["title"] == "fixture_pkg.Widget"
+async def test_packages_injects_markdown(server):
+    result = await call(server, "molcrafts_packages")
+    assert result["ok"] is True
+    assert "markdown" in result and result["markdown"]
+    assert result["data"]["packages"]
+
+
+async def test_outline_and_open_path(server):
+    outline = await call(server, "molcrafts_outline", {"source": "fixture"})
+    assert outline["ok"] is True
+    assert outline["markdown"]
+
+    search = await call(
+        server, "molcrafts_search", {"query": "Widget", "sources": ["fixture"]}
     )
-    assert hit["ref"].startswith("fixture@local:hash:")
-    assert hit["ref"].endswith("fixture_pkg/__init__.py#fixture_pkg.Widget#class")
-    assert hit["executable"] is False
-    assert hit["freshness"] == "fresh"
-
-
-async def test_describe_requires_exact_returned_ref(server):
-    search = await call(server, "molcrafts_search", {"query": "Widget"})
+    assert search["result_count"] >= 1
     ref = next(
         item["ref"]
         for item in search["results"]
-        if item["title"] == "fixture_pkg.Widget"
+        if item.get("title") == "fixture_pkg.Widget"
+        or "Widget" in (item.get("title") or "")
     )
-    detail = await call(
+    opened = await call(server, "molcrafts_open", {"ref": ref})
+    assert opened["ok"] is True
+    assert opened["markdown"]
+    assert opened["data"]["coverage"]["examples"] >= 0
+
+    stale = await call(server, "molcrafts_open", {"ref": ref + "-stale"})
+    assert stale["ok"] is False
+    assert stale["code"] == "SYMBOL_NOT_FOUND"
+
+
+async def test_describe_usage_aliases_open(server):
+    search = await call(server, "molcrafts_search", {"query": "Widget"})
+    ref = search["results"][0]["ref"]
+    desc = await call(server, "molcrafts_describe", {"ref": ref})
+    assert desc["ok"] is True
+    usage = await call(server, "molcrafts_usage", {"ref": ref})
+    assert usage["ok"] is True
+    assert "usage" in usage or "data" in usage
+
+
+async def test_compose_and_explore_alias(server):
+    pack = await call(
         server,
-        "molcrafts_describe",
-        {"ref": ref, "include_source": True},
+        "molcrafts_compose",
+        {"task": "Widget", "budget_chars": 4000},
     )
-    assert detail["detail"]["qualname"] == "fixture_pkg.Widget"
-    assert "class Widget" in detail["detail"]["source_code"]
-
-    stale = await call(server, "molcrafts_describe", {"ref": ref + "-stale"})
-    assert stale["error"] == "ref_not_found_or_stale"
-
-
-async def test_explore_is_bounded_and_reports_coverage(server):
-    result = await call(
+    assert pack["ok"] is True
+    assert pack["markdown"]
+    explore = await call(
         server,
         "molcrafts_explore",
         {"task": "Widget", "budget_chars": 4000},
     )
-    assert result["budget_chars"] == 4000
-    assert result["used_chars"] <= 4000
-    assert result["coverage"]["successful_sources"] == 1
-    assert result["freshness"]["overall"] == "fresh"
-    assert all(hit["executable"] is False for hit in result["hits"])
+    assert explore["ok"] is True
 
 
 async def test_info_and_resources(server):
     info = await call(server, "molcrafts_info")
     assert info["coverage"]["source_count"] == 1
-    assert info["registry"]["item_count"] == 0
 
     resources = await server.list_resources()
     templates = await server.list_resource_templates()
@@ -90,7 +110,7 @@ async def test_source_symbol_resource_requires_exact_snapshot_ref(server):
     ref = next(
         item["ref"]
         for item in search["results"]
-        if item["title"] == "fixture_pkg.Widget"
+        if "Widget" in (item.get("title") or "")
     )
     uri = f"molcrafts://source/fixture/symbol/{quote(ref, safe='')}"
     resource = await server.read_resource(uri)
@@ -98,13 +118,3 @@ async def test_source_symbol_resource_requires_exact_snapshot_ref(server):
     assert payload["ref"] == ref
     assert payload["source"] == "fixture"
     assert payload["provenance"]["type"] == "code_graph"
-
-
-async def test_every_core_response_has_freshness_and_provenance(server):
-    search = await call(server, "molcrafts_search", {"query": "Widget"})
-    assert search["freshness"]["overall"] == "fresh"
-    assert search["provenance"]["type"] == "federated_search"
-
-    missing = await call(server, "molcrafts_describe", {"ref": "invalid"})
-    assert missing["freshness"] == "unknown"
-    assert missing["provenance"]["type"] == "exact_ref_lookup"

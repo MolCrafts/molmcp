@@ -204,6 +204,7 @@ class DiscoveryEngine:
         graph = self.extractor.extract(snapshot)
         graph = Resolver().resolve(graph)
         self._apply_overlays(snapshot, graph)
+        _dedupe_node_ids(graph)
         return graph
 
     def _apply_overlays(self, snapshot: Snapshot, graph: CodeGraph) -> None:
@@ -371,3 +372,34 @@ def _build_identity(overlays: list[object]) -> str:
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
+
+
+def _dedupe_node_ids(graph: CodeGraph) -> None:
+    """Resolve node-id collisions before persist (last definition wins).
+
+    Analyzer edge cases — property setter/deleter pairs, same-scope
+    redefinitions — can emit two nodes sharing one ``file#qualname#kind``
+    id. The sqlite ``nodes.id`` PRIMARY KEY would reject the whole
+    snapshot, so collisions are dropped here, keeping the last occurrence
+    to match Python's later-definition-wins semantics.
+    """
+    counts: dict[str, int] = {}
+    for node in graph.nodes:
+        counts[node.id] = counts.get(node.id, 0) + 1
+    dupes = sorted(i for i, c in counts.items() if c > 1)
+    if not dupes:
+        return
+    logger.warning(
+        "dropping %d duplicate node id(s), keeping last definition: %s",
+        len(dupes),
+        dupes[:5],
+    )
+    seen: set[str] = set()
+    kept = []
+    for node in reversed(graph.nodes):
+        if node.id in seen:
+            continue
+        seen.add(node.id)
+        kept.append(node)
+    kept.reverse()
+    graph.nodes[:] = kept

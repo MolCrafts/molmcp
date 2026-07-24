@@ -37,6 +37,18 @@ _TOKEN_SPLIT_RE = re.compile(r"[,\s]+")
 _NAME_DISALLOWED_RE = re.compile(r"[^a-z0-9._-]")
 _NAME_LEADING_RE = re.compile(r"^[^a-z]+")
 
+# Distributions that are MolCrafts-family but **not** a public Python API
+# surface for agent discovery / codegraph. Their types are reached through
+# the higher-level package (e.g. ``molpy.Frame``, never ``import molrs``).
+# Explicit ``molcrafts.json`` sources and ``MOLMCP_DISCOVER=+…`` still win.
+_NON_PYTHON_API_DISTRIBUTIONS: frozenset[str] = frozenset(
+    {
+        "molrs",
+        "molcrafts-molrs",
+        "molcrafts_molrs",
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class DiscoveredSource:
@@ -201,6 +213,13 @@ def discover_sources(locator: str | None = None) -> EnvironmentReport:
             enumeration.
     """
     includes, excludes = _parse_discover(os.environ.get(_DISCOVER_ENV_VAR, ""))
+    # Default: hide non-public Python API packages (molrs is the Rust core;
+    # agents use molpy.Frame, never import molrs). Explicit
+    # ``MOLMCP_DISCOVER=+molrs`` re-enables; ``-name`` still excludes more.
+    default_api_excludes = (
+        frozenset(_normalize(name) for name in _NON_PYTHON_API_DISTRIBUTIONS) - includes
+    )
+    excludes = frozenset({*excludes, *default_api_excludes})
     if locator is None:
         dists = importlib.metadata.distributions()
         site_paths: tuple[Path, ...] = ()

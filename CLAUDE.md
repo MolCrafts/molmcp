@@ -85,6 +85,17 @@ Layered; dependencies point inward only:
 <!-- Free-form additions below this line are preserved across re-runs.
      If a section grows past a screen, promote to .claude/notes/<topic>.md. -->
 
+## First-party providers
+
+- Path: `src/molmcp/providers/<name>/` + `molmcp.providers` entry point.
+- Upstream science packages do not import FastMCP or define MCP tools.
+- **molq** (`providers/molq/`): read-only `list_jobs` / `get_job` /
+  `job_logs` / `list_destinations` / `list_queue`; opt-in mutations
+  `submit_job` / `cancel_job`. Lazy-import `molq`.
+- **molexp** (`providers/molexp/`): workspace navigation, layout, scaffold.
+- Third-party packages use sibling `*_mcp` packages on the same entry-point group.
+- Spec: `docs/concepts/provider-design.md`; ledger: `.claude/notes/notes.md`.
+
 ## Discovery ranking & the call graph
 
 Capability discovery is a **retrieval** problem, not graph navigation. The

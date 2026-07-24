@@ -2,6 +2,34 @@
 
 Evolving architectural decisions. Appended by `/mol:note`; newest first.
 
+## 2026-07-22 — Molq provider in molmcp
+
+First-party molq MCP tools live in **molmcp**:
+
+```
+src/molmcp/providers/molq/
+  __init__.py
+  provider.py          # MolqProvider
+```
+
+```toml
+[project.entry-points."molmcp.providers"]
+molq = "molmcp.providers.molq:MolqProvider"
+```
+
+- molq (`molcrafts-molq`) is a pure job-queue library — no FastMCP.
+- Provider lazy-imports molq; missing install → clear register/call error.
+- Tools:
+  - Read-only: `list_jobs`, `get_job`, `job_logs`, `list_destinations`,
+    `list_queue`
+  - Opt-in mutate (`MOLMCP_MOLQ_SUBMIT=1` / `allow_submit=True`):
+    `submit_job` (argv, no block-wait), `cancel_job`
+- Cleanup/watch/daemon, full Submitor mirror, Nerve reverse-control, batch
+  loops: out of MCP (CLI/script/molexp).
+
+Same placement rule as `providers/molexp/`. Contract:
+`docs/concepts/provider-design.md`.
+
 ## 2026-06-10 — discovery 三 spec 链落地时捕获的规则
 
 - **SCHEMA_VERSION 链规则**：每个改变持久化图内容（节点/边集合或其语义）的

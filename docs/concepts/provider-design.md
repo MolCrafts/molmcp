@@ -14,127 +14,113 @@ PR) and double-source the truth.
 A tool may be registered by a Provider only if **all four** conditions
 hold:
 
-1. **Stable signature.** Inputs are 0–2 primitive parameters that won't
-   drift when upstream evolves. If you find yourself adding optional
-   keyword args every release to keep up with upstream, the tool is
-   wrong.
-2. **Read-only or idempotent.** Anything that mutates user state
-   (`register_cluster`, `refresh_cluster`, file writes) belongs in the
-   upstream API and should be invoked by the agent through Python or
-   the CLI — not exposed as an MCP tool. Mutations carry blast radius
-   that a tool's surface can't communicate.
-3. **Every-session frequency.** "What's running?" / "What projects
-   exist?" / "Is the cluster reachable?" are dashboard-class queries
-   the agent will want to call within seconds of starting work. A tool
-   that's used once per quarter is dead weight.
-4. **Single-shot answer.** The result is one value or one short list.
-   If the agent needs to *join, filter, or compose* multiple calls to
-   answer the user's question, it should write the script itself —
-   that's exactly the use case introspection unlocks.
+1. **Stable signature.** Inputs are a small frozen set of primitives that
+   won't drift when upstream evolves. No open-ended kwargs bag that tracks
+   the full upstream API.
+2. **Read-only or idempotent** (default). Mutations carry blast radius that
+   a tool surface can't fully communicate; prefer upstream API/CLI unless
+   the tool qualifies as a [controlled mutation](#controlled-mutations).
+3. **Every-session (or every-task) frequency.** Dashboard and layout tools
+   the agent needs at the start of work — not one-off quarterly helpers.
+4. **Single-shot answer.** One value or one short list. Composition and
+   joins belong in agent-written scripts.
 
-If any condition fails: **don't** add the tool. The agent gets the
-capability through the discovery engine plus a 3-line Python or CLI
-invocation.
+If any condition fails: **don't** add the tool. Use discovery + a short
+Python or CLI invocation.
 
-## What's currently shipped
+### Controlled mutations
 
-Five providers. Their tools fall into three categories, each clearing the
-four conditions for a different reason.
+A **narrow** non-idempotent write tool may ship **only** for in-tree
+first-party providers (`src/molmcp/providers/<name>/`), and only when
+**all** of the following hold:
 
-**Stateful runtime queries** — the answer depends on local state that no
-amount of introspection over upstream *source* can recover:
+1. **Explicit opt-in** — env and/or config gate; default off
+   (e.g. `MOLMCP_MOLQ_SUBMIT=1` and config `allow_submit`).
+2. **Frozen flat signature** — CLI-shaped primitives, not the full
+   upstream object graph.
+3. **Path safety** — workdirs constrained by middleware / allowlist;
+   no `shell=True`.
+4. **Annotations** — `readOnlyHint=False`, `destructiveHint=True`; no
+   long blocking wait (agent polls with a read tool).
+5. **Documented blast radius** — this page + changelog updated with the
+   tool.
 
-| Provider | Tool | Why it earned a slot |
-|---|---|---|
-| `MolqProvider` | `molq_list_jobs` | "What's in the queue?" — primary dashboard query. Filters are stable, output is a flat list. |
-| `MolexpProvider` | `molexp_list_projects` | Top-level workspace navigation. No inputs. |
-| `MolexpProvider` | `molexp_list_runs` | Per-project / per-experiment run query. Stable filter set, flat output. |
+Batch sweeps, open-ended resource mirrors, and reverse-control of remote
+agents stay out of MCP.
 
-These exist **only** because their answers depend on local runtime state
-(`~/.molq/jobs.db`, a workspace's catalog) that no amount of
-introspection over upstream source can recover.
+## Where providers live
 
-**Contract + linter:**
+| Kind | Placement |
+|------|-----------|
+| **First-party** (molq, molexp, …) | `src/molmcp/providers/<name>/` + entry point `molmcp.providers.<name>`. Upstream package is a **lazy optional** import. Zero FastMCP in the science package. |
+| **Third-party** | Sibling package or package `mcp` extra — see [Write a Provider](../guides/write-a-provider.md). |
 
-| Provider | Tool | Why it earned a slot |
-|---|---|---|
-| `MolexpProvider` | `molexp_workspace_layout` | The workspace on-disk *contract* (tree + naming law). No inputs, frozen output. |
-| `MolexpProvider` | `molexp_check_layout` | Read-only lint of a directory against that contract. One path arg, single-shot verdict. |
+## First-party providers
 
-The last two are a different category — a layout **contract + linter**,
-the read-only counterpart to the `mol:adopt-workspace` skill. They are
-not stateful dashboard queries, so condition 3 ("every-session
-frequency") is read against the *task*, not the session: whenever an
-agent organizes or onboards data into a FAIR workspace it needs the
-layout spec first and lints as it goes. The contract is sourced from a
-*frozen* molexp invariant (a drift test pins the mirror to the live
-classes), so condition 1 holds despite the spec living partly in
-upstream; and both tools are strictly read-only (condition 2) — the
-actual, integrity-checked migration runs through the skill or molexp's
-Python API, never an MCP write tool. This is the same reference/lint
-category as the doc tools, not the runtime-query category the
-four-condition gate was written for.
+### molexp — `src/molmcp/providers/molexp/`
 
-**Capability catalogs the code graph can't index** — capabilities that
-live in a native extension or an external tool, walked from the *live*
-module (or a hand-mirrored table) at call-time rather than hardcoded, or
-a small execution shim for an *action* discovery can't perform:
+| Tool | Kind | Role |
+|------|------|------|
+| `molexp_list_projects` | Read-only | Workspace project navigation |
+| `molexp_list_experiments` | Read-only | Experiments under a project |
+| `molexp_list_runs` | Read-only | Runs by scope / status |
+| `molexp_workspace_layout` | Read-only | On-disk workspace contract |
+| `molexp_check_layout` | Read-only | Lint a path against that contract |
+| scaffold tools | Idempotent create-or-get | Materialize tree nodes; never drive run batches or workflow runtime |
 
-| Provider | Tool | Why it earned a slot |
-|---|---|---|
-| `MolpyProvider` | `list_compute_ops`, `list_readers` | Walk `molpy.compute` / `molpy.io` at call-time for concrete subclasses — no static list to drift as upstream evolves. |
-| `MolpyProvider` | `inspect_structure` | Executes a `molpy.io` reader on a path — an *action*, not a source lookup. |
-| `MolpackProvider` | `list_restraints` | Walks the live `molpack` module for `*Restraint` classes; the native pyo3 classes don't surface to the code graph. |
-| `MolpackProvider` | `list_formats` | Mirrors the format table in molpack's Rust `io.rs` — knowledge with no Python-side registry to index. |
-| `MolpackProvider` | `inspect_script` | Parses a Packmol `.inp` via `molpack.load_script` — again an action, not a lookup. |
-| `LammpsProvider` | 13 doc-navigation tools (`get_command_doc`, `get_style_doc`, `plan_task`, `validate_script`, `explain_error`, …) | LAMMPS is a C++ binary with a DSL — there is no Python source for the code graph to index. The navigator stays pure-function over in-memory tables (no `lmp`, no network, no filesystem), so it always registers. |
+### molq — `src/molmcp/providers/molq/`
 
-These are read-only (condition 2), single-shot (condition 4), and
-answer questions static indexing structurally cannot — so they clear the
-gate even though they are not runtime-state queries. What they are *not*
-is a hand-curated mirror of a plain-Python upstream namespace: every
-catalog is derived from the live module or a pinned source table, never a
-retyped copy that drifts.
+Entry point: `molq = "molmcp.providers.molq:MolqProvider"`.
+Upstream: lazy `import molq` (package `molcrafts-molq`).
 
-Things that were deliberately *not* shipped despite living in earlier
-revisions:
+| Tool | Kind | Role |
+|------|------|------|
+| `molq_list_jobs` | Read-only | Queue dashboard from the molq job store |
+| `molq_get_job` | Read-only | Single job (+ optional scheduler refresh / transitions) |
+| `molq_job_logs` | Read-only | stdout/stderr text (tail; no follow) |
+| `molq_list_destinations` | Read-only | Profiles + SSH Host aliases |
+| `molq_list_queue` | Read-only | Live scheduler queue (not the job store) |
+| `molq_submit_job` | Controlled mutation | Single job; CLI-shaped argv fields; opt-in; no block-wait |
+| `molq_cancel_job` | Controlled mutation | Cancel one job by id; same opt-in as submit |
 
-- `register_cluster`, `refresh_cluster`, `molq_submit`, `molq_cancel`, `molq_cleanup` — write ops; agent should script them after introspecting `molq` or invoke the `molq` CLI directly.
-- `molq_status`, `list_ssh_hosts` — derivable from `cat ~/.ssh/config` or reading `molq.ssh_config` via introspection.
-- `get_job`, `get_job_transitions`, `get_job_dependencies` — derivable from `molq_list_jobs` + a few lines.
-- `list_experiments`, `get_run`, `get_metrics`, `get_asset_text` — derivable from `molexp_list_runs` + reading `molexp.workspace` source.
-- A blanket re-export of a plain-Python upstream namespace — a `compute_rdf` / `parse_smiles` / structure-I/O facade that retypes upstream signatures. That stays in the discovery engine plus a 3-line invocation. (`LammpsProvider`, `MolpyProvider`, and `MolpackProvider` returned in a later revision, but only as the call-time catalogs / execution shims listed above — not as static mirrors.)
-- `MolrsProvider` — it exists in the source tree but is deliberately left out of the `molmcp.providers` entry points: molrs's Python API is fully importable, so the discovery engine indexes it directly.
+**Out of MCP for molq**
+
+- Full `Submitor` / `JobResources` object mirror
+- Cleanup / watch / daemon as default tools
+- Nerve ingest or reverse-control from the MCP process
+- Batch submit loops (agent script or molexp orchestration)
+
+### Other domain providers
+
+| Provider | Path | Role |
+|----------|------|------|
+| molpy | `providers/molpy/` | Call-time catalogs (`list_compute_ops`, `list_readers`) and path actions (`inspect_structure`) |
+| molpack | `providers/molpack/` | Live-module restraint/format catalogs; `inspect_script` |
+| lammps | `providers/lammps/` | Doc/DSL navigator over in-memory tables (no `lmp` binary required to register) |
+
+molrs is indexed by discovery only — no first-party provider entry point
+(Python API is fully importable).
 
 ## Discovery-first workflow
 
-The CLI defaults discovery to the MolCrafts packages `{molpy, molpack, molrs, molq, molexp, molnex}` — each from a local install when present, from GitHub otherwise. Without any explicit configuration the agent therefore gets:
+Default discovery sources cover MolCrafts packages
+`{molpy, molpack, molrs, molq, molexp, molnex}` (local install when present,
+GitHub otherwise). Agents get:
 
-- 6 discovery tools (`molmcp_find_capability`, `molmcp_search_symbols`, `molmcp_describe_symbol`, `molmcp_relations`, `molmcp_outline`, `molmcp_refresh`) over the indexed code graph of the installed MolCrafts packages.
-- The in-tree provider tools for whichever of those packages register — molq's job query, molexp's workspace + layout tools, and molpy's / molpack's call-time catalogs — plus the dependency-free LAMMPS doc navigator.
+- Discovery tools over the code graph (search, outline, open, relations, …)
+- In-tree provider tools for registered providers (molexp, molq, …)
 
-Upstream adds a new function? The agent finds it via
-`molmcp_search_symbols` or `molmcp_find_capability` and reads its
-signature and examples. molmcp ships nothing.
-
-Upstream renames a function? The next index produces a new snapshot,
-the agent re-discovers the symbol under its new name, and continues.
-molmcp ships nothing.
-
-A user invents a workflow that combines six molq calls into a custom
-analysis? The agent writes the analysis. molmcp ships nothing.
-
-That's the design.
+Upstream adds or renames a function? Re-index and rediscover — no hand-curated
+API mirror in molmcp. Custom multi-step analysis? Agent writes the script.
 
 ## When to add a new provider tool
 
-Walk the four conditions, in order, and write down which one fails for
-your candidate tool. If you can't find one that fails — *and* the
-answer genuinely needs runtime state the discovery engine cannot see —
-that's the bar. Otherwise, push back and document the discovery recipe
-in the relevant guide instead.
+Walk the four conditions (and controlled-mutation rules if writing). If a
+condition fails — and the answer does not need runtime state discovery cannot
+see — push back and document a discovery recipe instead.
 
 ## Read next
 
-- **[Providers](providers.md)** — the technical Protocol and registration mechanics.
-- **[Middleware](middleware.md)** — what wraps every registered tool.
+- **[Providers](providers.md)** — Protocol and registration mechanics
+- **[Middleware](middleware.md)** — What wraps every registered tool
+- **[Write a Provider](../guides/write-a-provider.md)** — Third-party packaging

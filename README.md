@@ -5,24 +5,30 @@ combines a strict capability registry with graph-indexed source discovery, then
 exposes a small MCP surface for finding the right package, inspecting exact
 evidence, and handing trusted executable capabilities to Molexp.
 
-MolMCP does not execute workflows or schedule jobs. Molexp owns planning,
-approval, execution, artifacts, and audit; Molq owns local/HPC job lifecycle.
+MolMCP is a context plane plus first-party providers. Molexp owns workspace
+scaffold and FAIR layout; molq owns job lifecycle via the in-tree
+`MolqProvider` (`molq_list_jobs`, opt-in `molq_submit_job`). Discovery remains
+the path for open-ended science APIs.
 
 ## Core MCP surface
 
-The default server exposes exactly four read-only tools:
+The default server injects **knowledge pages** into agent context (OKF-style).
+Codegraph is only an index; do not treat ranking scores as truth.
 
 | Tool | Purpose |
 |---|---|
-| `molcrafts_info` | Report sources, registry coverage, freshness, providers, and warnings. |
-| `molcrafts_search` | Search registry items, code, docs, examples, and tests across all configured sources. |
-| `molcrafts_describe` | Resolve one exact registry or snapshot-qualified symbol reference. |
-| `molcrafts_explore` | Build a bounded, provenance-rich context pack for a task. |
+| `molcrafts_packages` | **L0 directory page** — every package + summary (read and choose). |
+| `molcrafts_outline` | **L1 module page** — `source` (+ optional `path`) module tree + summaries. |
+| `molcrafts_open` | **L2 symbol page** — signature, doc, examples, tests (inject before coding). |
+| `molcrafts_compose` | Bind packages + opens into a budgeted context pack. |
+| `molcrafts_search` | Index helper (prefer with `source=` after packages/outline). |
+| `molcrafts_suggest` | Optional shortcut: which package pages to read for a task. |
+| `molcrafts_info` | Ops/health inventory. |
 
-A code or documentation hit is evidence, never an executable action. Only an
-explicit `ExecutableCapabilityV1` from a validated manifest can be executable.
-Remote manifests without a matching `expected_digest` are `search_only` by
-default and cannot be handed to Molexp.
+Aliases (one minor): `describe`/`usage` → `open`, `guide` → `suggest`, `explore` → `compose`.
+
+Miss responses carry `ok: false` and stable `code`s (`SYMBOL_NOT_FOUND`, …).
+Source hits are evidence only; only `executable=true` may be bound for Molexp.
 
 ## Install and run
 

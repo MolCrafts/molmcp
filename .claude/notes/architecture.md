@@ -23,8 +23,6 @@ App layer (top-level `src/molmcp/*.py`)
 Domain layer
 - `src/molmcp/collection/` — `__init__`, `index.py`, `models.py`
 - `src/molmcp/registry/` — `__init__`, `core.py`, `models.py`, `manifest.py`, `entrypoints.py`
-- `src/molmcp/introspection/` — RESIDUAL: no `.py` sources; only stale `__pycache__` (`__init__`, `_resolve`, `modules`, `search`, `source` bytecode). Deleted on this branch.
-
 Discovery engine (`src/molmcp/discovery/`)
 - Facade/engine layer: `engine.py`, `query.py`, `config.py`
 - Pipeline: `extract.py`, `resolve.py`
@@ -39,8 +37,9 @@ Discovery engine (`src/molmcp/discovery/`)
 Leaf layer
 - `src/molmcp/middleware/` — `__init__`, `annotations_validator.py`, `path_safety.py`, `response_limit.py`
 - `src/molmcp/helpers/` — `__init__`, `subprocess.py`, `text.py`
-- `src/molmcp/providers/molexp/` — `__init__`, `provider.py`, `scaffold.py`, `layout.py` (only live provider)
-- `src/molmcp/providers/` — RESIDUAL siblings, `__pycache__` only, no `.py`: `molexp.py`, `molpy/`, `molpack/`, `molq/`, `molrs/`, `lammps/` (with `_dev/`, `lammps_internal/`, `howto/`). Deleted on this branch.
+- `src/molmcp/providers/molexp/` — workspace navigation + scaffold
+- `src/molmcp/providers/molq/` — `MolqProvider`: `molq_list_jobs`, `molq_submit_job`
+- `src/molmcp/providers/molpy|molpack|lammps/` — domain catalogs / doc tools
 
 ### Public surface
 
@@ -66,7 +65,9 @@ Leaf layer
 
 Entry-point group contracts
 - `pyproject.toml` `[project.scripts]`: `molmcp = molmcp.cli:main`.
-- `pyproject.toml` `[project.entry-points."molmcp.providers"]`: `molexp = molmcp.providers.molexp:MolexpProvider` — the single declared provider; this is the `molmcp.providers` group external packages register against (const `PROVIDER_ENTRY_POINT_GROUP` in `provider.py`).
+- `pyproject.toml` `[project.entry-points."molmcp.providers"]`: first-party
+  providers (`molexp`, `molq`, …). External packages register on the same
+  group (`PROVIDER_ENTRY_POINT_GROUP` in `provider.py`).
 - Two further entry-point group contracts are consumed but NOT self-declared in `pyproject.toml` (open extension seams for downstream packages): `molmcp.capabilities` (`CAPABILITY_ENTRY_POINT_GROUP`, consumed by `registry/entrypoints.py:load_installed_manifests`) and `molmcp.overlays` (`OVERLAY_ENTRY_POINT_GROUP`, consumed by `discovery/overlay/__init__.py:load_overlays`).
 - `pyproject.toml` `[tool.setuptools.package-data]` ships `molmcp.discovery.store/*.sql` (the `graph.db` schema).
 
@@ -86,13 +87,13 @@ Entry-point group contracts
 - `discovery.overlay`: naming=`CapabilityOverlay` Protocol + `OverlayContribution` slotted dataclass; construction=TOML-declared catalog/conventions merged post-resolution, discovered via `molmcp.overlays` entry points; errors=one failing overlay logged+skipped, never aborts load; format core / content shipped by domain package.
 - `middleware`: naming=`*Middleware` (fastmcp `Middleware`) + `validate_tool_annotations` startup pass; construction=path-key traversal rejection, response byte cap; errors=`ToolError`/`MissingAnnotationsError(RuntimeError)`, fail at build time.
 - `helpers`: naming=`run_safe` + `SubprocessResult` frozen dataclass, `fence_untrusted`; construction=list-only `cmd`, mandatory timeout, `shell=True` unreachable, untrusted-content fencing (prompt-injection neutralization).
-- `providers.molexp`: naming=`MolexpProvider` (name="molexp") + `materialize_*`/`add_*`/`validate_*` scaffold functions, `LayoutLevel`/`Findings` layout types; construction=lazy `molexp` import inside functions, workspace resolution via arg/`MOLEXP_WORKSPACE`/cwd sentinels; errors=`RuntimeError` on unresolved workspace; contract: navigation/layout read-only, scaffold idempotent create-or-get, never drives run batches or workflow runtime.
+- `providers.molexp`: naming=`MolexpProvider` (name="molexp") + scaffold helpers; lazy `molexp` import; workspace via arg/`MOLEXP_WORKSPACE`/cwd; navigation/layout read-only; scaffold idempotent create-or-get.
+- `providers.molq`: naming=`MolqProvider` (name="molq"); lazy `molq` import; read-only `list_jobs`/`get_job`/`job_logs`/`list_destinations`/`list_queue`; opt-in mutate `submit_job`/`cancel_job`.
 
 ### Layer roles
 
-- `cli`, `__main__`, `server`, `runtime`, `config`, `provider`, `mcp_provider` — App layer (entrypoints + composition + FastMCP boundary; only `server`/`provider`/`mcp_provider`/`providers.molexp` import MCP machinery per rule 2).
+- `cli`, `__main__`, `server`, `runtime`, `config`, `provider`, `mcp_provider` — App layer (entrypoints + composition + FastMCP boundary; only `server`/`provider`/`mcp_provider`/`providers/*` import MCP machinery per rule 2).
 - `collection`, `registry` — Domain layer (registry + federated retrieval; MCP-free, duck-typed toward MCP).
-- `introspection` — Domain layer per historical rules, but RESIDUAL on this branch (no sources; stale bytecode only).
 - `discovery/engine.py`, `query.py`, `config.py` — Discovery engine facade layer (rule 3: `engine` is the MCP-free facade).
 - `discovery/extract.py`, `resolve.py` — Discovery pipeline layer (phase-1/phase-2 under engine).
 - `discovery/schema.py` — Discovery contract layer (language-agnostic; every analyzer emits only this; core-owned).
@@ -100,7 +101,23 @@ Entry-point group contracts
 - `discovery/store/`, `source/`, `cache/`, `analyzers/` — Discovery leaf layer (persistence, snapshot resolution, freshness, language seams — below engine per rule 3).
 - `discovery/overlay/` — Discovery overlay layer (rule 4: domain content enters via overlays after resolution, never by editing `schema.py`).
 - `middleware`, `helpers` — Leaf layer (MCP-free utilities; `helpers` is provider-facing, `middleware` wraps the FastMCP boundary).
-- `providers/molexp/` — Provider layer (leaf; MCP-importing plugin, the only live provider, registered via the `molmcp.providers` entry point).
-- `providers/` siblings (`molpy`, `molpack`, `molq`, `molrs`, `lammps`, `molexp.py`) — Provider layer per rules, but RESIDUAL on this branch (bytecode only, no sources).
+- `providers/molexp/` — Provider layer (workspace scaffold + navigation).
+- `providers/molq/` — Provider layer (job list + opt-in submit); lazy-imports molq.
+- `providers/molpy|molpack|lammps/` — Provider layer (domain catalogs / doc tools).
 
 <!-- mol:map:managed end -->
+
+## Annotations (human; preserved across `/mol:map`)
+
+### First-party providers
+
+All first-party MCP tools live under `src/molmcp/providers/<name>/` with
+entry points on `molmcp.providers`. Upstream science packages (molq, molexp, …)
+do not ship FastMCP modules.
+
+| Provider | Path | Tools (summary) |
+|----------|------|-----------------|
+| molexp | `providers/molexp/` | list projects/runs, layout, idempotent scaffold |
+| molq | `providers/molq/` | list/get/logs/destinations/queue; submit+cancel (opt-in) |
+
+Details: `.claude/notes/notes.md`, `docs/concepts/provider-design.md`.

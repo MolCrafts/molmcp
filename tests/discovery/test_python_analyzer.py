@@ -107,3 +107,49 @@ def test_syntax_error_is_captured_not_raised():
     out = PythonAnalyzer().analyze(record, "def broken(:\n")
     assert out.nodes == []
     assert any("SyntaxError" in e for e in out.errors)
+
+
+def _analyze(path: str, source: str) -> AnalyzerResult:
+    record = FileRecord(
+        path=path, language="python", content_hash="x", size=len(source)
+    )
+    return PythonAnalyzer().analyze(record, source)
+
+
+def test_overload_stubs_collapse_to_single_node():
+    source = (
+        "from typing import overload\n"
+        "\n"
+        "\n"
+        "class Box:\n"
+        "    @overload\n"
+        "    def __getitem__(self, key: int) -> str: ...\n"
+        "    @overload\n"
+        "    def __getitem__(self, key: slice) -> list[str]: ...\n"
+        "    def __getitem__(self, key):\n"
+        '        """Real implementation."""\n'
+        "        return key\n"
+    )
+    out = _analyze("box.py", source)
+    items = [n for n in out.nodes if n.name == "__getitem__"]
+    assert len(items) == 1
+    # The surviving node is the implementation, not a stub.
+    assert items[0].docstring == "Real implementation."
+    assert len({n.id for n in out.nodes}) == len(out.nodes)
+
+
+def test_module_level_typing_overload_stubs_collapse():
+    source = (
+        "import typing\n"
+        "\n"
+        "\n"
+        "@typing.overload\n"
+        "def pick(key: int) -> str: ...\n"
+        "@typing.overload\n"
+        "def pick(key: slice) -> list[str]: ...\n"
+        "def pick(key):\n"
+        "    return key\n"
+    )
+    out = _analyze("pick.py", source)
+    picks = [n for n in out.nodes if n.name == "pick" and n.kind == "function"]
+    assert len(picks) == 1

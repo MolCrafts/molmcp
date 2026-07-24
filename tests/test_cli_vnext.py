@@ -47,7 +47,12 @@ def test_no_arguments_defaults_to_serve(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "create_server", lambda **kwargs: FakeServer())
     assert cli.main([]) == 0
-    assert captured == {"transport": "stdio"}
+    # Stdio clients (agent hosts) must not get FastMCP banners / INFO chatter.
+    assert captured == {
+        "transport": "stdio",
+        "show_banner": False,
+        "log_level": "ERROR",
+    }
 
 
 def test_search_emits_json(monkeypatch, tmp_path, capsys):

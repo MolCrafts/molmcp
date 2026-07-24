@@ -137,3 +137,29 @@ def test_index_resolves_internal_calls(tmp_path):
     run = next(n for n in result.graph.nodes if n.qualname == "calc.Calc.run")
     calls = {(e.source, e.target) for e in result.graph.edges if e.kind == "calls"}
     assert (run.id, add.id) in calls
+
+
+def test_index_survives_duplicate_node_ids(tmp_path):
+    # A property setter + deleter pair maps to two METHOD nodes with the same
+    # file#qualname#kind id — indexing must dedupe, not crash on the sqlite
+    # PRIMARY KEY.
+    repo = tmp_path / "repo"
+    _write(
+        repo / "prop.py",
+        "class Cfg:\n"
+        "    @property\n"
+        "    def value(self):\n"
+        "        return self._v\n"
+        "\n"
+        "    @value.setter\n"
+        "    def value(self, v):\n"
+        "        self._v = v\n"
+        "\n"
+        "    @value.deleter\n"
+        "    def value(self):\n"
+        "        del self._v\n",
+    )
+    engine = _engine(tmp_path)
+    result = engine.index(str(repo))
+    ids = [n.id for n in result.graph.nodes]
+    assert len(ids) == len(set(ids))

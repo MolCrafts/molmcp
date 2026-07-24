@@ -80,9 +80,9 @@ The result would be: fragmented quality, inconsistent UX across packages, securi
 ## What molmcp deliberately does *not* do
 
 - **No re-exported domain tools.** No structure I/O facade, no `compute_rdf`, no `parse_smiles`. Those are discoverable through the discovery engine plus a 3-line Python or CLI invocation — see [Provider design](provider-design.md) for why a tool catalog that mirrors upstream is a maintenance trap.
-- **No batteries-included science deps at the foundation layer.** molmcp's wheel pulls in only its server-framework dependency. The first-party `MolqProvider` / `MolexpProvider` / `MolpyProvider` / `MolpackProvider` are *lazy facades* — importing the provider class never imports the upstream dep; the probe happens at `register()` time, and a missing dep produces a clear runtime warning rather than a startup crash. (`LammpsProvider` is a pure-function doc navigator with no upstream dep at all.)
-- **No opinions about Provider internals.** A Provider can be 5 lines or 5,000 — molmcp only requires that it has a `name` and a `register(mcp)` method.
-- **No MolCrafts package import from the foundation.** Outside the in-tree providers (which are explicit, lazy, and entry-point-gated like third-party providers), molmcp imports nothing from `molpy`, `molcfg`, etc. That keeps it adoptable on any cadence.
+- **No batteries-included science deps at the foundation layer.** molmcp's wheel pulls in only its server-framework dependency. First-party providers under `providers/` are lazy facades: importing the provider class does not import molq/molexp/…; the probe runs at `register()` time.
+- **No opinions about Provider internals.** A Provider needs `name` and `register(mcp)` only.
+- **No science-package imports outside providers.** Core layers never import molq/molpy/…; only in-tree providers do, lazily.
 
 ## Read next
 

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`MolqProvider`** (`src/molmcp/providers/molq/`, entry point
+  `molmcp.providers.molq`): first-party molq lifecycle tools.
+  - Read-only: `molq_list_jobs`, `molq_get_job` (refresh + transitions),
+    `molq_job_logs` (tail, no follow), `molq_list_destinations`,
+    `molq_list_queue` (live scheduler snapshot).
+  - Controlled mutations (opt-in via `MOLMCP_MOLQ_SUBMIT=1` or
+    `MolqProvider(allow_submit=True)`): `molq_submit_job` (argv, no
+    block-wait), `molq_cancel_job`.
+  Lazy-imports `molq`.
+
 - `molmcp --pkg NAME[,NAME...]` (repeatable or comma-separated) restricts
   the server to the chosen MolCrafts packages, narrowing both the default
   discovery sources and the entry-point-discovered providers. An explicit

@@ -117,7 +117,13 @@ def _serve(args: argparse.Namespace) -> int:
     )
     transport = args.transport or config.server.transport
     kwargs: dict[str, Any] = {"transport": transport}
-    if transport != "stdio":
+    if transport == "stdio":
+        # Stdio is spawned by MCP clients (Claude, molexp, …). Never print the
+        # FastMCP banner / update nags / "Starting MCP server" INFO — they
+        # pollute agent logs when the child process starts.
+        kwargs["show_banner"] = False
+        kwargs["log_level"] = "ERROR"
+    else:
         host = args.host or config.server.host
         port = args.port or config.server.port
         # Revalidate CLI overrides; an authenticated config must still be used

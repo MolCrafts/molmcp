@@ -1,4 +1,4 @@
-"""Thin FastMCP adapter for the vNext collection/context API."""
+"""Thin FastMCP adapter — OKF-style knowledge pages for context injection."""
 
 from __future__ import annotations
 
@@ -10,6 +10,14 @@ from urllib.parse import unquote
 from mcp.types import ToolAnnotations
 
 from .collection import MAX_CONTEXT_BUDGET, CollectionIndex
+from .collection.browse import (
+    compose_context,
+    open_ref,
+    outline_source,
+    packages_catalog,
+    search_scoped,
+)
+from .guide import build_routing_guide
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -23,7 +31,11 @@ _READ_ONLY = ToolAnnotations(
 
 
 class MolCraftsContextProvider:
-    """Register exactly four task-oriented core tools and context resources."""
+    """Register hierarchical discovery tools (packages → outline → open → compose).
+
+    Codegraph is the index; tools inject markdown knowledge pages into context.
+    Legacy describe/usage/guide/explore remain as thin aliases for one minor.
+    """
 
     name = "molcrafts"
 
@@ -40,12 +52,7 @@ class MolCraftsContextProvider:
 
         @mcp.tool(annotations=_READ_ONLY)
         def molcrafts_info(workspace: str | None = None) -> dict[str, Any]:
-            """Describe configured MolCrafts sources, registries and index health.
-
-            Args:
-                workspace: Optional workspace label for the response. The server
-                    only accesses roots configured at startup.
-            """
+            """Ops/health view of sources and registry (not the main discovery path)."""
             payload = collection.info()
             configured = payload.get("workspace")
             if (
@@ -53,10 +60,73 @@ class MolCraftsContextProvider:
                 and configured is not None
                 and workspace != configured
             ):
+                payload["ok"] = False
+                payload["code"] = "WORKSPACE_NOT_CONFIGURED"
                 payload["error"] = "workspace_not_configured"
                 payload["requested_workspace"] = workspace
+            else:
+                payload["ok"] = True
+                payload["code"] = None
+                payload["error"] = None
             payload["runtime"] = dict(self.runtime_status)
             return payload
+
+        @mcp.tool(annotations=_READ_ONLY)
+        def molcrafts_packages() -> dict[str, Any]:
+            """L0 directory page: every package + summary for context injection.
+
+            Read the markdown (or data.packages[].summary) and choose sources
+            yourself — this is a catalog, not a ranking.
+            """
+            return packages_catalog(collection)
+
+        @mcp.tool(annotations=_READ_ONLY)
+        def molcrafts_outline(
+            source: str,
+            path: str | None = None,
+            top_symbols_limit: int = 15,
+        ) -> dict[str, Any]:
+            """L1 module directory for one source (optional path prefix).
+
+            Args:
+                source: Name from molcrafts_packages.
+                path: Optional path/module prefix to narrow the tree.
+                top_symbols_limit: Max sample symbols per module in the page.
+            """
+            return outline_source(
+                collection,
+                source,
+                path=path,
+                top_symbols_limit=top_symbols_limit,
+            )
+
+        @mcp.tool(annotations=_READ_ONLY)
+        def molcrafts_open(
+            ref: str,
+            include_source: bool = False,
+        ) -> dict[str, Any]:
+            """L2 symbol page: signature, doc, examples, tests (inject before coding).
+
+            Miss → ok=false / SYMBOL_NOT_FOUND. Empty examples are honest zeros.
+            """
+            return open_ref(collection, ref, include_source=include_source)
+
+        @mcp.tool(annotations=_READ_ONLY)
+        def molcrafts_compose(
+            task: str | None = None,
+            refs: list[str] | None = None,
+            sources: list[str] | None = None,
+            budget_chars: int = 16_000,
+        ) -> dict[str, Any]:
+            """Bind packages + suggest + explore/open pages into one budgeted pack."""
+            budget = min(max(budget_chars, 1), MAX_CONTEXT_BUDGET)
+            return compose_context(
+                collection,
+                task=task,
+                refs=refs,
+                sources=sources,
+                budget_chars=budget,
+            )
 
         @mcp.tool(annotations=_READ_ONLY)
         def molcrafts_search(
@@ -64,32 +134,57 @@ class MolCraftsContextProvider:
             kinds: list[str] | None = None,
             namespaces: list[str] | None = None,
             sources: list[str] | None = None,
+            path: str | None = None,
             limit: int = 20,
+            mode: str = "all",
         ) -> dict[str, Any]:
-            """Search the full capability registry and every configured source.
+            """Index helper: find refs (prefer after packages/outline, with source=).
 
-            Source symbols are evidence only. Only registry results explicitly
-            marked ``executable`` are valid Molexp execution capabilities.
+            Source symbols are evidence only. executable=true only for Molexp bind.
             """
-            hits = collection.search(
+            return search_scoped(
+                collection,
                 query,
                 kinds=kinds,
                 namespaces=namespaces,
                 sources=sources,
-                limit=min(max(limit, 1), 100),
+                path=path,
+                limit=limit,
+                mode=mode,
             )
-            return {
-                "query": query,
-                "result_count": len(hits),
-                "results": [hit.to_dict() for hit in hits],
-                "freshness": _hit_freshness(hits),
-                "provenance": {
-                    "type": "federated_search",
-                    "channels": sorted(
-                        {channel for hit in hits for channel in hit.matched_channels}
-                    ),
-                },
-            }
+
+        @mcp.tool(annotations=_READ_ONLY)
+        def molcrafts_suggest(task: str) -> dict[str, Any]:
+            """Optional shortcut: which package pages to read for *task*."""
+            info = collection.info()
+            sources = (
+                info.get("sources") if isinstance(info.get("sources"), dict) else {}
+            )
+            try:
+                hits = collection.search(task, limit=12)
+                hit_dicts = [hit.to_dict() for hit in hits]
+            except Exception:
+                hit_dicts = []
+            guide = build_routing_guide(task, sources=sources, hits=hit_dicts)
+            guide["freshness"] = info.get("freshness")
+            guide["markdown"] = (
+                "# Suggest\n\n"
+                + "\n".join(
+                    f"- **{c.get('role')}**: prefer {c.get('prefer_packages')} "
+                    f"(available={c.get('available')})"
+                    for c in (guide.get("checklist") or [])
+                    if isinstance(c, dict)
+                )
+                + "\n"
+            )
+            return guide
+
+        # ── aliases (one-minor compatibility) ──────────────────────────────
+
+        @mcp.tool(annotations=_READ_ONLY)
+        def molcrafts_guide(task: str) -> dict[str, Any]:
+            """Deprecated alias of molcrafts_suggest."""
+            return molcrafts_suggest(task)
 
         @mcp.tool(annotations=_READ_ONLY)
         def molcrafts_describe(
@@ -97,21 +192,28 @@ class MolCraftsContextProvider:
             include_source: bool = False,
             include_examples: bool = True,
         ) -> dict[str, Any]:
-            """Describe an exact registry or symbol ref returned by search."""
-            detail = collection.describe(
-                ref,
-                include_source=include_source,
-                include_examples=include_examples,
-            )
-            if detail is None:
-                return {
-                    "error": "ref_not_found_or_stale",
-                    "ref": ref,
-                    "hint": "call molcrafts_search and use an exact returned ref",
-                    "freshness": "unknown",
-                    "provenance": {"type": "exact_ref_lookup"},
+            """Deprecated alias of molcrafts_open.
+
+            include_examples is ignored; examples are always included.
+            """
+            _ = include_examples
+            return molcrafts_open(ref, include_source=include_source)
+
+        @mcp.tool(annotations=_READ_ONLY)
+        def molcrafts_usage(
+            ref: str,
+            include_source: bool = False,
+        ) -> dict[str, Any]:
+            """Deprecated alias of molcrafts_open."""
+            page = molcrafts_open(ref, include_source=include_source)
+            # Keep old shape fields for callers that expect usage/detail.
+            if page.get("ok") and page.get("data"):
+                page = {
+                    **page,
+                    "usage": page["data"].get("usage"),
+                    "detail": page["data"].get("detail"),
                 }
-            return {"ref": ref, "detail": detail}
+            return page
 
         @mcp.tool(annotations=_READ_ONLY)
         def molcrafts_explore(
@@ -120,14 +222,11 @@ class MolCraftsContextProvider:
             sources: list[str] | None = None,
             budget_chars: int = 16_000,
         ) -> dict[str, Any]:
-            """Build one bounded, provenance-rich context pack for a task."""
-            budget = min(max(budget_chars, 1), MAX_CONTEXT_BUDGET)
-            return collection.explore(
-                task,
-                namespaces=namespaces,
-                sources=sources,
-                budget_chars=budget,
-            ).to_dict()
+            """Deprecated alias of molcrafts_compose(task=…)."""
+            _ = namespaces
+            return molcrafts_compose(
+                task=task, sources=sources, budget_chars=budget_chars
+            )
 
         @mcp.resource(
             "molcrafts://workspace/context",
@@ -177,16 +276,3 @@ class MolCraftsContextProvider:
                     }
                 )
             return json.dumps(detail, ensure_ascii=False, sort_keys=True)
-
-
-def _hit_freshness(hits: list[Any]) -> dict[str, Any]:
-    values = {hit.freshness for hit in hits}
-    if "stale" in values:
-        overall = "stale"
-    elif "pending" in values:
-        overall = "pending"
-    elif not values or "unknown" in values:
-        overall = "unknown"
-    else:
-        overall = "fresh"
-    return {"overall": overall}

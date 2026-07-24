@@ -19,7 +19,21 @@ Don't make molmcp a hard dependency — users who don't need MCP shouldn't pull 
 
 ## Step 2 — Decide where the Provider lives
 
-The MolCrafts convention is a sibling package named `<pkg>_mcp`:
+**First-party MolCrafts packages (molq, molexp, …):** implement the provider
+**in molmcp**, not in the upstream package:
+
+```
+molmcp/src/molmcp/providers/<name>/
+  __init__.py
+  provider.py
+```
+
+Register via molmcp's `pyproject.toml` entry point
+`molmcp.providers.<name>`. Lazy-import the upstream package inside
+`register()` / tool bodies. Do **not** add FastMCP to molq/molexp core.
+
+**Third-party / external packages:** use a sibling package named
+`<pkg>_mcp` (or an optional `mcp` extra in your own repo):
 
 ```
 molpack/                 # the main package, no MCP knowledge
@@ -29,9 +43,8 @@ molpack_mcp/             # sibling package, the Provider
 └── src/molpack_mcp/__init__.py
 ```
 
-This keeps the MCP integration out of your main package's import graph. Users who don't run MCP never touch `molpack_mcp`.
-
-For small packages it's fine to keep `molpack_mcp/` inside the same repo as a separate `[project.optional-dependencies]` install target, or as a second package in a workspace.
+That keeps MCP out of your main package's import graph for consumers who
+never run an MCP server.
 
 ## Step 3 — Write the Provider class
 
@@ -75,7 +88,7 @@ A few things worth calling out:
 - **Earned its slot.** `list_pack_targets` reads runtime state (the on-disk catalog) — exactly the kind of question introspection over `molpack` source cannot answer. Stable signature, read-only, every-session frequency, single-shot answer: passes [the four conditions](../concepts/provider-design.md). A `pack_box(spec, workdir)` tool that *runs* the packing would fail condition 2 (mutating, file-writing) and belongs in upstream's API/CLI instead.
 - **Class-level `name = "molpack"`.** This is both the dedup key and the recommended mount prefix.
 - **`ToolAnnotations(readOnlyHint=True)`.** Required — molmcp will refuse to start the server otherwise. Use `destructiveHint=True` if your tool legitimately mutates external state (rare; most stateful-query tools are read-only by design).
-- **Lazy import of the upstream module.** Don't `import molpack` at module top — when molmcp's auto-discovery instantiates your Provider, you want it cheap. Defer the import to the tool body so a missing or broken upstream dep produces a clean per-call error instead of crashing server startup. (For a production-grade pattern that turns the whole provider into a *lazy facade* — probing the dep at `register()` time and warning cleanly if it's absent — see how `MolqProvider` and `MolexpProvider` are wired in `src/molmcp/providers/`.)
+- **Lazy import of the upstream module.** Don't `import molpack` at module top — when molmcp's auto-discovery instantiates your Provider, you want it cheap. Defer the import to the tool body so a missing or broken upstream dep produces a clean per-call error instead of crashing server startup. First-party providers under `src/molmcp/providers/` (molexp, molq) probe the optional upstream package at `register()` the same way.
 - **Plain-dict return.** Don't return Pydantic models from tool functions; some MCP clients serialize them as JSON-strings instead of dicts. Stick to primitives, lists, dicts.
 
 ## Step 4 — Register the entry point

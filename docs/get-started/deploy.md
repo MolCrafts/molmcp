@@ -69,16 +69,20 @@ provider's existence is justified against the four-condition rule — see
 
 === "molq (`MolqProvider`)"
 
-    Reads `~/.molq/jobs.db`. One read-only tool:
+    In-tree at `src/molmcp/providers/molq/`. Lazy-imports `molq`.
 
-    - `molq_list_jobs` — local-DB job query, with optional cluster
-      filter and a switch for including terminal-state records.
+    - `molq_list_jobs` — job-store dashboard (optional cluster filter,
+      include terminal records).
+    - `molq_get_job` — single job status (refresh + transitions).
+    - `molq_job_logs` — stdout/stderr (tail; no follow).
+    - `molq_list_destinations` — profiles + SSH Host aliases.
+    - `molq_list_queue` — live scheduler queue snapshot.
+    - `molq_submit_job` / `molq_cancel_job` — **opt-in** via
+      `MOLMCP_MOLQ_SUBMIT=1` or `MolqProvider(allow_submit=True)`.
+      Submit is argv-only and non-blocking; poll with `get_job`.
 
-    Anything else (`molq_submit`, `molq_cancel`, `molq_cleanup`,
-    `register_cluster`, `refresh_cluster`, `get_job_transitions`, …) is
-    deliberately omitted — those mutate state and belong in the `molq`
-    CLI itself, which the agent can invoke directly after discovering
-    `molq`'s API.
+    Cleanup, watch/daemon, full resource objects, and batch loops stay on
+    the molq CLI / agent scripts.
 
 === "molexp (`MolexpProvider`)"
 

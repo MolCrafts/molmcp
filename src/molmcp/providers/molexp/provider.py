@@ -178,26 +178,44 @@ class MolexpProvider:
                 "violations": findings.items,
             }
 
+        def _scaffold_result(fn, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            """Run a scaffold helper; return structured errors instead of tracebacks."""
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001 — surface to the agent cleanly
+                return {
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+
         @mcp.tool(annotations=scaffold)
         def molexp_materialize_workspace(
             path: str,
             name: str = "workspace",
         ) -> dict[str, Any]:
-            """Create or open a molexp Workspace at ``path`` (idempotent)."""
+            """Create or open a top-level molexp Workspace at ``path`` (idempotent).
+
+            Do **not** use this to create a project under the session workspace —
+            use ``molexp_add_project`` instead. Nesting is rejected.
+            """
             from .scaffold import materialize_workspace
 
-            return materialize_workspace(path, name=name)
+            return _scaffold_result(materialize_workspace, path, name=name)
 
         @mcp.tool(annotations=scaffold)
         def molexp_add_project(
             name: str,
             workspace: str | None = None,
         ) -> dict[str, Any]:
-            """Create-or-get a project under the workspace (idempotent on slug)."""
+            """Create-or-get a project under the workspace (idempotent on slug).
+
+            Prefer this (or omit workspace to use MOLEXP_WORKSPACE) when the user
+            asks to create a project.
+            """
             from .scaffold import add_project
 
             ws = self._get_workspace(workspace)
-            return add_project(ws.resolve(), name)
+            return _scaffold_result(add_project, ws.resolve(), name)
 
         @mcp.tool(annotations=scaffold)
         def molexp_add_experiment(
@@ -209,7 +227,7 @@ class MolexpProvider:
             from .scaffold import add_experiment
 
             ws = self._get_workspace(workspace)
-            return add_experiment(ws.resolve(), project_id, name)
+            return _scaffold_result(add_experiment, ws.resolve(), project_id, name)
 
         @mcp.tool(annotations=scaffold)
         def molexp_create_run(
@@ -222,7 +240,9 @@ class MolexpProvider:
             from .scaffold import create_run
 
             ws = self._get_workspace(workspace)
-            return create_run(ws.resolve(), project_id, experiment_id, params=params)
+            return _scaffold_result(
+                create_run, ws.resolve(), project_id, experiment_id, params=params
+            )
 
         @mcp.tool(annotations=read_only)
         def molexp_validate_workflow(source: str) -> dict[str, Any]:

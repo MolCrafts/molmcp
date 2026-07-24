@@ -167,10 +167,15 @@ def _mount_provider(parent: FastMCP, provider: Provider, *, explicit: bool) -> b
 
 def _default_instructions() -> str:
     return (
-        "MolCrafts context server. Start with molcrafts_explore for a task, "
-        "or molcrafts_search then molcrafts_describe. Use only exact refs from "
-        "results. A source symbol is evidence, never an executable capability; "
-        "only registry items with executable=true may be handed to Molexp."
+        "MolMCP injects knowledge pages into your context (OKF-style). "
+        "Codegraph is only an index — do not treat scores as truth.\n"
+        "1) molcrafts_packages — read package directory summaries; choose sources\n"
+        "2) molcrafts_outline(source=…, path?=) — read module directory page\n"
+        "3) molcrafts_open(ref) — inject symbol page before writing code\n"
+        "4) molcrafts_compose(task|refs, budget) — multi-page pack when needed\n"
+        "search/suggest are index helpers only. "
+        "Only executable=true may be handed to Molexp. "
+        "ok=false / SYMBOL_NOT_FOUND means do not invent the API."
     )
 
 

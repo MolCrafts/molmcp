@@ -785,10 +785,23 @@ class CollectionIndex:
     def _selected_source_names(self, sources: Sequence[str] | None) -> list[str]:
         if sources is None:
             return list(self._sources)
-        selected = list(dict.fromkeys(str(name) for name in sources))
-        unknown = sorted(set(selected) - self._sources.keys())
+        from molmcp.guide import resolve_source_alias
+
+        selected: list[str] = []
+        unknown: list[str] = []
+        for raw in sources:
+            name = str(raw)
+            if name in self._sources:
+                selected.append(name)
+                continue
+            resolved = resolve_source_alias(name, self._sources)
+            if resolved is not None:
+                selected.append(resolved)
+            else:
+                unknown.append(name)
+        selected = list(dict.fromkeys(selected))
         if unknown:
-            raise ValueError(f"unknown sources: {', '.join(unknown)}")
+            raise ValueError(f"unknown sources: {', '.join(sorted(set(unknown)))}")
         return sorted(selected)
 
     def _snapshot_id(self, binding: SourceBinding, query: Any) -> str:
