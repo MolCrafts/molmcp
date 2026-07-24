@@ -494,7 +494,21 @@ def test_environment_module_has_no_execution_or_forbidden_imports():
 
 
 def test_environment_module_has_no_hardcoded_family_names():
+    """Discovery must not hardcode a positive family allowlist.
+
+    An intentional *exclude* set for non-public API distributions (e.g. molrs)
+    is allowed — strip that constant and comments before scanning.
+    """
+    import re
+
     source = Path(environment.__file__).read_text(encoding="utf-8")
+    source = re.sub(
+        r"_NON_PYTHON_API_DISTRIBUTIONS[^=]*=\s*frozenset\(\s*\{.*?\}\s*\)",
+        "",
+        source,
+        flags=re.DOTALL,
+    )
+    source = re.sub(r"#.*?$", "", source, flags=re.MULTILINE)
     forbidden = {"molpy", "molpack", "molq", "molrs", "molvis", "molexp"}
     present = {name for name in forbidden if name in source}
     assert present == set(), f"no hardcoded family allowlist allowed; found {present}"
