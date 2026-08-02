@@ -175,7 +175,10 @@ def _default_instructions() -> str:
         "4) molcrafts_compose(task|refs, budget) — multi-page pack when needed\n"
         "search/suggest are index helpers only. "
         "Only executable=true may be handed to Molexp. "
-        "ok=false / SYMBOL_NOT_FOUND means do not invent the API."
+        "ok=false / SYMBOL_NOT_FOUND means do not invent the API.\n"
+        "Scope: when MOLMCP_SOURCES is set (comma-separated package names), "
+        "packages/outline/open/search/compose are restricted to that allowlist; "
+        "out-of-scope sources return SOURCE_NOT_ALLOWED — do not invent those APIs."
     )
 
 
