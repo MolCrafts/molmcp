@@ -2,7 +2,7 @@
 site_name = "molmcp"
 site_description = "The MCP foundation for the MolCrafts ecosystem"
 site_author = "Roy Kid"
-site_url = "https://molcrafts.github.io/molmcp/"
+site_url = "https://docs.molcrafts.org/molmcp/"
 copyright = """
 Copyright &copy; 2026 MolCrafts contributors
 """
@@ -23,6 +23,7 @@ nav = [
         { "Middleware" = "concepts/middleware.md" },
         { "Expose a package" = "guides/expose-a-package.md" },
         { "Write a Provider" = "guides/write-a-provider.md" },
+        { "MolVis workbench" = "guides/molvis-workbench.md" },
         { "Security" = "guides/security.md" },
     ] },
     { "Reference" = [

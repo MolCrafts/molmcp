@@ -42,8 +42,7 @@ first-party providers (`src/molmcp/providers/<name>/`), and only when
    no `shell=True`.
 4. **Annotations** — `readOnlyHint=False`, `destructiveHint=True`; no
    long blocking wait (agent polls with a read tool).
-5. **Documented blast radius** — this page + changelog updated with the
-   tool.
+5. **Documented blast radius** — this page updated with the tool.
 
 Batch sweeps, open-ended resource mirrors, and reverse-control of remote
 agents stay out of MCP.
@@ -89,6 +88,71 @@ Upstream: lazy `import molq` (package `molcrafts-molq`).
 - Cleanup / watch / daemon as default tools
 - Nerve ingest or reverse-control from the MCP process
 - Batch submit loops (agent script or molexp orchestration)
+
+### molvis — `src/molmcp/providers/molvis/`
+
+Entry point: `molvis = "molmcp.providers.molvis:MolvisProvider"`.
+Upstream: lazy `import molvis` (package `molcrafts-molvis`) — the
+MolCrafts molecular viewer: a Python-driven 3D structure view that
+renders in a browser page and streams the user's interactions back.
+
+This provider is a **workbench**, not a tool catalog. It keeps a live
+molvis `Stage` — the Python object that controls one viewer — alive
+inside the `molmcp serve` process and lends the agent a Python session
+bound to it. That is precisely the state discovery cannot reach:
+indexing sees the *source* of `draw_frame`, never the *running* stage,
+the structure object built two calls ago, or the click the user just
+made on the canvas.
+
+| Tool | Kind | Role |
+|------|------|------|
+| `molvis_open` | Session lifecycle | Create a stage plus its Python namespace; returns `session_id` and the `connection_url` the user opens in a browser. A duplicate id is a structured error, never a silent attach |
+| `molvis_close` | Session lifecycle | Close the stage, drop the namespace, remove the session |
+| `molvis_list_sessions` | Read-only | Live sessions, as molvis's own session summary reports them |
+| `molvis_exec` | Session write | Run agent-written Python in that namespace (`stage` prebound, bindings persist across calls); returns captured stdout, the last expression's `repr`, or a structured traceback |
+| `molvis_poll_events` | Read-only | Pull viewer events (selection changed, mode changed, …) after a cursor; payloads verbatim, with a `truncated` flag when history was evicted |
+
+**No invented API.** All five are generic primitives — session
+lifecycle, code execution, event pull — and not one of them names a
+molecular concept. The vocabulary the agent uses *inside* `molvis_exec`
+is molvis's and molpy's own public Python API (`stage.draw_frame(mol)`,
+`stage.get_selected()`, `mp.parser.parse_molecule(…)`), learned through
+[discovery](discovery.md) and never mirrored here. Upstream adds,
+renames, or retires a method and molmcp changes by zero lines. Wrapper
+tools of every granularity are refused for that reason: composite
+(`show_smiles` = parse + embed + draw), 1:1 (`draw`, `clear`), and an
+agent-facing JSON-RPC `call` surface alike — each buys convenience with
+a second copy of the truth that molmcp would then have to keep in sync.
+
+**Trust model.** `molvis_exec` runs unsandboxed in a server the user
+started on their own machine, so a session carries the trust level of a
+Jupyter kernel — no gating machinery, no env switches, all five tools
+always available. (It is not a [controlled
+mutation](#controlled-mutations) in the sense above: it is a code
+channel, not a frozen-signature write tool.)
+
+**Four parties, one session.** The human operates the *display* surface
+— looking at and clicking the browser canvas molvis renders; the agent
+operates the *code* surface — the in-process Python session where the
+structure object is the single source of truth and the canvas is only
+its projection. The two wills meet asynchronously in session state: a
+human selection reaches the agent through `molvis_poll_events`, an agent
+edit reaches the human through the next redraw. The canvas↔code wire
+protocol is molvis's internal business; molmcp neither touches nor
+exposes it.
+
+**Out of MCP for molvis**
+
+- Named wrappers of any granularity, and a raw `send_cmd` / JSON-RPC tool surface
+- Sandboxing, permission gates, or env-var opt-ins for `molvis_exec`
+- Attaching to a viewer session started outside this process
+- The end-to-end dialogue playbook — it lives out-of-tree, see
+  [MolVis workbench](../guides/molvis-workbench.md)
+
+How to fly these five — build, draw, poll, read the selection, edit,
+redraw — is taught once in
+**[MolVis workbench](../guides/molvis-workbench.md)**; every API inside
+the loop belongs to discovery.
 
 ### Other domain providers
 

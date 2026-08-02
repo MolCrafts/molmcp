@@ -53,8 +53,8 @@ dev = [
   "tox>=4.23",
 ]
 docs = [
-    "zensical>=0.0.45",
-    "molcrafts-zensical-theme>=0.1.0",
+    "zensical>=0.0.51",
+    "molcrafts-zensical-theme>=0.2.3",
 ]
 
 [project.scripts]
@@ -63,13 +63,13 @@ molmcp = "molmcp.cli:main"
 [project.entry-points."molmcp.providers"]
 molexp = "molmcp.providers.molexp:MolexpProvider"
 molq = "molmcp.providers.molq:MolqProvider"
+molvis = "molmcp.providers.molvis:MolvisProvider"
 
 [project.urls]
 Homepage = "https://github.com/MolCrafts/molmcp"
-Documentation = "https://molcrafts.github.io/molmcp/"
+Documentation = "https://docs.molcrafts.org/molmcp/"
 Repository = "https://github.com/MolCrafts/molmcp.git"
 Issues = "https://github.com/MolCrafts/molmcp/issues"
-Changelog = "https://github.com/MolCrafts/molmcp/blob/master/CHANGELOG.md"
 
 [build-system]
 requires = ["setuptools>=42", "wheel"]

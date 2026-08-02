@@ -291,7 +291,7 @@ def _classify(
     if is_included:
         identified_by += ("override",)
 
-    top_level = _top_level(dist, dist_name)
+    top_level = _top_level(dist, dist_name, editable, direct_url)
     if is_self:
         spec = f"pkg:{top_level}"
     else:
@@ -360,14 +360,91 @@ def _is_editable(direct_url: dict[str, object] | None) -> bool:
     return isinstance(dir_info, dict) and dir_info.get("editable") is True
 
 
-def _top_level(dist: importlib.metadata.Distribution, dist_name: str) -> str:
-    raw = dist.read_text("top_level.txt")
-    if raw:
-        for line in raw.splitlines():
-            stripped = line.strip()
-            if stripped:
-                return stripped
+def _top_level(
+    dist: importlib.metadata.Distribution,
+    dist_name: str,
+    editable: bool,
+    direct_url: dict[str, object] | None,
+) -> str:
+    """Resolve the import top-level package name of a distribution.
+
+    ``top_level.txt`` wins when present. PEP 660 editable wheels usually omit
+    it, and the distribution name is then not a reliable guess (a dist named
+    ``acme-widget`` may import as ``widget``), so an editable install with a
+    resolvable checkout is probed on disk before falling back to the guess.
+
+    Args:
+        dist: The distribution whose metadata is read (never imported).
+        dist_name: The distribution name as reported by its metadata.
+        editable: ``True`` when ``direct_url`` marks a PEP 660 editable install.
+        direct_url: The parsed ``direct_url.json`` mapping, or ``None``.
+
+    Returns:
+        The top-level package name; ``dist_name`` with ``-`` folded to ``_``
+        when neither metadata nor the checkout yields a better answer.
+    """
+    declared = _declared_top_level(dist)
+    if declared is not None:
+        return declared
+    if editable and direct_url is not None:
+        checkout = _url_to_path(direct_url.get("url"))
+        if checkout is not None:
+            probed = _probe_top_level(checkout, dist_name)
+            if probed is not None:
+                return probed
     return dist_name.replace("-", "_")
+
+
+def _declared_top_level(dist: importlib.metadata.Distribution) -> str | None:
+    raw = dist.read_text("top_level.txt")
+    if not raw:
+        return None
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return None
+
+
+def _probe_top_level(checkout: Path, dist_name: str) -> str | None:
+    """Derive a top-level package name from an editable checkout on disk.
+
+    ``<checkout>/src`` (src layout) is probed before ``<checkout>`` itself
+    (flat layout), so a repo root full of ``tests``/``docs`` packages never
+    shadows the real ``src`` package.
+    """
+    for root in (checkout / "src", checkout):
+        selected = _select_top_level(_package_dir_names(root), dist_name)
+        if selected is not None:
+            return selected
+    return None
+
+
+def _package_dir_names(root: Path) -> tuple[str, ...]:
+    """Return the sorted names of ``root`` subdirectories holding ``__init__.py``."""
+    try:
+        entries = sorted(entry.name for entry in root.iterdir() if entry.is_dir())
+    except OSError:  # unreadable / missing checkout: nothing to probe.
+        return ()
+    return tuple(name for name in entries if (root / name / "__init__.py").is_file())
+
+
+def _select_top_level(candidates: tuple[str, ...], dist_name: str) -> str | None:
+    """Pick the package directory that plausibly *is* the distribution.
+
+    A candidate whose normalized name is contained in the normalized
+    distribution name wins (``widget`` in ``acme-widget``); otherwise a lone
+    candidate is accepted. Anything ambiguous returns ``None`` so the caller
+    keeps its distribution-name fallback.
+    """
+    normalized_dist = _normalize(dist_name)
+    matches = [name for name in candidates if _normalize(name) in normalized_dist]
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        exact = [name for name in matches if _normalize(name) == normalized_dist]
+        return exact[0] if len(exact) == 1 else None
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _foreign_package_dir(

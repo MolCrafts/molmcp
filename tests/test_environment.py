@@ -353,6 +353,42 @@ def test_foreign_malformed_direct_url_is_skipped_others_enumerate(
     assert any("rotten" in str(entry).lower() for entry in report.skipped)
 
 
+def test_foreign_editable_src_layout_without_top_level_txt_finds_real_package(
+    tmp_path, monkeypatch
+):
+    """PEP 660 editable installs ship no ``top_level.txt``.
+
+    The import package name is then NOT derivable from the distribution name:
+    ``molcrafts-molvis`` imports as ``molvis``. Probing only the dist-name
+    guess (``molcrafts_molvis``) drops a perfectly importable checkout as
+    "no importable package directory found"; the real package directory must
+    be located from the editable checkout itself.
+    """
+    monkeypatch.delenv("MOLMCP_DISCOVER", raising=False)
+
+    checkout = tmp_path / "molvis"
+    package_dir = _make_pkg(checkout, "src", "molvis")
+
+    site_packages = tmp_path / "env" / "lib" / "python3.12" / "site-packages"
+    site_packages.mkdir(parents=True)
+    _write_dist(
+        site_packages,
+        "molcrafts-molvis",
+        top_level=None,  # PEP 660 editable wheels omit top_level.txt
+        direct_url=_editable_url(checkout),
+    )
+
+    report = discover_sources(str(site_packages))
+    by_dist = _by_distribution(report)
+
+    assert not any("molvis" in str(entry).lower() for entry in report.skipped)
+    assert "molcrafts-molvis" in by_dist
+    source = by_dist["molcrafts-molvis"]
+    assert "editable" in source.identified_by
+    assert _spec_path(source).resolve() == package_dir.resolve()
+    assert source.spec == f"local:{package_dir.resolve()}"
+
+
 # --------------------------------------------------------------------------- #
 # Self-env — monkeypatched distributions + resolver acceptance (Task 3).
 # --------------------------------------------------------------------------- #
