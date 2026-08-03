@@ -32,10 +32,21 @@ canvas↔代码(molvis 内部 WS 协议,molmcp 不碰不暴露)、agent↔代码
 真相单源:mol 在代码层,canvas 只是投影;两个意志经会话状态异步汇合。
 附着外部已启动会话不在设计内(out of scope,非分期承诺)。
 
-molvis 侧配套缺口(molvis 另 spec,molmcp 不代偿):选区↔绘制行号契约
-钉死、`NotConnectedError` 替代未连接时的 10s 阻塞超时、serve 环境构造
-回归。详见 `.claude/specs/molvis-viewer-session.md`(spec 关闭后本条为
-唯一存续记录)。
+**选区↔行号契约:成立**(2026-08-03 对 molvis 前端源码核实,推翻了
+spec 期的「未定,阻塞局部编辑」判断)。三处独立证据:`entity_source.ts:196`
+建原子时 `atomId: index`;`selection_manager.getSelectedBondIds` 注释
+「和 atom ids 一样,都是当前 frame block 的行号」;`commands/selection.ts`
+的 `getSelectedCommand` 直接以选中 id 作行号切片(「sliced by row index」)。
+故 **clear + 单次 `draw_frame(mol)` 后,选区 `atom_ids` 即
+`list(mol.atoms)` 下标**,基于选区的局部图编辑今天就能做。前提是那条
+clear 纪律:不 clear 连画两次,live frame 累加,行号指向合并帧。
+
+molvis 侧配套缺口(molvis 另 spec,molmcp 不代偿):① 上述行号契约**缺
+回归保护** —— `stage/tests/` 无 `getSelectedCommand` 行号语义测试,欠
+一条 pin test(不是欠 API);② `NotConnectedError` 替代未连接时的 10s
+阻塞超时;③ serve 环境构造回归;④ EventBus 无通配订阅,journal 只能
+列举已知事件名(`session.py SUBSCRIBED_EVENTS` 是唯一在册的上游词汇)。
+人工验收剧本:`../molvis-agent-e2e/PLAYBOOK.md`(out-of-tree)。
 
 ## 2026-07-22 — Molq provider in molmcp
 
