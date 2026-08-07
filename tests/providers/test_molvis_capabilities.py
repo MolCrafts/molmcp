@@ -225,3 +225,32 @@ class TestNativeExtensionHonesty:
             assert [mod.changed_since_start for mod in mapped] == [False]
         finally:
             sys.modules.pop(name, None)
+
+
+class TestRefreshRefusesStdlib:
+    """Purging a stdlib module out of a live process is not a refresh.
+
+    Every module that already did ``import json`` keeps the old module
+    object, while a re-import installs a new one — so the exception classes
+    stop matching and ``except json.JSONDecodeError`` silently misses. It
+    cost this suite a genuinely confusing cross-file failure, and on a live
+    server it would corrupt the plane's own error handling.
+    """
+
+    def test_stdlib_modules_are_left_alone(self):
+        before = sys.modules["json"]
+
+        report = refresh_modules(("json",))
+
+        assert sys.modules["json"] is before
+        assert "json" not in report.purged
+        assert "json" in report.refused
+
+    def test_refusing_stdlib_does_not_block_a_real_package(self, synthetic_package):
+        report = refresh_modules((synthetic_package, "json"))
+
+        assert synthetic_package in report.purged
+        assert report.refused == ("json",)
+
+    def test_a_normal_refresh_reports_nothing_refused(self, synthetic_package):
+        assert refresh_modules((synthetic_package,)).refused == ()

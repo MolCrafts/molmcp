@@ -16,6 +16,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -528,6 +529,23 @@ class TestMolvisCapabilities:
             _call(server, "capabilities", {"session_id": "nope"})
 
 
+@pytest.fixture
+def throwaway_package(tmp_path: Path) -> str:
+    """An importable package this test may safely drop from sys.modules."""
+    name = "molmcp_refresh_probe"
+    pkg = tmp_path / name
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("VALUE = 1\n")
+    sys.path.insert(0, str(tmp_path))
+    __import__(name)
+    try:
+        yield name
+    finally:
+        sys.path.remove(str(tmp_path))
+        for mod in [m for m in list(sys.modules) if m.startswith(name)]:
+            del sys.modules[mod]
+
+
 class TestMolvisRefresh:
     def test_refreshing_an_unloaded_package_is_a_no_op(self, server: Any) -> None:
         report = _call(server, "refresh", {"packages": ["molmcp_absent_fixture"]})
@@ -538,12 +556,30 @@ class TestMolvisRefresh:
         report = _call(server, "refresh", {"packages": ["molmcp_absent_fixture"]})
         assert report["restart_required"] is False
 
-    def test_purges_a_loaded_pure_python_package(self, server: Any) -> None:
-        # `json` stands in for any pure-Python package: importable, already
-        # loaded, and safe to drop from the cache.
+    def test_purges_a_loaded_pure_python_package(
+        self, server: Any, throwaway_package: str
+    ) -> None:
+        report = _call(server, "refresh", {"packages": [throwaway_package]})
+        assert throwaway_package in report["purged"]
+
+    def test_refuses_to_purge_the_standard_library(self, server: Any) -> None:
+        """This used to reach for `json` as a convenient stand-in.
+
+        Dropping a stdlib module does not reload it for anyone: modules that
+        already imported it keep the old object while a re-import installs a
+        new one, so their exception classes stop matching. It broke
+        `except json.JSONDecodeError` across the rest of this suite.
+        """
+        import json
+
+        before = sys.modules["json"]
+
         report = _call(server, "refresh", {"packages": ["json"]})
-        assert "json" in report["purged"]
-        import json as _reimported  # noqa: F401 — restore for later tests
+
+        assert sys.modules["json"] is before
+        assert report["purged"] == []
+        assert report["refused"] == ["json"]
+        assert json.loads("{}") == {}
 
     def test_defaults_to_the_molecular_stack(self, server: Any) -> None:
         report = _call(server, "refresh", {})

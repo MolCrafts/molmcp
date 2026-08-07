@@ -74,11 +74,13 @@ class RefreshReport:
         native: Compiled extensions still mapped under the same prefixes.
             Anything with ``changed_since_start`` set needs a server
             restart — this call could not and did not update it.
+        refused: Standard-library prefixes this call declined to touch.
         restart_required: True when any ``native`` entry changed on disk.
     """
 
     purged: tuple[str, ...]
     native: tuple[NativeModule, ...]
+    refused: tuple[str, ...] = ()
 
     @property
     def restart_required(self) -> bool:
@@ -88,8 +90,14 @@ class RefreshReport:
         return {
             "purged": list(self.purged),
             "native": [mod.as_dict() for mod in self.native],
+            "refused": list(self.refused),
             "restart_required": self.restart_required,
         }
+
+
+#: Never purged — see :func:`refresh_modules` for why re-importing one of
+#: these corrupts the running process rather than refreshing it.
+_STDLIB = sys.stdlib_module_names
 
 
 def _matches(name: str, prefixes: tuple[str, ...]) -> bool:
@@ -148,28 +156,41 @@ def refresh_modules(prefixes: tuple[str, ...]) -> RefreshReport:
     the session ends up straddling two versions of it — rebuild those
     objects afterwards, or open a new session.
 
+    Standard-library prefixes are refused rather than purged. Dropping one
+    does not reload it for anybody: every module that already imported it
+    keeps the old module object while a re-import installs a new one, so
+    the two stop sharing classes and an ``except json.JSONDecodeError``
+    elsewhere in the process quietly stops matching. That is corruption
+    wearing a refresh's clothes, and this plane's own error handling is
+    among the things it breaks.
+
     Args:
         prefixes: Top-level module names to refresh, e.g. ``("molpy",)``.
 
     Returns:
         A :class:`RefreshReport`. ``restart_required`` is the field that
         matters: when it is set, some of the code the agent is about to
-        exercise is still the old build.
+        exercise is still the old build. ``refused`` names any stdlib
+        prefix that was asked for and skipped.
     """
+    refused = tuple(sorted(p for p in prefixes if p.split(".")[0] in _STDLIB))
+    prefixes = tuple(p for p in prefixes if p not in refused)
     native = native_modules(prefixes)
     native_names = {mod.module for mod in native}
 
-    purged = tuple(
-        sorted(
-            name
-            for name in list(sys.modules)
-            if _matches(name, prefixes) and name not in native_names
+    purged: tuple[str, ...] = ()
+    if prefixes:
+        purged = tuple(
+            sorted(
+                name
+                for name in list(sys.modules)
+                if _matches(name, prefixes) and name not in native_names
+            )
         )
-    )
     for name in purged:
         sys.modules.pop(name, None)
     importlib.invalidate_caches()
 
     # Re-read after purging: a package whose __init__ is pure Python is gone
     # now, but its mapped extension submodule is still there to report.
-    return RefreshReport(purged=purged, native=native)
+    return RefreshReport(purged=purged, native=native, refused=refused)
