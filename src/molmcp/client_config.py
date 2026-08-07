@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -81,10 +83,40 @@ def resolve_plane_toggles(
 
 
 def _molmcp_command() -> list[str]:
-    """Prefer ``molmcp`` on PATH; fall back to ``python -m molmcp``."""
-    if shutil.which("molmcp"):
-        return ["molmcp"]
-    return ["python", "-m", "molmcp"]
+    """The command a *client* can launch, as an absolute path.
+
+    Emitting the bare name assumed the client would resolve it on PATH.
+    Desktop MCP hosts are started by the desktop session, whose PATH is the
+    system default, so a virtualenv's bin directory is not on it — the
+    config worked in the terminal that generated it and nowhere else.
+
+    The fallback runs this very interpreter rather than ``python``, which on
+    macOS frequently does not exist at all.
+
+    Symlinks are deliberately left alone: ``molmcp`` is often a shim, and
+    resolving through it would pin a path the installer may replace.
+    """
+    resolved = shutil.which("molmcp")
+    if resolved:
+        return [os.path.abspath(resolved)]
+    return [sys.executable, "-m", "molmcp"]
+
+
+def _toml_string(value: str) -> str:
+    """Quote a TOML basic string.
+
+    A Windows path is full of backslashes, and every one of them is an
+    escape inside a basic string: hand-quoting produced a file no TOML
+    parser would read back.
+    """
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+    return f'"{escaped}"'
 
 
 def serve_argv(plane: str) -> list[str]:
@@ -102,10 +134,10 @@ def render_grok_toml(toggle: PlaneToggle) -> str:
     for plane in toggle.all_planes:
         on = plane in toggle.enabled
         lines.append(f"[mcp_servers.{plane}]")
-        lines.append(f'command = "{cmd[0]}"')
+        lines.append(f"command = {_toml_string(cmd[0])}")
         # args: rest of command + serve plane
         args = cmd[1:] + ["serve", plane]
-        args_lit = ", ".join(f'"{a}"' for a in args)
+        args_lit = ", ".join(_toml_string(a) for a in args)
         lines.append(f"args = [{args_lit}]")
         lines.append(f"enabled = {'true' if on else 'false'}")
         lines.append("")
