@@ -114,17 +114,17 @@ made on the canvas.
 
 | Tool | Kind | Role |
 |------|------|------|
-| `molvis_open` | Session lifecycle | Create a stage plus its Python namespace; returns `session_id` and the `connection_url` the user opens in a browser. A duplicate id is a structured error, never a silent attach |
-| `molvis_close` | Session lifecycle | Close the stage, drop the namespace, remove the session |
-| `molvis_list_sessions` | Read-only | Live sessions, as molvis's own session summary reports them |
-| `molvis_exec` | Session write | Run agent-written Python in that namespace (`stage` prebound, bindings persist across calls); returns captured stdout, the last expression's `repr`, or a structured traceback |
-| `molvis_poll_events` | Read-only | Pull viewer events (selection changed, mode changed, …) after a cursor; payloads verbatim, with a `truncated` flag when history was evicted |
-| `molvis_capabilities` | Read-only | The live stage's public surface, read off the object: name, kind (`method` / `property` / `attribute`), signature, one-line summary — plus which build of molvis / molpy / molrs is loaded |
-| `molvis_refresh` | Session write | Drop edited pure-Python packages from this process's module cache so the next `exec` re-reads them, and report every mapped compiled extension that a rebuild has left stale |
+| `open` | Session lifecycle | Create a stage plus its Python namespace; returns `session_id` and the `connection_url` the user opens in a browser. A duplicate id is a structured error, never a silent attach |
+| `close` | Session lifecycle | Close the stage, drop the namespace, remove the session |
+| `list_sessions` | Read-only | Live sessions, as molvis's own session summary reports them |
+| `exec` | Session write | Run agent-written Python in that namespace (`stage` prebound, bindings persist across calls); returns captured stdout, the last expression's `repr`, or a structured traceback |
+| `poll_events` | Read-only | Pull viewer events (selection changed, mode changed, …) after a cursor; payloads verbatim, with a `truncated` flag when history was evicted |
+| `capabilities` | Read-only | The live stage's public surface, read off the object: name, kind (`method` / `property` / `attribute`), signature, one-line summary — plus which build of molvis / molpy / molrs is loaded |
+| `refresh` | Session write | Drop edited pure-Python packages from this process's module cache so the next `exec` re-reads them, and report every mapped compiled extension that a rebuild has left stale |
 
 **No invented API.** All seven are generic primitives — session
 lifecycle, code execution, event pull, runtime reflection — and not one
-of them names a molecular concept. The vocabulary the agent uses *inside* `molvis_exec`
+of them names a molecular concept. The vocabulary the agent uses *inside* `exec`
 is molvis's and molpy's own public Python API (`stage.draw_frame(mol)`,
 `stage.get_selected()`, `mp.parser.parse_molecule(…)`), learned through
 [discovery](discovery.md) and never mirrored here. Upstream adds,
@@ -134,19 +134,19 @@ tools of every granularity are refused for that reason: composite
 agent-facing JSON-RPC `call` surface alike — each buys convenience with
 a second copy of the truth that molmcp would then have to keep in sync.
 
-`molvis_capabilities` is the same rule seen from the other side, not an
+`capabilities` is the same rule seen from the other side, not an
 exception to it. It defines no vocabulary — it reflects whatever the
 stage happens to expose, so upstream still changes molmcp by zero lines.
 What it adds is the part [discovery](discovery.md) structurally cannot
 reach: a static index describes the source on disk, while an agent is
 driving an object in *this* process. Whether a name is a property or a
 method, and whether the loaded build is even the one on disk, are facts
-about the running process. `molvis_refresh` owns the other half of that —
+about the running process. `refresh` owns the other half of that —
 and reports what it could not refresh, because a refresh that quietly
 leaves a rebuilt `.so` mapped makes an agent test the old code and
 report the result as the new behaviour.
 
-**Trust model.** `molvis_exec` runs unsandboxed in a server the user
+**Trust model.** `exec` runs unsandboxed in a server the user
 started on their own machine, so a session carries the trust level of a
 Jupyter kernel — no gating machinery, no env switches, all seven tools
 always available. (It is not a [controlled
@@ -158,7 +158,7 @@ channel, not a frozen-signature write tool.)
 operates the *code* surface — the in-process Python session where the
 structure object is the single source of truth and the canvas is only
 its projection. The two wills meet asynchronously in session state: a
-human selection reaches the agent through `molvis_poll_events`, an agent
+human selection reaches the agent through `poll_events`, an agent
 edit reaches the human through the next redraw. The canvas↔code wire
 protocol is molvis's internal business; molmcp neither touches nor
 exposes it.
@@ -166,7 +166,7 @@ exposes it.
 **Out of MCP for molvis**
 
 - Named wrappers of any granularity, and a raw `send_cmd` / JSON-RPC tool surface
-- Sandboxing, permission gates, or env-var opt-ins for `molvis_exec`
+- Sandboxing, permission gates, or env-var opt-ins for `exec`
 - Attaching to a viewer session started outside this process
 - The end-to-end dialogue playbook — it lives out-of-tree, see
   [MolVis workbench](../guides/molvis-workbench.md)

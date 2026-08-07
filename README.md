@@ -87,7 +87,7 @@ uv run pytest -v
 ## Design rules
 
 1. **Multi-link on-demand** — one process = one plane = one MCP server name.
-2. **Bare tool names** — plane id is the server name; tools are `open`, not `molvis_open`.
+2. **Bare tool names** — plane id is the server name; tools are `open`, not `open`.
 3. **No science tool mirror** — no `show_smiles` / `draw_dopamine`; discovery + Python.
 4. **Providers** register via `molmcp.providers` entry points and are served with
    `molmcp serve <name>`.

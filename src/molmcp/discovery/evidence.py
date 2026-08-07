@@ -54,7 +54,7 @@ def node_brief(node: Node) -> dict:
 
 
 def node_detail(node: Node) -> dict:
-    """Full node view for ``molmcp_describe_symbol``."""
+    """Full node view for a single-symbol page."""
     detail = node_brief(node)
     detail.update(
         docstring=node.docstring,
@@ -139,7 +139,7 @@ class EvidenceBuilder:
         }
         if not matches:
             payload["unresolved_hint"] = (
-                "No symbols matched. Try molmcp_outline to see the module "
+                "No symbols matched. Try `outline` to see the module "
                 "structure, or different keywords."
             )
         return payload

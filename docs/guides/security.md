@@ -30,7 +30,7 @@ This catches the common case (`"../../../etc/passwd"`). It does **not** protect 
 
 ### Token blow-ups
 
-`ResponseLimitMiddleware` (256 KB default) truncates oversized text responses with a marker. Without this, a broad `molmcp_search_symbols` or `molmcp_outline` call against a large MolCrafts package could dump megabytes into the agent's context, eating the token budget.
+`ResponseLimitMiddleware` (256 KB default) truncates oversized text responses with a marker. Without this, a broad `search` or `outline` call against a large MolCrafts package could dump megabytes into the agent's context, eating the token budget.
 
 Configurable via `response_limit_bytes`. Disable per-server if you absolutely need to return large blobs (e.g., generated structure files), but consider streaming or pagination instead.
 

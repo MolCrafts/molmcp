@@ -42,7 +42,7 @@ create_server(..., enable_path_safety=False)
 
 **What it does:** caps tool responses at a configurable byte limit (default 256 KB). Text content over the limit is truncated and a marker message appended; structured content over the limit is replaced with a placeholder.
 
-**Why:** an unbounded `molmcp_describe_symbol` (with `include_source`) or `molmcp_outline` call against a large MolCrafts package can dump megabytes of source into the LLM context, blowing past token windows and inflating costs. The truncation marker tells the LLM *and* the user what happened so they can re-call with narrower arguments.
+**Why:** an unbounded `open` (with `include_source`) or `outline` call against a large MolCrafts package can dump megabytes of source into the LLM context, blowing past token windows and inflating costs. The truncation marker tells the LLM *and* the user what happened so they can re-call with narrower arguments.
 
 **Configure:**
 

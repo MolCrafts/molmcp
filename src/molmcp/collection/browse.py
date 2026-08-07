@@ -59,7 +59,7 @@ def outline_source(
             "ok": False,
             "code": "SOURCE_REQUIRED",
             "error": "source is required",
-            "hint": "call molcrafts_packages first, then outline(source=…)",
+            "hint": "call `packages` first, then outline(source=…)",
             "markdown": "",
             "data": None,
         }
@@ -69,7 +69,7 @@ def outline_source(
             "ok": False,
             "code": "SOURCE_NOT_FOUND",
             "error": f"unknown source {source!r}",
-            "hint": "use a name from molcrafts_packages",
+            "hint": "use a name from `packages`",
             "markdown": "",
             "data": None,
         }
@@ -199,7 +199,7 @@ def search_scoped(
             "ok": False,
             "code": "SOURCE_NOT_FOUND",
             "error": str(exc),
-            "hint": "use a name from molcrafts_packages",
+            "hint": "use a name from `packages`",
             "query": query,
             "sources": list(sources) if sources else None,
             "result_count": 0,
@@ -425,7 +425,7 @@ def _outline_markdown(
     lines = [
         title,
         "",
-        "Module directory. Read summaries, then `molcrafts_open` exact refs.",
+        "Module directory. Read summaries, then `open` exact refs.",
         "",
     ]
     for mod in modules:
@@ -496,7 +496,7 @@ def _search_markdown(query: str, results: list[dict[str, Any]]) -> str:
     lines = [
         f"# Search `{query}`",
         "",
-        "Index helper. Open exact refs with `molcrafts_open` before coding.",
+        "Index helper. Open exact refs with `open` before coding.",
         "",
     ]
     for item in results[:30]:

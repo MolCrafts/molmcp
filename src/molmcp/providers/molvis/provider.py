@@ -285,8 +285,8 @@ class MolvisProvider:
                 stage.draw_frame(mol)
 
             The API truth for every line above lives upstream, not here:
-            look symbols up with the ``molcrafts_*`` discovery tools
-            (``molcrafts_search`` → ``molcrafts_open``) before writing
+            look symbols up on the molcrafts plane (its ``search`` then
+            its ``open``) before writing
             code — this provider will not validate or correct it. For the
             stage itself, ``capabilities`` reads the surface off the live
             object, which is the one source that cannot be out of date.

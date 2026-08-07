@@ -2,7 +2,7 @@
 
 You're driving a molecular viewer through a conversation: the user says "make me an aspirin", sees the 3D structure appear in a browser, clicks part of it, and says "change this". This page teaches the **loop** that makes that work — open a session, execute Python inside it, pull the events the browser sends back.
 
-It deliberately documents **no** molvis or molpy method. Every API you call inside `molvis_exec` belongs to those packages, and the truth about it lives in their docstrings, one `molcrafts_search` away. Read [Provider design](../concepts/provider-design.md) for why the tool surface is only these few primitives.
+It deliberately documents **no** molvis or molpy method. Every API you call inside `exec` belongs to those packages, and the truth about it lives in their docstrings, one `search` away on the molcrafts plane. Read [Provider design](../concepts/provider-design.md) for why the tool surface is only these few primitives.
 
 ## One session, two surfaces, two wills
 
@@ -44,25 +44,25 @@ Each of these is a contract you must respect, and each has exactly one authorita
 
 - **`draw_frame` has stamp semantics** — it places a structure onto the canvas and never wipes what is already there, so a refresh is `clear()` and *then* `draw_frame(...)` (molvis drawing mixin docstring; `clear` is the only full wipe).
 - **`get_selected` returns a standalone sub-Frame** — a molpy `Frame`, meaning a table of atoms with their own elements and coordinates and bonds renumbered into the subset, not a list of indices into your `mol` (molvis selection mixin docstring).
-- **The namespace persists across `exec` calls until `close`** — every binding you make, `mol` included, is still there on the next `molvis_exec` and is released only by `molvis_close` (molmcp's own contract, on the `molvis_exec` tool docstring).
+- **The namespace persists across `exec` calls until `close`** — every binding you make, `mol` included, is still there on the next `exec` and is released only by `close` (molmcp's own contract, on the `exec` tool docstring).
 
 ## Connection etiquette
 
-`molvis_open` returns a `connection_url`, and the viewer does not exist until a human opens that URL in a browser. Put the link in your reply and wait to be told the canvas is up.
+`open` returns a `connection_url`, and the viewer does not exist until a human opens that URL in a browser. Put the link in your reply and wait to be told the canvas is up.
 
-Before your first drawing call, check `stage.connected` inside `molvis_exec`. Drawing into a viewer nobody has opened waits for a frontend response that never comes and fails only on timeout — ten silent seconds spent on a question you could have answered in one line. Guarding turns that into an immediate, explainable answer: *open the link, then tell me when you can see the canvas.*
+Before your first drawing call, check `stage.connected` inside `exec`. Drawing into a viewer nobody has opened waits for a frontend response that never comes and fails only on timeout — ten silent seconds spent on a question you could have answered in one line. Guarding turns that into an immediate, explainable answer: *open the link, then tell me when you can see the canvas.*
 
-The same reflex applies after any long pause: the user may have closed the tab. `molvis_list_sessions` tells you which sessions exist; `stage.connected` tells you whether anyone is looking.
+The same reflex applies after any long pause: the user may have closed the tab. `list_sessions` tells you which sessions exist; `stage.connected` tells you whether anyone is looking.
 
 ## Asking the stage what it can do
 
-Call `molvis_capabilities` instead of probing with `dir(stage)` and `inspect.signature` inside `molvis_exec`. It reads the surface off the live object, so it cannot disagree with the installed molvis, and it answers the question a signature alone does not: `kind` tells you whether to *call* a name or *read* it. Calling a property is a routine and thoroughly confusing mistake — `stage.n_frames()` when `n_frames` is a property fails with `'int' object is not callable`, which names neither the attribute nor the real problem. Pass `pattern` to narrow the list (`"draw"`, `"frame"`, `"select"`).
+Call `capabilities` instead of probing with `dir(stage)` and `inspect.signature` inside `exec`. It reads the surface off the live object, so it cannot disagree with the installed molvis, and it answers the question a signature alone does not: `kind` tells you whether to *call* a name or *read* it. Calling a property is a routine and thoroughly confusing mistake — `stage.n_frames()` when `n_frames` is a property fails with `'int' object is not callable`, which names neither the attribute nor the real problem. Pass `pattern` to narrow the list (`"draw"`, `"frame"`, `"select"`).
 
 ## After the user edits a package
 
-`molvis_refresh` drops edited packages from the server's module cache so your next `molvis_exec` imports the current source. Two things it will not do, both of which have bitten before:
+`refresh` drops edited packages from the server's module cache so your next `exec` imports the current source. Two things it will not do, both of which have bitten before:
 
-**It cannot reload a compiled extension.** `molrs` is mapped into the process once and stays until the server restarts. When `restart_required` comes back true, stop and ask for a reconnect — running the test anyway means reporting a verdict on code that never executed. The same field is on every `molvis_capabilities` reply, so you can check it without refreshing anything.
+**It cannot reload a compiled extension.** `molrs` is mapped into the process once and stays until the server restarts. When `restart_required` comes back true, stop and ask for a reconnect — running the test anyway means reporting a verdict on code that never executed. The same field is on every `capabilities` reply, so you can check it without refreshing anything.
 
 **It does not migrate live objects.** `stage`, `mol`, everything an earlier `exec` bound, keeps pointing at the classes it was built from. Rebuild them after refreshing, or open a new session — otherwise the session straddles two versions of the same package and the results are nobody's.
 

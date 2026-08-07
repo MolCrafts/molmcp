@@ -289,9 +289,9 @@ def build_routing_guide(
         "top_hits": top_hits,
         "warnings": warnings,
         "how_to_use": (
-            "1) molcrafts_packages — pick sources from summaries. "
-            "2) molcrafts_outline(source=…) — browse modules. "
-            "3) molcrafts_open(ref) before codegen. "
+            "1) `packages` — pick sources from summaries. "
+            "2) `outline(source=…)` — browse modules. "
+            "3) `open(ref)` before codegen. "
             "4) Bind only executable=true (or APIs confirmed via open)."
         ),
     }
