@@ -388,7 +388,7 @@ class TestCacheFileNaming:
 
         cache = SnapshotCache(DiscoveryConfig(cache_dir=tmp_path))
 
-        assert cache.extract_db_path().name == "extraction-cache.db"
+        assert cache.extract_db_path().name == "code-index.db"
 
     def test_a_legacy_extract_db_is_reclaimed(self, tmp_path):
         """Renaming must not strand the old file; it can be gigabytes."""
@@ -407,4 +407,4 @@ class TestCacheFileNaming:
 
         assert not legacy.exists()
         assert not (cache_dir / "extract.db-wal").exists()
-        assert (cache_dir / "extraction-cache.db").is_file()
+        assert (cache_dir / "code-index.db").is_file()

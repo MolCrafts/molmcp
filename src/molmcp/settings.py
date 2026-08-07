@@ -40,16 +40,22 @@ class SettingsError(ValueError):
 _SCHEMA: dict[str, type] = {
     "sources": dict,
     "indexWorkspace": bool,
+    "knowledgeScope": list,
     "excludes": list,
     "cacheDir": str,
     "watch": bool,
     "maxCacheBytes": int,
     "maxCacheAgeDays": int,
+    "pythonEnv": str,
+    "discoverInclude": list,
+    "discoverExclude": list,
+    "molexp": dict,
+    "molq": dict,
 }
 
 #: Keys whose layers combine instead of replacing one another.
-_MERGED_DICTS = ("sources",)
-_MERGED_LISTS = ("excludes",)
+_MERGED_DICTS = ("sources", "molexp", "molq")
+_MERGED_LISTS = ("excludes", "knowledgeScope", "discoverInclude", "discoverExclude")
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +69,15 @@ class Settings:
     watch: bool = True
     max_cache_bytes: int | None = None
     max_cache_age_days: int | None = None
+    #: Narrow which configured sources the knowledge tools surface. Empty
+    #: means all of them; this never widens past ``sources``.
+    knowledge_scope: tuple[str, ...] = ()
+    #: Locator for the Python environment auto-discovery reads.
+    python_env: str | None = None
+    discover_include: tuple[str, ...] = ()
+    discover_exclude: tuple[str, ...] = ()
+    molexp: dict[str, str] = field(default_factory=dict)
+    molq: dict[str, str] = field(default_factory=dict)
     #: Files that actually contributed, lowest precedence first.
     layers: tuple[Path, ...] = ()
 
@@ -75,6 +90,12 @@ class Settings:
             "watch": self.watch,
             "maxCacheBytes": self.max_cache_bytes,
             "maxCacheAgeDays": self.max_cache_age_days,
+            "knowledgeScope": list(self.knowledge_scope),
+            "pythonEnv": self.python_env,
+            "discoverInclude": list(self.discover_include),
+            "discoverExclude": list(self.discover_exclude),
+            "molexp": dict(self.molexp),
+            "molq": dict(self.molq),
             "layers": [str(path) for path in self.layers],
         }
 
@@ -148,6 +169,14 @@ def load_settings(project_root: str | Path | None = None) -> Settings:
         watch=bool(merged.get("watch", True)),
         max_cache_bytes=_optional_int(merged.get("maxCacheBytes")),
         max_cache_age_days=_optional_int(merged.get("maxCacheAgeDays")),
+        knowledge_scope=_str_tuple(merged.get("knowledgeScope")),
+        python_env=(
+            str(merged["pythonEnv"]) if merged.get("pythonEnv") is not None else None
+        ),
+        discover_include=_str_tuple(merged.get("discoverInclude")),
+        discover_exclude=_str_tuple(merged.get("discoverExclude")),
+        molexp={str(k): str(v) for k, v in (merged.get("molexp") or {}).items()},
+        molq={str(k): str(v) for k, v in (merged.get("molq") or {}).items()},
         layers=tuple(contributing),
     )
 
@@ -262,6 +291,10 @@ def _parse(key: str, value: str) -> Any:
     if expected is dict:
         raise SettingsError(f"set a member instead, e.g. {key}.<name> <value>")
     return value
+
+
+def _str_tuple(value: Any) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(str(item) for item in value or ()))
 
 
 def _optional_int(value: Any) -> int | None:

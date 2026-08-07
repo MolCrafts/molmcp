@@ -6,11 +6,18 @@ runs, sweeps, or science workflows.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
-_WORKSPACE_ENV_VAR = "MOLEXP_WORKSPACE"
+#: Settings key holding the default workspace path.
+_WORKSPACE_SETTING = "molexp.workspace"
+
+
+def _configured_workspace() -> str:
+    """Default workspace from settings, or empty when unset."""
+    from molmcp.settings import load_settings
+
+    return str(load_settings(Path.cwd()).molexp.get("workspace", "")).strip()
 
 
 def materialize_workspace(
@@ -26,23 +33,23 @@ def materialize_workspace(
     from molexp.workspace import Workspace
 
     root = Path(path).expanduser().resolve()
-    session = os.environ.get(_WORKSPACE_ENV_VAR, "").strip()
+    session = _configured_workspace()
     if session:
         session_root = Path(session).expanduser().resolve()
         if root != session_root and _is_relative_to(root, session_root):
             raise RuntimeError(
                 f"refusing to nest a workspace at {root} under the session "
                 f"workspace {session_root}. To create a *project*, call "
-                f"molexp_add_project(name=…) with workspace omitted (uses "
-                f"{_WORKSPACE_ENV_VAR}) or workspace={session_root!s}. "
-                f"Only pass molexp_materialize_workspace when opening a "
-                f"brand-new top-level workspace path."
+                f"`add_project(name=…)` with workspace omitted (uses the "
+                f"{_WORKSPACE_SETTING} setting) or workspace={session_root!s}. "
+                f"Only use `materialize_workspace` when opening a brand-new "
+                f"top-level workspace path."
             )
     parent_ws = _nearest_workspace_root(root.parent)
     if parent_ws is not None and parent_ws != root:
         raise RuntimeError(
             f"refusing to nest a workspace at {root} inside existing "
-            f"workspace {parent_ws}. Use molexp_add_project under that "
+            f"workspace {parent_ws}. Use `add_project` under that "
             f"workspace instead of materialize_workspace."
         )
     root.mkdir(parents=True, exist_ok=True)
@@ -158,7 +165,7 @@ def create_run(
             f"experiment {experiment_id!r} not found under project "
             f"{project.id!r} in workspace {ws.resolve()}. "
             f"Available experiments: {available}. "
-            f"Call molexp_add_experiment(project_id={project.id!r}, name=…) first."
+            f"Call `add_experiment(project_id={project.id!r}, name=…)` first."
         ) from exc
     run = experiment.add_run(params=params or {})
     return {
@@ -184,7 +191,7 @@ def _require_project(ws: object, project_id: str) -> object:
         raise RuntimeError(
             f"project {project_id!r} not found in workspace {root}. "
             f"Available projects: {available}. "
-            f"Call molexp_add_project(name=…) first (do NOT materialize a "
+            f"Call `add_project(name=…)` first (do NOT materialize a "
             f"nested workspace under this path), or pass the correct "
             f"workspace= absolute path from the session Workspace: line."
         ) from None

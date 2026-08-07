@@ -33,10 +33,9 @@ def _discovery_report() -> EnvironmentReport:
 
 def _load_discovered_config(tmp_path, monkeypatch) -> AppConfig:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("MOLMCP_ENV", raising=False)
     report = _discovery_report()
     monkeypatch.setattr(
-        "molmcp.environment.discover_sources", lambda locator=None: report
+        "molmcp.environment.discover_sources", lambda locator=None, **kwargs: report
     )
     return load_config()
 

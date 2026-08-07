@@ -6,7 +6,7 @@ described in ``.claude/specs/env-auto-discovery-01-discover.md``:
   * ``resolve_site_paths`` — pure locator normalization (no target-python
     execution), fail-closed on unresolvable locators.
   * ``discover_sources`` — layered family identification (entry-point group /
-    ``molcrafts`` keyword / PEP 610 editable / ``MOLMCP_DISCOVER`` override)
+    ``molcrafts`` keyword / PEP 610 editable / include-exclude override)
     and spec emission (``pkg:<top_level>`` for self, ``local:<pkg-dir>`` for
     foreign), fail-soft per-dist.
 
@@ -198,7 +198,6 @@ class ForeignEnv(NamedTuple):
 @pytest.fixture
 def foreign_env(tmp_path, monkeypatch) -> ForeignEnv:
     """A synthetic foreign env: one dist per signal plus a non-family wheel."""
-    monkeypatch.delenv("MOLMCP_DISCOVER", raising=False)
 
     site_packages = tmp_path / "env" / "lib" / "python3.12" / "site-packages"
     site_packages.mkdir(parents=True)
@@ -330,7 +329,6 @@ def test_foreign_report_to_dict_is_json_able(foreign_env):
 def test_foreign_malformed_direct_url_is_skipped_others_enumerate(
     tmp_path, monkeypatch
 ):
-    monkeypatch.delenv("MOLMCP_DISCOVER", raising=False)
     site_packages = tmp_path / "sp"
     site_packages.mkdir()
     _make_pkg(site_packages, "good")
@@ -364,7 +362,6 @@ def test_foreign_editable_src_layout_without_top_level_txt_finds_real_package(
     "no importable package directory found"; the real package directory must
     be located from the editable checkout itself.
     """
-    monkeypatch.delenv("MOLMCP_DISCOVER", raising=False)
 
     checkout = tmp_path / "molvis"
     package_dir = _make_pkg(checkout, "src", "molvis")
@@ -393,7 +390,6 @@ def test_foreign_editable_src_layout_without_top_level_txt_finds_real_package(
 # Self-env — monkeypatched distributions + resolver acceptance (Task 3).
 # --------------------------------------------------------------------------- #
 def test_self_env_emits_pkg_spec_and_resolver_accepts_it(tmp_path, monkeypatch):
-    monkeypatch.delenv("MOLMCP_DISCOVER", raising=False)
     site_packages = tmp_path / "self-sp"
     site_packages.mkdir()
     _write_dist(
@@ -426,10 +422,9 @@ def test_self_env_emits_pkg_spec_and_resolver_accepts_it(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# MOLMCP_DISCOVER override / exclude, PEP 503 matching (Task 4).
+# include / exclude override, PEP 503 matching (Task 4).
 # --------------------------------------------------------------------------- #
-def test_molmcp_discover_force_include_records_override(tmp_path, monkeypatch):
-    monkeypatch.setenv("MOLMCP_DISCOVER", "+extra,-mol.py")
+def test_discover_include_records_override(tmp_path, monkeypatch):
     site_packages = tmp_path / "sp"
     site_packages.mkdir()
     _make_pkg(site_packages, "extra")
@@ -440,18 +435,17 @@ def test_molmcp_discover_force_include_records_override(tmp_path, monkeypatch):
     # 'Mol-Py' IS a family match (keyword) but is force-excluded below.
     _write_dist(site_packages, "Mol-Py", keywords="molcrafts", top_level="mol_py")
 
-    report = discover_sources(str(site_packages))
+    report = discover_sources(str(site_packages), include=["extra"], exclude=["mol.py"])
     by_dist = _by_distribution(report)
     assert "extra" in by_dist
     assert by_dist["extra"].identified_by == ("override",)
 
 
-def test_molmcp_discover_force_exclude_uses_pep503_normalization(tmp_path, monkeypatch):
+def test_discover_exclude_uses_pep503_normalization(tmp_path, monkeypatch):
     # NOTE (deviation): the spec sketch wrote ``-molpy``; under PEP 503 that
     # canonicalizes to ``molpy`` and can NOT match ``Mol-Py`` (-> ``mol-py``).
     # We use ``-mol.py`` (one of the two spellings the task named) so the
     # exclusion is a genuine PEP 503 match across ``.`` / ``-`` / case.
-    monkeypatch.setenv("MOLMCP_DISCOVER", "+extra,-mol.py")
     site_packages = tmp_path / "sp"
     site_packages.mkdir()
     _make_pkg(site_packages, "extra")
@@ -459,7 +453,7 @@ def test_molmcp_discover_force_exclude_uses_pep503_normalization(tmp_path, monke
     _write_dist(site_packages, "extra", top_level="extra")
     _write_dist(site_packages, "Mol-Py", keywords="molcrafts", top_level="mol_py")
 
-    report = discover_sources(str(site_packages))
+    report = discover_sources(str(site_packages), include=["extra"], exclude=["mol.py"])
     assert "mol-py" not in _by_distribution(report)
     assert "mol-py" in {_norm(str(entry)) for entry in report.excluded}
 
@@ -468,9 +462,8 @@ def test_molrs_not_auto_discovered_as_python_api_source(tmp_path, monkeypatch):
     """molrs is MolCrafts-family but not a public Python API surface.
 
     Agents use ``molpy.Frame``; auto-discovery must not index ``molrs`` as a
-    codegraph source. ``MOLMCP_DISCOVER=+molrs`` can re-enable for debugging.
+    codegraph source. ``discoverInclude`` can re-enable it for debugging.
     """
-    monkeypatch.delenv("MOLMCP_DISCOVER", raising=False)
     site_packages = tmp_path / "sp"
     site_packages.mkdir()
     _make_pkg(site_packages, "molrs")
@@ -489,8 +482,7 @@ def test_molrs_not_auto_discovered_as_python_api_source(tmp_path, monkeypatch):
     assert any("molrs" in _norm(str(e)) for e in report.excluded)
 
     # Explicit opt-in re-enables molrs as a source.
-    monkeypatch.setenv("MOLMCP_DISCOVER", "+molcrafts-molrs")
-    report2 = discover_sources(str(site_packages))
+    report2 = discover_sources(str(site_packages), include=["molcrafts-molrs"])
     by2 = _by_distribution(report2)
     assert any("molrs" in d for d in by2)
 

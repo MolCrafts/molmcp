@@ -21,7 +21,7 @@ from .guide import build_routing_guide
 from .source_scope import (
     deny_source,
     filter_package_cards,
-    get_env_source_allowlist,
+    get_source_allowlist,
     intersect_sources,
     ref_source,
     source_allowed,
@@ -58,8 +58,9 @@ class MolCraftsContextProvider:
 
     def register(self, mcp: FastMCP) -> None:
         collection = self.collection
-        # Snapshot at register time; restart process to pick up env changes.
-        scope = get_env_source_allowlist()
+        # Snapshot at register time; restart the process to pick up a
+        # settings change.
+        scope = get_source_allowlist()
 
         def _scoped_sources(requested: list[str] | None) -> list[str] | None:
             return intersect_sources(requested, scope)
@@ -99,7 +100,7 @@ class MolCraftsContextProvider:
             Read the markdown (or data.packages[].summary) and choose sources
             yourself — this is a catalog, not a ranking.
 
-            When ``MOLMCP_SOURCES`` is set, only those packages appear.
+            With ``knowledgeScope`` set, only those packages appear.
             """
             catalog = packages_catalog(collection)
             if scope is None:
@@ -173,7 +174,7 @@ class MolCraftsContextProvider:
         ) -> dict[str, Any]:
             """Bind packages + suggest + explore/open pages into one budgeted pack.
 
-            ``sources`` is intersected with ``MOLMCP_SOURCES`` when set.
+            ``sources`` is intersected with ``knowledgeScope`` when set.
             """
             budget = min(max(budget_chars, 1), MAX_CONTEXT_BUDGET)
             scoped = _scoped_sources(sources)
@@ -200,7 +201,7 @@ class MolCraftsContextProvider:
             """Index helper: find refs (prefer after packages/outline, with source=).
 
             Source symbols are evidence only. executable=true only for Molexp bind.
-            ``sources`` is intersected with ``MOLMCP_SOURCES`` when set.
+            ``sources`` is intersected with ``knowledgeScope`` when set.
             """
             scoped = _scoped_sources(sources)
             if scope is not None and scoped is not None and len(scoped) == 0:

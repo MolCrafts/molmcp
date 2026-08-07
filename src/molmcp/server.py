@@ -328,7 +328,7 @@ def _molcrafts_instructions() -> str:
         "4) compose(task|refs) — budgeted multi-page pack\n"
         "search/suggest are index helpers. "
         "ok=false / SYMBOL_NOT_FOUND → do not invent the API.\n"
-        "MOLMCP_SOURCES (comma-separated) scopes packages/outline/open/search/compose."
+        "knowledgeScope scopes packages/outline/open/search/compose."
     )
 
 

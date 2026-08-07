@@ -36,17 +36,14 @@ DEFAULT_EXCLUDES: tuple[str, ...] = (
 
 
 def default_cache_dir() -> Path:
-    """Resolve the on-disk cache root.
+    """The on-disk cache root.
 
-    ``MOLMCP_CACHE_DIR`` wins; otherwise ``XDG_CACHE_HOME`` (or
-    ``~/.cache``) under ``molmcp/discovery``.
+    Override it with the ``cacheDir`` setting rather than the environment:
+    a variable that only exists in one shell cannot be reported by
+    ``molmcp config list``, and two plane servers launched by different
+    clients would silently disagree about where the cache lives.
     """
-    env = os.environ.get("MOLMCP_CACHE_DIR")
-    if env:
-        return Path(env).expanduser()
-    xdg = os.environ.get("XDG_CACHE_HOME")
-    base = Path(xdg).expanduser() if xdg else Path.home() / ".cache"
-    return base / "molmcp" / "discovery"
+    return Path.home() / ".cache" / "molmcp" / "discovery"
 
 
 @dataclass(slots=True)

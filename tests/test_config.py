@@ -34,9 +34,9 @@ def _env_report(
 
 def test_default_config_indexes_current_workspace(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("MOLMCP_ENV", raising=False)
     monkeypatch.setattr(
-        "molmcp.environment.discover_sources", lambda locator=None: _env_report()
+        "molmcp.environment.discover_sources",
+        lambda locator=None, **kwargs: _env_report(),
     )
     config = load_config()
     # Scope is explicit now: an empty discovery report yields no sources at
@@ -282,7 +282,7 @@ def test_no_file_folds_auto_discovered_sources(tmp_path, monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "molmcp.environment.discover_sources", lambda locator=None: report
+        "molmcp.environment.discover_sources", lambda locator=None, **kwargs: report
     )
     config = load_config()
     assert config.sources == {
@@ -306,7 +306,7 @@ def test_explicit_config_is_not_augmented(tmp_path, monkeypatch):
     )
     calls: list[str | None] = []
 
-    def fake(locator=None):
+    def fake(locator=None, **kwargs):
         calls.append(locator)
         return _env_report()
 
@@ -349,7 +349,7 @@ def test_default_dedupes_mutually_colliding_discovered_names(tmp_path):
 def test_bad_locator_propagates_configuration_error(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
-    def fake(locator=None):
+    def fake(locator=None, **kwargs):
         raise ConfigurationError(f"environment locator does not exist: {locator}")
 
     monkeypatch.setattr("molmcp.environment.discover_sources", fake)
@@ -357,12 +357,15 @@ def test_bad_locator_propagates_configuration_error(tmp_path, monkeypatch):
         load_config(env_locator="bad")
 
 
-def test_env_locator_falls_back_to_molmcp_env(tmp_path, monkeypatch):
+def test_env_locator_falls_back_to_the_python_env_setting(tmp_path, monkeypatch):
+    from molmcp import settings as st
+
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("MOLMCP_ENV", "/envs/foo")
+    monkeypatch.setattr(st.Path, "home", staticmethod(lambda: tmp_path))
+    st.write_settings_file(st.user_settings_path(), {"pythonEnv": "/envs/foo"})
     captured: dict[str, str | None] = {}
 
-    def fake(locator=None):
+    def fake(locator=None, **kwargs):
         captured["locator"] = locator
         return _env_report()
 
@@ -371,12 +374,15 @@ def test_env_locator_falls_back_to_molmcp_env(tmp_path, monkeypatch):
     assert captured["locator"] == "/envs/foo"
 
 
-def test_explicit_env_locator_beats_env_var(tmp_path, monkeypatch):
+def test_explicit_env_locator_beats_the_setting(tmp_path, monkeypatch):
+    from molmcp import settings as st
+
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("MOLMCP_ENV", "/envs/foo")
+    monkeypatch.setattr(st.Path, "home", staticmethod(lambda: tmp_path))
+    st.write_settings_file(st.user_settings_path(), {"pythonEnv": "/envs/foo"})
     captured: dict[str, str | None] = {}
 
-    def fake(locator=None):
+    def fake(locator=None, **kwargs):
         captured["locator"] = locator
         return _env_report()
 

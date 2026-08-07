@@ -129,7 +129,7 @@ def layout_spec() -> dict[str, Any]:
         "summary": (
             "Canonical molexp workspace on-disk layout (frozen four-tier Folder "
             "hierarchy + OKF concept model). Scaffold with molexp Python API or "
-            "molexp_* MCP scaffold tools; integrity-checked migration uses "
+            "the MCP scaffold tools; integrity-checked migration uses "
             "mol:adopt-workspace."
         ),
         "levels": levels,

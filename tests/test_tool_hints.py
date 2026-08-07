@@ -28,7 +28,11 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "molmcp"
 _MOUNT_ERA = re.compile(
     r"\b(molcrafts|molvis|molq|molexp)_"
     r"(packages|outline|open|compose|search|suggest|exec|close|refresh|"
-    r"capabilities|poll_events|list_sessions|list_jobs|get_job)\b"
+    r"capabilities|poll_events|list_sessions|list_jobs|get_job|job_logs|"
+    r"list_destinations|list_queue|submit_job|cancel_job|list_projects|"
+    r"list_experiments|list_runs|workspace_layout|check_layout|"
+    r"materialize_workspace|add_project|add_experiment|create_run|"
+    r"validate_workflow)\b"
 )
 
 #: Tools that no longer exist at all.

@@ -4,34 +4,29 @@ When set, agents may only consult the named MolCrafts packages — e.g. a
 visualization task can pin ``molpy,molvis,molplot`` and never surface
 ``atomiverse``. Empty / unset = all configured sources (legacy behaviour).
 
-Configuration (first match wins for process-wide default):
-
-* Environment ``MOLMCP_SOURCES`` — comma-separated names
-  (``molpy,molvis,molplot``; aliases ``molcrafts-molpy`` accepted).
-* Per-tool ``sources=`` argument still works as a *further* intersection with
-  this allowlist (cannot widen past it).
+Configured by the ``knowledgeScope`` setting (``molmcp config add
+knowledgeScope molpy``); aliases such as ``molcrafts-molpy`` are accepted.
+A per-tool ``sources=`` argument still works as a *further* intersection
+with the allowlist and can never widen past it.
 """
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Iterable, Sequence
+from pathlib import Path
 from typing import Any
 
 __all__ = [
-    "ENV_SOURCES",
     "deny_source",
     "filter_package_cards",
-    "get_env_source_allowlist",
+    "get_source_allowlist",
     "intersect_sources",
     "normalize_source_name",
     "parse_source_allowlist",
     "ref_source",
     "source_allowed",
 ]
-
-ENV_SOURCES = "MOLMCP_SOURCES"
 
 _SPLIT = re.compile(r"[\s,;]+")
 
@@ -72,9 +67,13 @@ def parse_source_allowlist(raw: str | Sequence[str] | None) -> frozenset[str] | 
     return frozenset(roots) if roots else None
 
 
-def get_env_source_allowlist() -> frozenset[str] | None:
-    """Process-wide allowlist from :data:`ENV_SOURCES`."""
-    return parse_source_allowlist(os.environ.get(ENV_SOURCES))
+def get_source_allowlist(settings: Any = None) -> frozenset[str] | None:
+    """Allowlist from the ``knowledgeScope`` setting; ``None`` is unrestricted."""
+    if settings is None:
+        from .settings import load_settings
+
+        settings = load_settings(Path.cwd())
+    return parse_source_allowlist(list(settings.knowledge_scope))
 
 
 def source_allowed(source: str, allow: frozenset[str] | None) -> bool:
@@ -140,7 +139,8 @@ def deny_source(source: str, allow: frozenset[str] | None) -> dict[str, Any]:
             f"(allowed: {allowed})"
         ),
         "hint": (
-            "Pin sources via MOLMCP_SOURCES or tool sources= "
+            "Pin sources via `molmcp config add knowledgeScope <name>` "
+            "or the tool's sources= argument "
             f"(allowed: {allowed}). Do not invent APIs from out-of-scope packages."
         ),
         "markdown": "",

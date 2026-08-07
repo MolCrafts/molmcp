@@ -117,7 +117,7 @@ class TestLoadConfigNoLongerReadsCwd:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(
             "molmcp.environment.discover_sources",
-            lambda locator=None: _EmptyReport(),
+            lambda locator=None, **kwargs: _EmptyReport(),
         )
 
         config = load_config()

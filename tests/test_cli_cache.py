@@ -34,7 +34,7 @@ def _config(tmp_path, cache_dir) -> None:
 
 def _seed(cache_dir, rows: list[tuple[str, float]]) -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(cache_dir / "extraction-cache.db")
+    conn = sqlite3.connect(cache_dir / "code-index.db")
     try:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS extract ("
@@ -53,7 +53,7 @@ def _seed(cache_dir, rows: list[tuple[str, float]]) -> None:
 
 
 def _entries(cache_dir) -> int:
-    conn = sqlite3.connect(cache_dir / "extraction-cache.db")
+    conn = sqlite3.connect(cache_dir / "code-index.db")
     try:
         return conn.execute("SELECT COUNT(*) FROM extract").fetchone()[0]
     finally:
@@ -72,7 +72,7 @@ def test_cache_reports_size_and_entry_count(home, monkeypatch, tmp_path, capsys)
     assert payload["extract_cache"]["entries"] == 2
     assert payload["extract_cache"]["size_bytes"] > 0
     assert payload["extract_cache"]["used_bytes"] > 0
-    assert payload["extract_cache"]["path"].endswith("extraction-cache.db")
+    assert payload["extract_cache"]["path"].endswith("code-index.db")
 
 
 def test_cache_separates_live_content_from_disk_footprint(
@@ -115,7 +115,7 @@ def test_cache_vacuum_returns_freed_pages_to_the_filesystem(
     now = time.time()
     stale = [(f"old{i}.py", now - 90 * 86400) for i in range(400)]
     _seed(cache_dir, [*stale, ("fresh.py", now)])
-    before = (cache_dir / "extraction-cache.db").stat().st_size
+    before = (cache_dir / "code-index.db").stat().st_size
     _config(tmp_path, cache_dir)
     monkeypatch.chdir(tmp_path)
 
@@ -127,7 +127,7 @@ def test_cache_vacuum_returns_freed_pages_to_the_filesystem(
     # once its checkpoint folds the rebuild back.
     assert payload["vacuumed"]["checkpointed"] is True
     assert payload["vacuumed"]["after_bytes"] < payload["vacuumed"]["before_bytes"]
-    assert (cache_dir / "extraction-cache.db").stat().st_size < before
+    assert (cache_dir / "code-index.db").stat().st_size < before
 
 
 def test_cache_reports_a_busy_cache_without_a_traceback(
@@ -139,7 +139,7 @@ def test_cache_reports_a_busy_cache_without_a_traceback(
     _config(tmp_path, cache_dir)
     monkeypatch.chdir(tmp_path)
 
-    holder = sqlite3.connect(cache_dir / "extraction-cache.db", isolation_level=None)
+    holder = sqlite3.connect(cache_dir / "code-index.db", isolation_level=None)
     try:
         holder.execute("BEGIN EXCLUSIVE")
         assert cli.main(["cache", "--prune"]) == 2

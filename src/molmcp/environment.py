@@ -20,8 +20,8 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
-import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
@@ -30,7 +30,6 @@ from .config import ConfigurationError
 
 _FAMILY_ENTRY_POINT_PREFIX = "molmcp."
 _FAMILY_KEYWORD = "molcrafts"
-_DISCOVER_ENV_VAR = "MOLMCP_DISCOVER"
 _FILE_URL_PREFIX = "file://"
 _PEP503_RE = re.compile(r"[-_.]+")
 _TOKEN_SPLIT_RE = re.compile(r"[,\s]+")
@@ -191,7 +190,12 @@ def _venv_site_packages(root: Path) -> tuple[Path, ...]:
     return tuple(dict.fromkeys(candidates))  # de-duplicate, preserve order
 
 
-def discover_sources(locator: str | None = None) -> EnvironmentReport:
+def discover_sources(
+    locator: str | None = None,
+    *,
+    include: Sequence[str] = (),
+    exclude: Sequence[str] = (),
+) -> EnvironmentReport:
     """Discover MolCrafts family distributions in an environment.
 
     The environment is inspected by reading distribution metadata only; none of
@@ -202,6 +206,8 @@ def discover_sources(locator: str | None = None) -> EnvironmentReport:
             the default finders (family packages emit ``pkg:<top_level>``).
             Otherwise a locator string (see :func:`resolve_site_paths`)
             selecting a foreign environment (emits ``local:<package-dir>``).
+        include: Distribution names to treat as family even without a signal.
+        exclude: Distribution names to drop even when they carry one.
 
     Returns:
         An immutable :class:`EnvironmentReport` with sources sorted by name,
@@ -212,10 +218,11 @@ def discover_sources(locator: str | None = None) -> EnvironmentReport:
             metadata errors are recorded in ``skipped`` and never abort the
             enumeration.
     """
-    includes, excludes = _parse_discover(os.environ.get(_DISCOVER_ENV_VAR, ""))
+    includes = frozenset(_normalize(name) for name in include)
+    excludes = frozenset(_normalize(name) for name in exclude)
     # Default: hide non-public Python API packages (molrs is the Rust core;
-    # agents use molpy.Frame, never import molrs). Explicit
-    # ``MOLMCP_DISCOVER=+molrs`` re-enables; ``-name`` still excludes more.
+    # agents use molpy.Frame, never import molrs). The ``discoverInclude``
+    # setting re-enables one; ``discoverExclude`` hides more.
     default_api_excludes = (
         frozenset(_normalize(name) for name in _NON_PYTHON_API_DISTRIBUTIONS) - includes
     )
@@ -311,17 +318,6 @@ def _classify(
         version=dist.version or "",
     )
     return _Outcome("source", source=source)
-
-
-def _parse_discover(raw: str) -> tuple[frozenset[str], frozenset[str]]:
-    includes: set[str] = set()
-    excludes: set[str] = set()
-    for token in _TOKEN_SPLIT_RE.split(raw.strip()):
-        if token.startswith("+"):
-            includes.add(_normalize(token[1:]))
-        elif token.startswith("-"):
-            excludes.add(_normalize(token[1:]))
-    return frozenset(includes), frozenset(excludes)
 
 
 def _has_entry_point_signal(dist: importlib.metadata.Distribution) -> bool:

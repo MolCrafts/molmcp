@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ipaddress
 import json
-import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -396,14 +395,17 @@ def load_config(
         # environment.py imports ConfigurationError from this module.
         from .environment import discover_sources
 
-        locator = (
-            env_locator if env_locator is not None else os.environ.get("MOLMCP_ENV")
+        resolved = load_settings(Path.cwd())
+        locator = env_locator if env_locator is not None else resolved.python_env
+        report = discover_sources(
+            locator,
+            include=resolved.discover_include,
+            exclude=resolved.discover_exclude,
         )
-        report = discover_sources(locator)
         return AppConfig.default(
             Path.cwd(),
             discovered=[(source.name, source.spec) for source in report.sources],
-            settings=load_settings(Path.cwd()),
+            settings=resolved,
             discovery=report.to_dict(),
         )
     config_path = Path(path).expanduser()

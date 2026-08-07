@@ -149,22 +149,32 @@ class TestSerializeHelper:
         assert _serialize(_Opaque()) == "opaque-repr"
 
 
+def _set_molq_db(monkeypatch, home: Path, db: Path) -> None:
+    """Point the molq.database setting at *db* via a scratch home."""
+    from molmcp import settings as st
+
+    monkeypatch.setattr(st.Path, "home", staticmethod(lambda: home))
+    st.write_settings_file(st.user_settings_path(), {"molq": {"database": str(db)}})
+
+
 class TestResolveDbPath:
     def test_memory_passes_through(self):
         assert _resolve_db_path(":memory:") == ":memory:"
 
-    def test_arg_wins_over_env(self, monkeypatch, tmp_path: Path):
-        monkeypatch.setenv("MOLQ_DB_PATH", str(tmp_path / "env.db"))
+    def test_arg_wins_over_the_setting(self, monkeypatch, tmp_path: Path):
+        _set_molq_db(monkeypatch, tmp_path, tmp_path / "env.db")
         out = _resolve_db_path(tmp_path / "arg.db")
         assert out == tmp_path / "arg.db"
 
-    def test_env_used_when_arg_missing(self, monkeypatch, tmp_path: Path):
-        monkeypatch.setenv("MOLQ_DB_PATH", str(tmp_path / "env.db"))
+    def test_setting_used_when_arg_missing(self, monkeypatch, tmp_path: Path):
+        _set_molq_db(monkeypatch, tmp_path, tmp_path / "env.db")
         out = _resolve_db_path(None)
         assert out == tmp_path / "env.db"
 
-    def test_falls_back_to_molq_default(self, monkeypatch):
-        monkeypatch.delenv("MOLQ_DB_PATH", raising=False)
+    def test_falls_back_to_molq_default(self, monkeypatch, tmp_path: Path):
+        from molmcp import settings as st
+
+        monkeypatch.setattr(st.Path, "home", staticmethod(lambda: tmp_path))
         from molq.store import default_jobs_db_path
 
         assert _resolve_db_path(None) == default_jobs_db_path()
@@ -334,9 +344,8 @@ class TestMolqSubmitJob:
         with pytest.raises(ToolError, match="disabled"):
             _call(server, "submit_job", {"argv": ["true"]})
 
-    def test_env_opt_in(self, provider_factory, monkeypatch):
-        monkeypatch.setenv("MOLMCP_MOLQ_SUBMIT", "1")
-        server = _build_server(provider_factory(allow_submit=False))
+    def test_explicit_opt_in(self, provider_factory):
+        server = _build_server(provider_factory(allow_submit=True))
         result = _call(
             server,
             "submit_job",

@@ -9,15 +9,14 @@ Read-only
   * ``list_destinations`` — profiles + SSH Host aliases
   * ``list_queue`` — live scheduler queue snapshot
 
-Controlled mutations (opt-in via ``MOLMCP_MOLQ_SUBMIT=1`` or
-``MolqProvider(allow_submit=True)``):
+Controlled mutations (opt-in via ``MolqProvider(allow_submit=True)``):
   * ``submit_job`` — single argv submit, no block-wait
   * ``cancel_job`` — cancel one job by id
 
 DB resolution (in order):
 
 1. The ``db_path`` constructor argument.
-2. The ``MOLQ_DB_PATH`` environment variable.
+2. The ``molq.database`` setting.
 3. molq's canonical default via :func:`molq.store.default_jobs_db_path`.
 
 Heavy molq imports stay inside :meth:`register` and tool bodies so the
@@ -26,7 +25,6 @@ provider remains cheap to instantiate when molq is absent.
 
 from __future__ import annotations
 
-import os
 from dataclasses import asdict, is_dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any, Literal
@@ -34,10 +32,9 @@ from typing import TYPE_CHECKING, Any, Literal
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-_DB_ENV_VAR = "MOLQ_DB_PATH"
-_SUBMIT_ENV_VAR = "MOLMCP_MOLQ_SUBMIT"
+#: Settings key holding an override for the molq job database.
+_DB_SETTING = "molq.database"
 _ALLOWED_SCHEDULERS = frozenset({"local", "slurm", "pbs", "lsf"})
-_TRUTHY = frozenset({"1", "true", "yes", "on"})
 _LOG_STREAMS = frozenset({"stdout", "stderr", "both"})
 _LOG_KEYS = {"stdout": "molq.stdout_path", "stderr": "molq.stderr_path"}
 
@@ -66,17 +63,14 @@ def _resolve_db_path(arg: str | Path | None) -> Path | str:
         return ":memory:"
     if arg is not None:
         return Path(arg).expanduser()
-    env = os.environ.get(_DB_ENV_VAR)
-    if env:
-        return Path(env).expanduser()
+    from molmcp.settings import load_settings
+
+    configured = str(load_settings(Path.cwd()).molq.get("database", "")).strip()
+    if configured:
+        return Path(configured).expanduser()
     from molq.store import default_jobs_db_path
 
     return default_jobs_db_path()
-
-
-def _env_allows_mutate() -> bool:
-    raw = os.environ.get(_SUBMIT_ENV_VAR, "").strip().lower()
-    return raw in _TRUTHY
 
 
 def _is_unsafe_path(value: str) -> bool:
@@ -137,8 +131,7 @@ class MolqProvider:
             for testing. When omitted, ``MOLQ_DB_PATH`` then molq's
             canonical default apply.
         allow_submit: Explicitly enable ``submit_job`` and ``cancel_job``.
-            Defaults to ``False``; may also be flipped on via
-            ``MOLMCP_MOLQ_SUBMIT=1``.
+            Defaults to ``False``.
         jobs_dir: Optional override for per-job artifact directory (tests).
     """
 
@@ -165,13 +158,12 @@ class MolqProvider:
         return True
 
     def _mutate_enabled(self) -> bool:
-        return self._allow_submit or _env_allows_mutate()
+        return self._allow_submit
 
     def _require_mutate(self, op: str) -> None:
         if not self._mutate_enabled():
             raise RuntimeError(
-                f"molq {op} is disabled. Opt in with "
-                f"{_SUBMIT_ENV_VAR}=1 or MolqProvider(allow_submit=True)."
+                f"molq {op} is disabled. Opt in with MolqProvider(allow_submit=True)."
             )
 
     def _open_store(self) -> Any:
@@ -557,8 +549,8 @@ class MolqProvider:
         ) -> dict[str, Any]:
             """Submit a single job (controlled mutation; opt-in).
 
-            Requires ``MOLMCP_MOLQ_SUBMIT=1`` or
-            ``MolqProvider(allow_submit=True)``. Does **not** wait —
+            Requires ``MolqProvider(allow_submit=True)``. Does **not**
+            wait —
             poll with ``get_job`` / ``list_jobs``.
 
             Args:

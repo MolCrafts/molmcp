@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from molmcp.settings import Settings
 from molmcp.source_scope import (
-    ENV_SOURCES,
     deny_source,
     filter_package_cards,
-    get_env_source_allowlist,
+    get_source_allowlist,
     intersect_sources,
     normalize_source_name,
     parse_source_allowlist,
@@ -49,11 +49,11 @@ def test_deny_payload() -> None:
     assert denied["code"] == "SOURCE_NOT_ALLOWED"
 
 
-def test_env_allowlist(monkeypatch) -> None:  # noqa: ANN001
-    monkeypatch.delenv(ENV_SOURCES, raising=False)
-    assert get_env_source_allowlist() is None
-    monkeypatch.setenv(ENV_SOURCES, "molpy,molvis")
-    allow = get_env_source_allowlist()
+def test_allowlist_comes_from_settings_not_the_environment() -> None:
+    assert get_source_allowlist(Settings()) is None
+
+    allow = get_source_allowlist(Settings(knowledge_scope=("molpy", "molvis")))
+
     assert allow is not None
     assert "molpy" in allow
     assert not source_allowed("atomiverse", allow)

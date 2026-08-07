@@ -14,13 +14,22 @@ Provider-design contract:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any, Literal
 
 from fastmcp import FastMCP
 
-_WORKSPACE_ENV_VAR = "MOLEXP_WORKSPACE"
+#: Settings key holding the default workspace path.
+_WORKSPACE_SETTING = "molexp.workspace"
+
+
+def _configured_workspace() -> str:
+    """Default workspace from settings, or empty when unset."""
+    from molmcp.settings import load_settings
+
+    return str(load_settings(Path.cwd()).molexp.get("workspace", "")).strip()
+
+
 _ALLOWED_SCOPES = frozenset({"workspace", "project", "experiment"})
 
 
@@ -35,15 +44,16 @@ def _resolve_workspace(workspace: str | None = None):
 
     if workspace:
         return Workspace(Path(workspace).expanduser().resolve())
-    env_path = os.environ.get(_WORKSPACE_ENV_VAR)
-    if env_path:
-        return Workspace(Path(env_path).expanduser().resolve())
+    configured = _configured_workspace()
+    if configured:
+        return Workspace(Path(configured).expanduser().resolve())
     cwd = Path.cwd()
     if (cwd / "workspace.json").is_file() or (cwd / "meta.yaml").is_file():
         return Workspace(cwd)
     raise RuntimeError(
         "MolexpProvider could not resolve a workspace. Pass workspace= path, "
-        f"set {_WORKSPACE_ENV_VAR}, or run from a directory containing workspace.json."
+        "run `molmcp config set molexp.workspace <path>`, or run from a "
+        "directory containing workspace.json."
     )
 
 

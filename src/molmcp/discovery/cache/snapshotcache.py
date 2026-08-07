@@ -5,7 +5,7 @@
                             /raw/         (GitHub sources)
                             /evidence/<query_hash>.json
 <cache_dir>/refs/<spec-slug>.json
-<cache_dir>/extraction-cache.db  (shared, per-file extraction)
+<cache_dir>/code-index.db  (shared, per-file extraction)
 """
 
 from __future__ import annotations
@@ -19,12 +19,11 @@ from pathlib import Path
 
 from ..config import DiscoveryConfig
 
-#: Filename of the shared extraction cache. Says "cache" so an operator who
-#: finds it large knows it is disposable.
-EXTRACT_DB_NAME = "extraction-cache.db"
+#: Filename of the shared code index.
+EXTRACT_DB_NAME = "code-index.db"
 
 #: Earlier names, deleted on sight so a rename never strands gigabytes.
-LEGACY_EXTRACT_DB_NAMES = ("extract.db",)
+LEGACY_EXTRACT_DB_NAMES = ("extract.db", "extraction-cache.db")
 
 #: Grace period before a snapshot directory with no manifest is treated as
 #: an orphan: ``_persist`` writes graph.db first, so a fresh one may simply
@@ -80,9 +79,10 @@ class SnapshotCache:
     def extract_db_path(self) -> Path:
         """The shared per-file extraction cache.
 
-        Named for what an operator needs to know when they find it taking
-        up gigabytes: it is a *cache*, and deleting it costs a re-index and
-        nothing else. The former ``extract.db`` said none of that.
+        Named for what it holds, so an operator who finds it taking up
+        gigabytes can tell what it is: an index over code, derived from
+        sources on disk and rebuilt on demand. ``extract.db`` said none of
+        that.
         """
         return self.root / EXTRACT_DB_NAME
 
