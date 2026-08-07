@@ -80,8 +80,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     client.add_argument(
         "host",
-        choices=["grok", "claude"],
-        help="Target host config format.",
+        nargs="?",
+        default=None,
+        choices=["grok", "claude", "cursor"],
+        help=(
+            "Where the config is headed. The body is the same standard "
+            "mcpServers JSON for every host; this only picks the default "
+            "output path."
+        ),
     )
     client.add_argument(
         "--enable",

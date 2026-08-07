@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import sys
-import tomllib
 
 import pytest
 
 from molmcp import client_config
 from molmcp.client_config import (
     render_client,
-    render_grok_toml,
+    render_mcp_json,
     resolve_plane_toggles,
 )
 
@@ -41,17 +41,14 @@ def test_disable_all_raises():
         resolve_plane_toggles(available=("a", "b"), disable=["a", "b"])
 
 
-def test_grok_toml_marks_enabled_false():
+def test_a_disabled_plane_is_omitted_from_the_server_map():
     t = resolve_plane_toggles(
         available=("catalog", "molvis"),
         disable=["molvis"],
     )
-    text = render_grok_toml(t)
-    assert "[mcp_servers.catalog]" in text
-    assert "[mcp_servers.molvis]" in text
-    assert "enabled = true" in text
-    assert "enabled = false" in text
-    assert "serve" in text and "catalog" in text
+    servers = render_mcp_json(t)["mcpServers"]
+    assert set(servers) == {"catalog"}
+    assert servers["catalog"]["args"][-2:] == ["serve", "catalog"]
 
 
 def test_render_client_claude_only_enabled():
@@ -77,9 +74,9 @@ def test_cli_client_disable(capsys, monkeypatch):
     # re-import resolve path uses default_plane_ids via resolve_plane_toggles
     code = cli.main(["client", "grok", "--disable", "molq"])
     assert code == 0
-    out = capsys.readouterr().out
-    assert "[mcp_servers.molq]" in out
-    assert "enabled = false" in out
+    servers = json.loads(capsys.readouterr().out)["mcpServers"]
+    assert "molq" not in servers
+    assert set(servers) == {"catalog", "molvis"}
 
 
 class TestLaunchableFromAGuiClient:
@@ -97,7 +94,7 @@ class TestLaunchableFromAGuiClient:
         installed.touch()
         monkeypatch.setattr(client_config.shutil, "which", lambda name: str(installed))
 
-        config = client_config.render_claude_json(
+        config = client_config.render_mcp_json(
             client_config.PlaneToggle(("catalog",), (), ("catalog",))
         )
 
@@ -112,32 +109,54 @@ class TestLaunchableFromAGuiClient:
         assert command[0] == sys.executable
         assert command[1:3] == ["-m", "molmcp"]
 
+
+class TestOneJsonForEveryHost:
+    """Every host molmcp targets reads the standard `mcpServers` JSON.
+
+    Grok loads ~/.claude.json, .cursor/mcp.json and project .mcp.json
+    alongside its own config.toml, and Claude Code and Cursor read the same
+    shape. Hand-rolling TOML bought nothing and cost an escaping bug, so
+    there is one body now and the host only picks where to put it.
+    """
+
+    def test_the_body_is_identical_for_every_host(self):
+        toggle = client_config.PlaneToggle(("catalog",), (), ("catalog",))
+
+        bodies = {
+            host: client_config.render_client(host, available=toggle.all_planes)[1]
+            for host in ("grok", "claude", "cursor")
+        }
+
+        assert len(set(bodies.values())) == 1
+
+    @pytest.mark.parametrize("host", ["grok", "claude", "cursor"])
+    def test_every_host_gets_parseable_json(self, host):
+        _, text = client_config.render_client(host)
+
+        assert "mcpServers" in json.loads(text)
+
+    def test_the_host_is_optional(self):
+        _, text = client_config.render_client()
+
+        assert "mcpServers" in json.loads(text)
+
+    def test_disabled_planes_are_absent_rather_than_flagged(self):
+        toggle = client_config.PlaneToggle(("catalog",), ("molq",), ("catalog", "molq"))
+
+        servers = client_config.render_mcp_json(toggle)["mcpServers"]
+
+        assert set(servers) == {"catalog"}
+
     @pytest.mark.parametrize(
-        "raw",
+        ("host", "tail"),
         [
-            r"C:\Users\me\.venv\Scripts\molmcp.exe",
-            '/opt/we"ird/molmcp',
-            "/opt/tab\tpath/molmcp",
+            ("claude", ".claude.json"),
+            ("cursor", "mcp.json"),
+            ("grok", "mcp.json"),
         ],
     )
-    def test_toml_strings_round_trip_through_a_parser(self, raw):
-        """Backslashes and quotes are escapes inside a TOML basic string;
-        hand-quoting them produced a file no parser would read back."""
-        parsed = tomllib.loads(f"command = {client_config._toml_string(raw)}\n")
+    def test_each_host_has_a_default_destination(self, host, tail):
+        assert str(client_config.default_write_path(host)).endswith(tail)
 
-        assert parsed["command"] == raw
-
-    def test_grok_toml_round_trips_a_plain_path(self, monkeypatch):
-        monkeypatch.setattr(
-            client_config.shutil, "which", lambda name: "/opt/molmcp/bin/molmcp"
-        )
-
-        parsed = tomllib.loads(
-            client_config.render_grok_toml(
-                client_config.PlaneToggle(("catalog",), ("molq",), ("catalog", "molq"))
-            )
-        )
-
-        assert parsed["mcp_servers"]["catalog"]["enabled"] is True
-        assert parsed["mcp_servers"]["molq"]["enabled"] is False
-        assert parsed["mcp_servers"]["catalog"]["args"] == ["serve", "catalog"]
+    def test_no_toml_is_generated_any_more(self):
+        assert not hasattr(client_config, "render_grok_toml")
