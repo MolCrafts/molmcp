@@ -21,7 +21,7 @@ entry points are available.
 # Terminal A — bootstrap routing
 molmcp serve catalog
 
-# Terminal B — knowledge pages (needs molcrafts.json sources)
+# Terminal B — knowledge pages (needs at least one configured source)
 molmcp serve molcrafts
 
 # Terminal C — live viewer (optional)

@@ -56,13 +56,34 @@ For non-trivial work, prefer:
 3. review (`/mol:review`)
 4. capture decisions (`/mol:note`)
 
+## Configuration
+
+Settings live in `~/.molmcp/settings.json`, with optional per-project
+`.molmcp/settings.json` and `.molmcp/settings.local.json` layered over it,
+edited via `molmcp config get|set|add|remove` (see `src/molmcp/settings.py`).
+
+**No environment variables.** `tests/test_no_env_switches.py` fails the
+build if a module reads one. Three exemptions are listed there with their
+reason, and all three are secrets: the bearer-token and registry-credential
+indirections, and `GITHUB_TOKEN`. Configuration that lives only in one shell
+cannot be reported by `molmcp config list`, and two plane servers launched
+by different clients would silently disagree about it.
+
+The working directory is **not** an index source unless `indexWorkspace`
+says so, and `./molcrafts.json` is not auto-loaded (`--config` still works).
+
 ## What must never change casually
 
 - The `molmcp.providers` entry-point group — external packages register
   providers against it.
 - The discovery cache on-disk format (`graph.db` schema, manifests);
   bump `SCHEMA_VERSION` / `ANALYZER_VERSION` in
-  `src/molmcp/discovery/schema.py` on any breaking change.
+  `src/molmcp/discovery/schema.py` on any breaking change. Renaming a cache
+  file means adding the old name to `LEGACY_EXTRACT_DB_NAMES` so nobody is
+  left with a stranded multi-gigabyte orphan.
+- Agent-facing `hint` and error strings name tools **bare**, as registered.
+  `tests/test_tool_hints.py` enforces it: a hint pointing at a name no
+  client resolves turns the error message into the next error.
 - CI parity: `.pre-commit-config.yaml` mirrors `.github/workflows/ci.yml`
   step-for-step; change both in the same commit.
 

@@ -111,15 +111,29 @@ the `nodes`, `edges`, and `files` tables directly.
 
 ## Snapshots, cache, and freshness
 
-The cache lives under `~/.cache/molmcp/discovery/` (override with
-`MOLMCP_CACHE_DIR`). Every snapshot gets its own directory, keyed on its
-snapshot id:
+The cache lives under `~/.cache/molmcp/discovery/` (override with the
+`cacheDir` setting). Every snapshot gets its own directory, keyed on its
+snapshot id, beside one shared code index:
 
 ```
+<cache>/code-index.db                       per-file extraction, shared
 <cache>/snapshots/<snapshot-slug>/
     manifest.json
-    graph.db
+    graph.db                                the resolved graph
+<cache>/refs/<spec-slug>.json
 ```
+
+`code-index.db` is the incremental half: extraction of one file is a pure
+function of its content and the analyzer version, so an unchanged file skips
+the analyzer entirely on re-index. Every plane process opens the same file, so
+it runs in WAL mode — under a rollback journal one indexing run took the write
+lock and every other process sat on the busy timeout, which was felt directly
+as multi-second tool calls.
+
+It is bounded by `maxCacheBytes` (512 MB by default) and `maxCacheAgeDays`.
+Age alone is not enough: an indexed environment of tens of thousands of files
+is all current and none of it stale, so without a ceiling the file simply grew.
+`molmcp cache` reports it and `--prune` / `--gc` / `--vacuum` reclaim it.
 
 Because the snapshot id is a content hash, a cached graph is always tied
 to exact source. When a file changes, the next index produces a new
@@ -240,7 +254,7 @@ print(hits[0].qualname, hits[0].file, hits[0].start_line)
 on the `molcrafts` server:
 
 ```bash
-molmcp serve molcrafts   # sources from molcrafts.json
+molmcp serve molcrafts   # sources from settings + auto-discovery
 ```
 
 Client flow: `molcrafts__packages` → `molcrafts__outline` →

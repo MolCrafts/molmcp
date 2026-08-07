@@ -5,19 +5,14 @@ Index a MolCrafts package for **knowledge** on the `molcrafts` plane, or ship a
 
 ## Knowledge only (no custom Provider)
 
-Add the package as a source in `molcrafts.json` and serve the knowledge plane:
-
-```json
-{
-  "schema_version": "2",
-  "sources": {
-    "molpy": "pkg:molpy",
-    "workspace": "."
-  }
-}
-```
+If the package is an installed MolCrafts distribution, nothing is needed:
+auto-discovery finds anything declaring a `molmcp.*` entry point or the
+`molcrafts` keyword. Otherwise name it as a source.
 
 ```bash
+molmcp config set sources.molpy pkg:molpy
+molmcp config set indexWorkspace true --project   # index this checkout too
+
 molmcp serve molcrafts
 # client tool: molcrafts__packages → molcrafts__outline → molcrafts__open
 ```
@@ -26,7 +21,10 @@ Source specs:
 
 - `path/to/repo` — local directory
 - `pkg:<name>` — installed import name
+- `local:<package-dir>` — a package directory in a foreign environment
 - `github:owner/repo[@ref]` — GitHub at a resolved commit
+
+Check what is actually in scope with `molmcp config list`.
 
 Pre-index offline:
 
@@ -48,7 +46,7 @@ molmcp search "RDF" --source molpy
 ```python
 from molmcp import create_plane, load_config
 
-mcp = create_plane("molcrafts", config=load_config("molcrafts.json"))
+mcp = create_plane("molcrafts", config=load_config())  # settings + auto-discovery
 # In a client: packages() → open("molpy.compute.rdf.RDF")
 ```
 

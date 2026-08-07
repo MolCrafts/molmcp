@@ -206,7 +206,7 @@ Install once, then serve **only** the planes your client should see. Use
 pip install molcrafts-molmcp
 molmcp planes
 molmcp serve catalog          # list_planes / route
-molmcp serve molcrafts        # knowledge pages (needs molcrafts.json sources)
+molmcp serve molcrafts        # knowledge pages (needs at least one configured source)
 molmcp serve molvis           # live viewer session
 # Claude Code — one MCP entry per plane you connect:
 #   claude mcp add catalog -- molmcp serve catalog

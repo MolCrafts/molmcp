@@ -38,7 +38,7 @@ first-party providers (`src/molmcp/providers/<name>/`), and only when
 **all** of the following hold:
 
 1. **Explicit opt-in** — env and/or config gate; default off
-   (e.g. `MOLMCP_MOLQ_SUBMIT=1` and config `allow_submit`).
+   (`MolqProvider(allow_submit=True)`).
 2. **Frozen flat signature** — CLI-shaped primitives, not the full
    upstream object graph.
 3. **Path safety** — workdirs constrained by middleware / allowlist;

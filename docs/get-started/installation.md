@@ -50,25 +50,64 @@ uv sync --extra dev
 uv run pytest -v
 ```
 
-## Knowledge sources (`molcrafts.json`)
+## Settings
 
-The **molcrafts** plane indexes packages from a config file (schema_version
-`"2"`). Provider planes do not require it.
+Configuration lives in `~/.molmcp/settings.json` and is edited through the
+CLI. There are no environment variables — `molmcp config list` is the whole
+truth, which a variable that exists in one shell could never be.
 
-```json
-{
-  "schema_version": "2",
-  "sources": {
-    "workspace": ".",
-    "molpy": "pkg:molpy"
-  },
-  "watch": true,
-  "server": { "transport": "stdio" }
-}
+```bash
+molmcp config list
+molmcp config set sources.molpy pkg:molpy
 ```
 
-Optional env allowlist: `MOLMCP_SOURCES=molpy,molrs` restricts which knowledge
-sources appear in `packages` / `outline` / `open`.
+A project may add `.molmcp/settings.json` (checked in) and
+`.molmcp/settings.local.json` (untracked). They layer over the user file in
+that order. Writes target the user file unless `--project` or `--local` is
+given: a plane server inherits its working directory from whichever MCP client
+launched it, so project scope has to be asked for.
+
+### What gets indexed
+
+Installed MolCrafts distributions are discovered automatically — a package
+qualifies by declaring a `molmcp.*` entry point or the `molcrafts` keyword, so
+your dependencies are never dragged in.
+
+The working directory is **not** a source unless you say so. It used to be
+unconditionally, which meant an unconfigured install indexed whatever it was
+started next to; one real install had accumulated two unrelated repositories,
+a monorepo root, and a pile of temp directories that way.
+
+```bash
+molmcp config set indexWorkspace true --project   # index this repo as well
+molmcp config set sources.atomiverse pkg:atomiverse
+```
+
+### Keys
+
+| Key | Meaning |
+|-----|---------|
+| `sources` | Extra sources, `name → spec` (`pkg:`, `local:`, `github:`, or a path) |
+| `indexWorkspace` | Also index the working directory (default `false`) |
+| `knowledgeScope` | Narrow which indexed sources `packages` / `outline` / `open` surface |
+| `excludes` | Extra ignore globs for the file walk |
+| `watch` | Re-index local sources on change (default `true`) |
+| `cacheDir` | Where the index lives (default `~/.cache/molmcp/discovery`) |
+| `maxCacheBytes` | Ceiling on the code index (default 512 MB) |
+| `maxCacheAgeDays` | Retention window for extraction payloads (default 30) |
+| `pythonEnv` | Environment to discover from: a venv root, a python, or a site-packages dir |
+| `discoverInclude` / `discoverExclude` | Force a distribution in or out of auto-discovery |
+| `molexp.workspace` | Default molexp workspace path |
+| `molq.database` | Override the molq job database |
+
+Unknown keys are rejected. A mistyped `indexWorkspaces` that quietly does
+nothing is worse than one that says so.
+
+### `molcrafts.json`
+
+Still accepted with an explicit `--config PATH`, but no longer picked up from
+the working directory — that was the same accident-of-cwd the workspace source
+was.
 
 ## Next steps
 

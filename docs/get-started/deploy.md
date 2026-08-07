@@ -27,8 +27,7 @@ server name.
   ```bash
   pip install molcrafts-molmcp
   ```
-- For the **molcrafts** knowledge plane, a `molcrafts.json` with
-  `schema_version: "2"` and at least one source (see
+- For the **molcrafts** knowledge plane, at least one configured source (see
   [Installation](installation.md)).
 - Optional domain packages for provider planes:
   ```bash
@@ -91,7 +90,7 @@ Full viewer dialogue: [MolVis workbench](../guides/molvis-workbench.md).
 molmcp serve molcrafts --transport streamable-http --host 127.0.0.1 --port 8787
 ```
 
-Non-loopback binds require `server.auth_token_env` in `molcrafts.json`. Prefer
+Non-loopback binds require `server.auth_token_env` in an explicit `--config` file. Prefer
 stdio for local agents.
 
 ## Offline helpers

@@ -113,7 +113,7 @@ The knowledge plane builds on this graph. See
 ```python
 from molmcp import load_config, AppConfig
 
-cfg = load_config("molcrafts.json")  # schema_version "2"
+cfg = load_config("molcrafts.json")  # explicit path; settings otherwise
 ```
 
 Schema v1 mega-server configs are not supported.
