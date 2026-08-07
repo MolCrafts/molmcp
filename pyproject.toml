@@ -1,7 +1,7 @@
 [project]
 name = "molcrafts-molmcp"
-version = "0.3.0"
-description = "Local-first registry, code intelligence, and MCP context plane for MolCrafts"
+version = "0.4.1"
+description = "Multi-plane on-demand MCP for MolCrafts: one product domain per connection"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "BSD-3-Clause"}
@@ -34,7 +34,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "fastmcp>=3.4,<4",
+    "fastmcp==4.0.0b1",
     "jsonschema>=4.25,<5",
     "packaging>=25,<27",
     # <0.26: tree-sitter 0.26.0 segfaults walking large generated JS bundles
@@ -50,11 +50,14 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.23.0",
     "ruff>=0.6",
-  "tox>=4.23",
+    "tox>=4.23",
+    # Provider integration tests require upstream packages (hard fail if missing).
+    "molcrafts-molq>=0.6.0",
+    "molexp",
 ]
 docs = [
-    "zensical>=0.0.51",
-    "molcrafts-zensical-theme>=0.2.3",
+    "zensical>=0.0.53",
+    "molcrafts-zensical-theme>=0.2.5",
 ]
 
 [project.scripts]
@@ -141,3 +144,14 @@ commands_pre = [
 commands = [
   ["{envpython}", "-m", "pytest", "-v"],
 ]
+
+# FastMCP 4 (MCP 2026-07-28): pin slim transitively for uv prereleases
+[tool.uv]
+constraint-dependencies = [
+    "fastmcp-slim==4.0.0b1",
+]
+
+# Prefer monorepo siblings when developing inside MolCrafts checkout.
+[tool.uv.sources]
+molcrafts-molq = { path = "../molq", editable = true }
+molexp = { path = "../molexp", editable = true }
