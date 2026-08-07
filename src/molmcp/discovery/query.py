@@ -220,6 +220,33 @@ class DiscoveryQuery:
 
     # -- structural --------------------------------------------------
 
+    def package_card(self) -> dict:
+        """The one summary line and module count a package listing needs.
+
+        Two indexed reads on ``nodes.kind``. Building the whole module tree
+        to pick a docstring out of it — which is what the packages page used
+        to do — walks every module's children for an answer that is right
+        here.
+        """
+        packages = self.store.nodes_by_kind(NodeKind.PACKAGE)
+        modules = self.store.nodes_by_kind(NodeKind.MODULE)
+        for candidates, origin in (
+            (packages, "package_docstring"),
+            (modules, "module_docstring"),
+        ):
+            for node in sorted(candidates, key=lambda n: (len(n.qualname), n.qualname)):
+                if node.summary and node.summary.strip():
+                    return {
+                        "summary": node.summary.strip(),
+                        "summary_source": origin,
+                        "module_count": len(packages) + len(modules),
+                    }
+        return {
+            "summary": None,
+            "summary_source": "missing",
+            "module_count": len(packages) + len(modules),
+        }
+
     def outline(self, path: str | None = None) -> dict:
         """A packages/modules -> symbols -> members structural map."""
         modules = [

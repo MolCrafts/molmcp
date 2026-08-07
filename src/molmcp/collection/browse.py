@@ -24,26 +24,96 @@ __all__ = [
 
 
 def packages_catalog(collection: CollectionIndex) -> dict[str, Any]:
-    """L0: inject a package directory page for every configured source."""
-    info = collection.info()
-    sources = info.get("sources") if isinstance(info.get("sources"), dict) else {}
+    """L0: inject a package directory page for every configured source.
+
+    One query handle per source. This used to take two — ``collection.info()``
+    opened one to report state and each card opened another — and every open
+    re-walks and re-hashes the source from disk.
+    """
+    states: dict[str, dict[str, Any]] = {}
     cards: list[dict[str, Any]] = []
-    for name in sorted(sources.keys()):
-        state = sources[name] if isinstance(sources[name], dict) else {}
-        card = _package_card(collection, name, state)
+    for binding in collection.sources:
+        state, card = _state_and_card(binding)
+        states[binding.name] = state
         cards.append(card)
-    markdown = _packages_markdown(cards)
+    cards.sort(key=lambda c: str(c.get("name")))
     return {
         "ok": True,
         "code": None,
         "error": None,
-        "markdown": markdown,
+        "markdown": _packages_markdown(cards),
         "data": {
             "packages": cards,
-            "freshness": info.get("freshness"),
-            "coverage": info.get("coverage"),
+            "freshness": _states_freshness(states),
+            "coverage": {
+                "source_count": len(states),
+                "available_sources": sum(
+                    state["status"] == "ok" for state in states.values()
+                ),
+            },
         },
     }
+
+
+def _state_and_card(binding: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Open one source once, and answer both questions from that handle."""
+    card: dict[str, Any] = {
+        "name": binding.name,
+        "status": "ok",
+        "spec": binding.spec,
+        "freshness": "unknown",
+        "summary": None,
+        "summary_source": None,
+        "module_count": None,
+        "role_hint": role_for_source(binding.name),
+        "role_hint_source": "name_fragment" if role_for_source(binding.name) else None,
+        "warnings": [],
+    }
+    state: dict[str, Any] = {
+        "status": "ok",
+        "spec": binding.spec,
+        "namespace": binding.namespace,
+        "snapshot": None,
+        "freshness": "unknown",
+    }
+    try:
+        query = binding.open_query()
+    except Exception as exc:  # noqa: BLE001 — source isolation
+        state.update(status="error", error=str(exc))
+        card.update(status="error", error=str(exc), summary_source="unavailable")
+        return state, card
+    try:
+        snapshot = getattr(query, "snapshot", None)
+        state["snapshot"] = str(getattr(snapshot, "snapshot_id", "") or "") or None
+        freshness = str(getattr(query, "freshness", "unknown"))
+        state["freshness"] = freshness
+        card["freshness"] = freshness
+        summary = query.package_card()
+        card.update(summary)
+        if not summary["summary"]:
+            card["warnings"].append("package summary missing from index")
+    except Exception as exc:  # noqa: BLE001 — source isolation
+        state.update(status="error", error=str(exc))
+        card.update(status="error", error=str(exc), summary_source="unavailable")
+    finally:
+        _close_query(query)
+    return state, card
+
+
+def _states_freshness(states: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    per_source = {
+        name: str(state.get("freshness", "unknown")) for name, state in states.items()
+    }
+    values = set(per_source.values())
+    if "stale" in values:
+        overall = "stale"
+    elif "pending" in values:
+        overall = "pending"
+    elif not values or "unknown" in values:
+        overall = "unknown"
+    else:
+        overall = "fresh"
+    return {"overall": overall, "sources": per_source}
 
 
 def outline_source(
@@ -256,8 +326,15 @@ def compose_context(
     packages = packages_catalog(collection)
     pages.append(str(packages.get("markdown") or ""))
 
-    info = collection.info()
-    src_map = info.get("sources") if isinstance(info.get("sources"), dict) else {}
+    # The routing guide only needs each source's name and state, which the
+    # cards above already carry. Calling collection.info() for it re-opened
+    # — and so re-walked and re-hashed — every source a second time.
+    data = packages.get("data") if isinstance(packages.get("data"), dict) else {}
+    src_map = {
+        str(card.get("name")): card
+        for card in (data.get("packages") or [])
+        if isinstance(card, dict) and card.get("name")
+    }
     suggest = build_routing_guide(task or "", sources=src_map)
     pages.append(_suggest_markdown(suggest))
 

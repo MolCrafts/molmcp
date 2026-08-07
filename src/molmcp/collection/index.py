@@ -887,16 +887,20 @@ class CollectionIndex:
                 used_chars=used_chars,
             )
 
+        # Each item is measured once and the running total carried forward.
+        # Re-serialising the whole pack per addition made fitting quadratic
+        # in a payload that grows with every pass.
+        envelope = _json_size(build(truncated=True, used_chars=budget_chars))
+        used = envelope
+
         # Compact anchors have priority over expanded details.
         for index, hit in enumerate(hits):
-            kept_hits.append(hit)
-            if (
-                _json_size(build(truncated=False, used_chars=budget_chars))
-                > budget_chars
-            ):
-                kept_hits.pop()
+            cost = _item_size(hit.to_dict())
+            if used + cost > budget_chars:
                 omitted["hits"] = len(hits) - index
                 break
+            kept_hits.append(hit)
+            used += cost
         if omitted["hits"]:
             # Details for omitted anchors would be unusable.
             allowed_refs = {hit.ref for hit in kept_hits}
@@ -906,17 +910,12 @@ class CollectionIndex:
 
         clipped = False
         for index, detail in enumerate(details):
-            kept_details.append(detail)
-            if (
-                _json_size(build(truncated=False, used_chars=budget_chars))
-                <= budget_chars
-            ):
+            cost = _item_size(detail)
+            if used + cost <= budget_chars:
+                kept_details.append(detail)
+                used += cost
                 continue
-            kept_details.pop()
-            remaining = budget_chars - _json_size(
-                build(truncated=True, used_chars=budget_chars)
-            )
-            compact, was_clipped = _compact_detail(detail, max(remaining, 0))
+            compact, was_clipped = _compact_detail(detail, max(budget_chars - used, 0))
             if compact is not None:
                 kept_details.append(compact)
                 clipped = was_clipped
@@ -924,9 +923,26 @@ class CollectionIndex:
             break
 
         truncated = bool(omitted["hits"] or omitted["details"] or clipped)
-        pack = build(truncated=truncated)
-        used = _json_size(pack)
-        pack = replace(pack, used_chars=used)
+
+        # The running total ignores fields derived from what was kept —
+        # ``suggested_actions`` grows with the hits — so verify exactly and
+        # shed from the tail if the estimate ran over. In practice this
+        # settles in one pass; it is a correction, not the sizing loop.
+        while True:
+            pack = build(truncated=truncated)
+            if _json_size(pack) <= budget_chars:
+                break
+            if kept_details:
+                kept_details.pop()
+                omitted["details"] += 1
+            elif kept_hits:
+                kept_hits.pop()
+                omitted["hits"] += 1
+            else:
+                break
+            truncated = True
+
+        pack = replace(pack, used_chars=_json_size(pack))
         # Account for the digit width of ``used_chars`` itself.
         for _ in range(3):
             actual = _json_size(pack)
@@ -1097,6 +1113,18 @@ def _jsonable(value: Any) -> Any:
     if hasattr(value, "value"):
         return _jsonable(value.value)
     return str(value)
+
+
+def _item_size(item: Mapping[str, Any]) -> int:
+    """Serialised cost of one pack entry, plus its separator."""
+    return (
+        len(
+            json.dumps(
+                dict(item), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+        )
+        + 1
+    )
 
 
 def _json_size(pack: ContextPack) -> int:
