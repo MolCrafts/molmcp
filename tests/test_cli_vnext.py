@@ -27,7 +27,7 @@ def _config(tmp_path):
     path.write_text(
         json.dumps(
             {
-                "schema_version": "1",
+                "schema_version": "2",
                 "sources": {"project": "."},
                 "watch": False,
             }
@@ -37,7 +37,14 @@ def _config(tmp_path):
     return path
 
 
-def test_no_arguments_defaults_to_serve(monkeypatch, tmp_path):
+def test_no_arguments_defaults_to_planes(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert cli.main([]) == 0
+    out = capsys.readouterr().out
+    assert "multi-link" in out.lower() or "planes" in out.lower() or "catalog" in out
+
+
+def test_serve_requires_plane(monkeypatch, tmp_path, capsys):
     captured = {}
 
     class FakeServer:
@@ -45,9 +52,8 @@ def test_no_arguments_defaults_to_serve(monkeypatch, tmp_path):
             captured.update(kwargs)
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cli, "create_server", lambda **kwargs: FakeServer())
-    assert cli.main([]) == 0
-    # Stdio clients (agent hosts) must not get FastMCP banners / INFO chatter.
+    monkeypatch.setattr(cli, "create_plane", lambda *a, **kwargs: FakeServer())
+    assert cli.main(["serve", "catalog"]) == 0
     assert captured == {
         "transport": "stdio",
         "show_banner": False,
@@ -98,10 +104,11 @@ def test_non_loopback_override_requires_auth(monkeypatch, tmp_path, capsys):
         def run(self, **kwargs):
             raise AssertionError("must fail before run")
 
-    monkeypatch.setattr(cli, "create_server", lambda **kwargs: FakeServer())
+    monkeypatch.setattr(cli, "create_plane", lambda *a, **kwargs: FakeServer())
     code = cli.main(
         [
             "serve",
+            "catalog",
             "--config",
             str(_config(tmp_path)),
             "--transport",
@@ -121,55 +128,7 @@ def _patch_collection(monkeypatch):
     )
 
 
-def test_env_flag_is_threaded_into_discovery(monkeypatch, tmp_path):
-    captured: dict[str, str | None] = {}
-
-    def fake(locator=None):
-        captured["locator"] = locator
-        return _empty_report(locator)
-
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("MOLMCP_ENV", raising=False)
-    monkeypatch.setattr("molmcp.environment.discover_sources", fake)
-    _patch_collection(monkeypatch)
-    assert cli.main(["info", "--env", "/envs/x"]) == 0
-    assert captured["locator"] == "/envs/x"
-
-
-def test_molmcp_env_used_when_flag_absent(monkeypatch, tmp_path):
-    captured: dict[str, str | None] = {}
-
-    def fake(locator=None):
-        captured["locator"] = locator
-        return _empty_report(locator)
-
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("MOLMCP_ENV", "/envs/y")
-    monkeypatch.setattr("molmcp.environment.discover_sources", fake)
-    _patch_collection(monkeypatch)
-    assert cli.main(["info"]) == 0
-    assert captured["locator"] == "/envs/y"
-
-
-def test_locator_is_none_without_flag_or_env(monkeypatch, tmp_path):
-    captured: dict[str, str | None] = {}
-
-    def fake(locator=None):
-        captured["locator"] = locator
-        return _empty_report(locator)
-
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("MOLMCP_ENV", raising=False)
-    monkeypatch.setattr("molmcp.environment.discover_sources", fake)
-    _patch_collection(monkeypatch)
-    assert cli.main(["info"]) == 0
-    assert captured["locator"] is None
-
-
-def test_bad_env_locator_exits_two(monkeypatch, tmp_path, capsys):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("MOLMCP_ENV", raising=False)
-    missing = tmp_path / "nonexistent-env"
-    code = cli.main(["info", "--env", str(missing)])
-    assert code == 2
-    assert "molmcp:" in capsys.readouterr().err
+def test_route_cli(capsys):
+    assert cli.main(["route", "draw a molecule"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert any(m["plane"] == "molvis" for m in payload["planes"])
