@@ -1,16 +1,17 @@
-"""Startup-time check: every tool must declare ``readOnlyHint`` (or destructiveHint).
+"""Startup-time check: every tool must declare ``read_only_hint`` (or destructive).
 
 This is *not* a request-time middleware — it's a one-shot validation pass
-run by ``create_server`` after all providers have registered their tools.
-Catching this at server build time gives a clear actionable error to the
-provider author instead of silently letting clients auto-approve mutating
-tools.
+run by ``create_plane`` after tools have registered. Catching this at server
+build time gives a clear actionable error to the provider author instead of
+silently letting clients auto-approve mutating tools.
+
+Field names follow MCP SDK v2 / FastMCP 4 snake_case (wire remains camelCase).
 """
 
 from __future__ import annotations
 
 from fastmcp import FastMCP
-from fastmcp.tools.tool import Tool
+from fastmcp.tools import Tool
 
 
 class MissingAnnotationsError(RuntimeError):
@@ -35,9 +36,8 @@ def _iter_tools(mcp: FastMCP, *, _seen: set[int] | None = None):
             if isinstance(component, Tool):
                 yield component
 
-        # ``FastMCP.mount`` wraps a child server in a private provider adapter.
-        # Walk through that adapter so startup validation covers namespaced
-        # package providers as well as tools registered directly on the root.
+        # Legacy FastMCP.mount adapters (if any); multi-plane servers register
+        # tools on the root only — walk children so validation still covers them.
         inner = getattr(provider, "_inner", None)
         child = getattr(inner, "server", None)
         if isinstance(child, FastMCP):
@@ -45,7 +45,7 @@ def _iter_tools(mcp: FastMCP, *, _seen: set[int] | None = None):
 
 
 def validate_tool_annotations(mcp: FastMCP, *, strict: bool = True) -> list[str]:
-    """Check every registered tool exposes ``readOnlyHint`` or ``destructiveHint``.
+    """Check every registered tool exposes ``read_only_hint`` or ``destructive_hint``.
 
     Args:
         mcp: The server to check.
@@ -62,15 +62,16 @@ def validate_tool_annotations(mcp: FastMCP, *, strict: bool = True) -> list[str]
         if ann is None:
             warnings.append(
                 f"Tool {tool.name!r} has no ToolAnnotations — "
-                f"set at least readOnlyHint."
+                f"set at least read_only_hint."
             )
             continue
-        read_only = getattr(ann, "readOnlyHint", None)
-        destructive = getattr(ann, "destructiveHint", None)
+        # MCP SDK v2 / FastMCP 4: snake_case fields (2026-07-28 era).
+        read_only = getattr(ann, "read_only_hint", None)
+        destructive = getattr(ann, "destructive_hint", None)
         if read_only is None and destructive is None:
             warnings.append(
-                f"Tool {tool.name!r} annotations have neither readOnlyHint "
-                f"nor destructiveHint set."
+                f"Tool {tool.name!r} annotations have neither read_only_hint "
+                f"nor destructive_hint set."
             )
     if warnings and strict:
         raise MissingAnnotationsError(

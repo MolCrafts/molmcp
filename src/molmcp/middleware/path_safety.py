@@ -8,7 +8,7 @@ from pathlib import PurePosixPath, PureWindowsPath
 import mcp.types as mt
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools import ToolResult
 
 logger = logging.getLogger(__name__)
 
