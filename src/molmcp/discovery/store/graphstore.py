@@ -17,9 +17,12 @@ import sqlite3
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator
 
 from ..schema import CodeGraph, Edge, FileRecord, Node, UnresolvedRef
+
+#: SQLite caps host variables per statement; batch reads chunk to fit.
+_MAX_SQL_VARIABLES = 900
 
 _SCHEMA_SQL = (
     importlib.resources.files("molmcp.discovery.store")
@@ -328,6 +331,31 @@ class GraphStore:
         )
         return _row_to_node(row) if row else None
 
+    def get_nodes(self, node_ids: Iterable[str]) -> dict[str, Node]:
+        """Load many nodes per statement, keyed by id.
+
+        Callers almost always know every id up front — a module's children,
+        an edge list's endpoints — and issuing one ``WHERE id = ?`` apiece
+        cost ``outline`` 1312 round trips over 75 modules.
+
+        Chunked because SQLite caps host variables per statement; missing
+        ids are simply absent from the result.
+        """
+        unique = list(dict.fromkeys(node_ids))
+        if not unique:
+            return {}
+        found: dict[str, Node] = {}
+        conn = self._conn()
+        for start in range(0, len(unique), _MAX_SQL_VARIABLES):
+            chunk = unique[start : start + _MAX_SQL_VARIABLES]
+            placeholders = ",".join("?" for _ in chunk)
+            for row in conn.execute(
+                f"SELECT * FROM nodes WHERE id IN ({placeholders})", chunk
+            ):
+                node = _row_to_node(row)
+                found[node.id] = node
+        return found
+
     def nodes_by_qualname(self, qualname: str) -> list[Node]:
         return [
             _row_to_node(r)
@@ -401,7 +429,12 @@ class GraphStore:
         are de-duplicated and capped at ``limit``.
         """
         conn = self._conn()
-        fetch = max(limit * 4, 40)
+        # The kind filter is part of the query, not a post-filter. Dropping
+        # wrong-kind rows after a fixed-size prefetch starved rare kinds:
+        # asking for the ten matching classes among forty matching functions
+        # returned whatever few classes happened to rank inside the window.
+        kind_clause = " AND n.kind = ?" if kind is not None else ""
+        kind_params: tuple = (str(kind),) if kind is not None else ()
         ids: list[str] = []
         if self.fts_available():
             match = _fts_match(query)
@@ -415,10 +448,12 @@ class GraphStore:
                             # `read_lammps_data` beats a reader that merely
                             # mentions "frame" in prose. Column order is
                             # (node_id, name, qualname, docstring, summary).
-                            "SELECT node_id FROM nodes_fts WHERE nodes_fts "
-                            "MATCH ? ORDER BY bm25(nodes_fts, 0.0, 10.0, 5.0, "
+                            "SELECT f.node_id FROM nodes_fts f "
+                            "JOIN nodes n ON n.id = f.node_id "
+                            f"WHERE nodes_fts MATCH ?{kind_clause} "
+                            "ORDER BY bm25(nodes_fts, 0.0, 10.0, 5.0, "
                             "1.0, 2.0) LIMIT ?",
-                            (match, fetch),
+                            (match, *kind_params, limit),
                         )
                     ]
                 except sqlite3.OperationalError:
@@ -428,22 +463,14 @@ class GraphStore:
             ids = [
                 r["id"]
                 for r in conn.execute(
-                    "SELECT id FROM nodes WHERE name LIKE ? OR qualname LIKE ? "
-                    "OR IFNULL(summary, '') LIKE ? ORDER BY qualname LIMIT ?",
-                    (like, like, like, fetch),
+                    "SELECT n.id FROM nodes n WHERE (n.name LIKE ? "
+                    "OR n.qualname LIKE ? OR IFNULL(n.summary, '') LIKE ?)"
+                    f"{kind_clause} ORDER BY n.qualname LIMIT ?",
+                    (like, like, like, *kind_params, limit),
                 )
             ]
-        out: list[Node] = []
-        for node_id in ids:
-            node = self.get_node(node_id)
-            if node is None:
-                continue
-            if kind is not None and node.kind != kind:
-                continue
-            out.append(node)
-            if len(out) >= limit:
-                break
-        return out
+        found = self.get_nodes(ids)
+        return [found[node_id] for node_id in ids if node_id in found]
 
 
 def _row_to_node(row: sqlite3.Row) -> Node:

@@ -646,3 +646,71 @@ class TestSessionStoreClose:
         store.open("s1")
         store.close("s1")
         assert store.open("s1").session_id == "s1"
+
+
+class TestOpenDoesNotBlockTheStore:
+    """Building a stage is slow; holding the registry lock across it is not
+    necessary. The production factory performs a browser handshake with a
+    5x2s budget, and for that whole window every other session's list, get
+    and close waited on a lock they had no reason to want."""
+
+    def test_another_session_is_usable_while_one_is_opening(self):
+        import threading
+
+        released = threading.Event()
+        building = threading.Event()
+
+        def slow_factory(name: str):
+            if name == "slow":
+                building.set()
+                released.wait(timeout=5)
+            return FakeStage(name)
+
+        store = SessionStore(slow_factory)
+        store.open("ready")
+
+        opener = threading.Thread(target=store.open, args=("slow",))
+        opener.start()
+        try:
+            assert building.wait(timeout=5)
+            # The store must answer for the session that is already live.
+            assert [row["session_id"] for row in store.list()] == ["ready"]
+            assert store.get("ready").session_id == "ready"
+        finally:
+            released.set()
+            opener.join(timeout=5)
+
+        assert {row["session_id"] for row in store.list()} == {"ready", "slow"}
+
+    def test_a_duplicate_id_is_still_refused_before_any_stage_is_built(self):
+        built: list[str] = []
+
+        def counting_factory(name: str):
+            built.append(name)
+            return FakeStage(name)
+
+        store = SessionStore(counting_factory)
+        store.open("dup")
+
+        with pytest.raises(SessionExistsError):
+            store.open("dup")
+
+        assert built == ["dup"]
+
+    def test_a_failed_build_frees_the_id_for_a_retry(self):
+        attempts: list[str] = []
+
+        def flaky_factory(name: str):
+            attempts.append(name)
+            if len(attempts) == 1:
+                raise RuntimeError("no browser")
+            return FakeStage(name)
+
+        store = SessionStore(flaky_factory)
+        with pytest.raises(RuntimeError):
+            store.open("retry")
+
+        session = store.open("retry")
+
+        assert session.session_id == "retry"
+        assert attempts == ["retry", "retry"]

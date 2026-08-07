@@ -379,6 +379,9 @@ class SessionStore:
         self._journal_maxlen = journal_maxlen
         self._lock = threading.Lock()
         self._sessions: dict[str, ViewerSession] = {}
+        #: Ids claimed but not yet registered, so a concurrent open of the
+        #: same id is refused rather than building a second stage for it.
+        self._opening: set[str] = set()
 
     def open(self, session_id: str | None = None) -> ViewerSession:
         """Build a stage and register a session around it.
@@ -391,18 +394,25 @@ class SessionStore:
             the stage under ``stage``.
 
         Raises:
-            SessionExistsError: *session_id* is already live. The existing
-                session is left untouched and no stage is built.
+            SessionExistsError: *session_id* is already live, or another
+                caller is opening it right now. The existing session is left
+                untouched and no stage is built.
             Exception: Whatever the stage factory raises propagates
                 unchanged. The stage is built before anything is
                 registered, so a failed open leaves the store untouched
                 and the id free to retry.
         """
+        # Claim the id under the lock, then build outside it. The production
+        # factory performs a browser handshake with a multi-second budget,
+        # and holding the registry lock across that made every other
+        # session's list/get/close wait on it for no reason.
         with self._lock:
             resolved = self._generate_id() if session_id is None else session_id
-            if resolved in self._sessions:
+            if resolved in self._sessions or resolved in self._opening:
                 raise SessionExistsError(f"viewer session already open: {resolved}")
-            # Build first: a failing factory must leave nothing registered.
+            self._opening.add(resolved)
+
+        try:
             stage = self._stage_factory(resolved)
             journal = Journal(maxlen=self._journal_maxlen)
             self._subscribe(stage, journal)
@@ -413,7 +423,12 @@ class SessionStore:
                 journal=journal,
                 created_at=time.time(),
             )
-            self._sessions[resolved] = session
+            with self._lock:
+                self._sessions[resolved] = session
+        finally:
+            # A failed build registers nothing and frees the id to retry.
+            with self._lock:
+                self._opening.discard(resolved)
         return session
 
     def get(self, session_id: str) -> ViewerSession:
@@ -471,7 +486,7 @@ class SessionStore:
         """Mint an unused session id (caller holds the lock)."""
         while True:
             candidate = f"molvis-{uuid.uuid4().hex[:12]}"
-            if candidate not in self._sessions:
+            if candidate not in self._sessions and candidate not in self._opening:
                 return candidate
 
     def _subscribe(self, stage: Stage, journal: Journal) -> None:

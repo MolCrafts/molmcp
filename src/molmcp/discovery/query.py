@@ -289,13 +289,14 @@ class DiscoveryQuery:
     def _load_pairs(
         self, pairs: list[tuple[str, Edge]], limit: int | None
     ) -> list[tuple[Node, Edge]]:
+        found = self.store.get_nodes(node_id for node_id, _ in pairs)
         out: list[tuple[Node, Edge]] = []
         seen: set[str] = set()
         for node_id, edge in pairs:
             if node_id in seen:
                 continue
             seen.add(node_id)
-            node = self.store.get_node(node_id)
+            node = found.get(node_id)
             if node is None:
                 continue
             out.append((node, edge))
@@ -304,13 +305,14 @@ class DiscoveryQuery:
         return out
 
     def _load(self, ids: list[str], limit: int | None) -> list[Node]:
+        found = self.store.get_nodes(ids)
         out: list[Node] = []
         seen: set[str] = set()
         for node_id in ids:
             if node_id in seen:
                 continue
             seen.add(node_id)
-            node = self.store.get_node(node_id)
+            node = found.get(node_id)
             if node is None:
                 continue
             out.append(node)
