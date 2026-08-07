@@ -164,15 +164,53 @@ class ExtractCache:
         conn.commit()
         return removed
 
-    def vacuum(self) -> None:
-        """Return freed pages to the filesystem.
+    def vacuum(self) -> dict[str, object]:
+        """Return freed pages to the filesystem, and report what came back.
 
         Pruning alone only marks pages reusable, so a cache that once grew to
         gigabytes keeps occupying them. Exclusive and proportional to file
-        size — an operator action (``molmcp cache prune --vacuum``), never
+        size — an operator action (``molmcp cache --vacuum``), never
         something a tool call does behind the user's back.
+
+        Under WAL the VACUUM rebuilds the database *into the log*, and the
+        main file only shrinks when a checkpoint folds it back. A live reader
+        blocks that checkpoint, so the size is measured rather than assumed:
+        claiming success off the VACUUM alone once reported a 3.5 GB file as
+        reclaimed while it sat untouched beside a 2.3 GB log.
+
+        A refused attempt costs nothing, which takes a pre-flight check:
+        VACUUM writes the entire rebuild into the log *before* the
+        checkpoint can fail, so retrying against a live plane server grew a
+        real 6 GB cache by half a gigabyte each time. If a checkpoint cannot
+        pass now, one would not pass after the rebuild either.
+
+        Returns:
+            ``before_bytes`` / ``after_bytes``; ``checkpointed`` false when a
+            reader held the log open, and ``skipped`` true when that was
+            known in advance and no rebuild was attempted.
         """
-        self._connect().execute("VACUUM")
+        before = self.size_bytes()
+        conn = self._connect()
+        # Gate on a trial checkpoint. An exclusive transaction is no use
+        # here — under WAL a writer does not exclude readers, which is the
+        # whole point of the mode. A log that cannot be truncated now is
+        # pinned by somebody, and rebuilding into it only makes it larger.
+        busy, _, _ = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if busy != 0:
+            return {
+                "before_bytes": before,
+                "after_bytes": self.size_bytes(),
+                "checkpointed": False,
+                "skipped": True,
+            }
+        conn.execute("VACUUM")
+        busy, _, _ = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        return {
+            "before_bytes": before,
+            "after_bytes": self.size_bytes(),
+            "checkpointed": busy == 0,
+            "skipped": False,
+        }
 
     def size_bytes(self) -> int:
         """On-disk size of the cache, including its write-ahead log."""

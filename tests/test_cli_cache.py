@@ -11,20 +11,24 @@ import json
 import sqlite3
 import time
 
+import pytest
+
 from molmcp import cli
+from molmcp import settings as st
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    fake = tmp_path / "home"
+    fake.mkdir()
+    monkeypatch.setattr(st.Path, "home", staticmethod(lambda: fake))
+    return fake
 
 
 def _config(tmp_path, cache_dir) -> None:
-    (tmp_path / "molcrafts.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "2",
-                "sources": {"project": "."},
-                "cache_dir": str(cache_dir),
-                "watch": False,
-            }
-        ),
-        encoding="utf-8",
+    """Point this install's cache at a scratch directory."""
+    st.write_settings_file(
+        st.user_settings_path(), {"cacheDir": str(cache_dir), "watch": False}
     )
 
 
@@ -56,7 +60,7 @@ def _entries(cache_dir) -> int:
         conn.close()
 
 
-def test_cache_reports_size_and_entry_count(monkeypatch, tmp_path, capsys):
+def test_cache_reports_size_and_entry_count(home, monkeypatch, tmp_path, capsys):
     cache_dir = tmp_path / "cache"
     _seed(cache_dir, [("a.py", time.time()), ("b.py", time.time())])
     _config(tmp_path, cache_dir)
@@ -72,7 +76,7 @@ def test_cache_reports_size_and_entry_count(monkeypatch, tmp_path, capsys):
 
 
 def test_cache_separates_live_content_from_disk_footprint(
-    monkeypatch, tmp_path, capsys
+    home, monkeypatch, tmp_path, capsys
 ):
     """After a prune the file keeps its size; only live content drops."""
     cache_dir = tmp_path / "cache"
@@ -89,7 +93,7 @@ def test_cache_separates_live_content_from_disk_footprint(
 
 
 def test_cache_prune_drops_payloads_past_the_retention_window(
-    monkeypatch, tmp_path, capsys
+    home, monkeypatch, tmp_path, capsys
 ):
     cache_dir = tmp_path / "cache"
     now = time.time()
@@ -105,7 +109,7 @@ def test_cache_prune_drops_payloads_past_the_retention_window(
 
 
 def test_cache_vacuum_returns_freed_pages_to_the_filesystem(
-    monkeypatch, tmp_path, capsys
+    home, monkeypatch, tmp_path, capsys
 ):
     cache_dir = tmp_path / "cache"
     now = time.time()
@@ -119,11 +123,16 @@ def test_cache_vacuum_returns_freed_pages_to_the_filesystem(
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["pruned"] == 400
-    assert payload["vacuumed"] is True
+    # The claim is measured, not asserted: a WAL vacuum only shrinks the file
+    # once its checkpoint folds the rebuild back.
+    assert payload["vacuumed"]["checkpointed"] is True
+    assert payload["vacuumed"]["after_bytes"] < payload["vacuumed"]["before_bytes"]
     assert (cache_dir / "extract.db").stat().st_size < before
 
 
-def test_cache_reports_a_busy_cache_without_a_traceback(monkeypatch, tmp_path, capsys):
+def test_cache_reports_a_busy_cache_without_a_traceback(
+    home, monkeypatch, tmp_path, capsys
+):
     """Live plane servers hold the cache; that is an operating condition."""
     cache_dir = tmp_path / "cache"
     _seed(cache_dir, [("old.py", time.time() - 90 * 86400)])
@@ -142,7 +151,7 @@ def test_cache_reports_a_busy_cache_without_a_traceback(monkeypatch, tmp_path, c
     assert "molmcp serve" in err
 
 
-def test_cache_is_read_only_without_flags(monkeypatch, tmp_path, capsys):
+def test_cache_is_read_only_without_flags(home, monkeypatch, tmp_path, capsys):
     cache_dir = tmp_path / "cache"
     _seed(cache_dir, [("old.py", time.time() - 90 * 86400)])
     _config(tmp_path, cache_dir)
@@ -152,3 +161,58 @@ def test_cache_is_read_only_without_flags(monkeypatch, tmp_path, capsys):
 
     assert _entries(cache_dir) == 1
     assert json.loads(capsys.readouterr().out)["pruned"] is None
+
+
+def _snapshot(cache_dir, snapshot_id: str, spec: str) -> None:
+    """Materialise one indexed snapshot the way the engine leaves it."""
+    profile = cache_dir / "snapshots" / snapshot_id / "profiles" / "build"
+    profile.mkdir(parents=True, exist_ok=True)
+    (profile / "manifest.json").write_text(
+        json.dumps(
+            {"snapshot_id": snapshot_id, "spec": spec, "indexed_at": time.time()}
+        ),
+        encoding="utf-8",
+    )
+    (profile / "graph.db").write_bytes(b"x" * 4096)
+    refs = cache_dir / "refs"
+    refs.mkdir(parents=True, exist_ok=True)
+    (refs / f"{snapshot_id}.json").write_text(
+        json.dumps({"spec": spec, "snapshot_id": snapshot_id}), encoding="utf-8"
+    )
+
+
+def test_gc_drops_snapshots_for_sources_no_longer_in_scope(
+    home, monkeypatch, tmp_path, capsys
+):
+    """The cwd default left snapshots for unrelated repos and /private/tmp."""
+    cache_dir = tmp_path / "cache"
+    _seed(cache_dir, [("a.py", time.time())])
+    _snapshot(cache_dir, "keep", "pkg:molpy")
+    _snapshot(cache_dir, "junk", "/Users/someone/work/Empire-Trilogy")
+    st.write_settings_file(
+        st.user_settings_path(),
+        {"cacheDir": str(cache_dir), "sources": {"molpy": "pkg:molpy"}},
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.main(["cache", "--gc"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["gc"]["removed_snapshots"] == 1
+    assert (cache_dir / "snapshots" / "keep").is_dir()
+    assert not (cache_dir / "snapshots" / "junk").exists()
+    assert (cache_dir / "refs" / "keep.json").is_file()
+    assert not (cache_dir / "refs" / "junk.json").exists()
+
+
+def test_gc_is_not_run_unless_asked(home, monkeypatch, tmp_path, capsys):
+    cache_dir = tmp_path / "cache"
+    _seed(cache_dir, [("a.py", time.time())])
+    _snapshot(cache_dir, "junk", "/somewhere/else")
+    _config(tmp_path, cache_dir)
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.main(["cache"]) == 0
+
+    assert (cache_dir / "snapshots" / "junk").is_dir()
+    assert json.loads(capsys.readouterr().out)["gc"] is None

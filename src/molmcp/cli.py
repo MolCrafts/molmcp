@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from . import settings
 from .client_config import render_client
 from .config import AppConfig, ConfigurationError, load_config
 from .planes import known_plane_ids, list_plane_infos, route_task
@@ -132,6 +133,27 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     index.add_argument("--force", action="store_true")
 
+    config_cmd = commands.add_parser(
+        "config",
+        help="Read or edit molmcp settings (~/.molmcp/settings.json).",
+    )
+    config_actions = config_cmd.add_subparsers(dest="config_action", required=True)
+    config_actions.add_parser("list", help="Show the resolved settings.")
+    config_get = config_actions.add_parser("get", help="Read one key.")
+    config_get.add_argument("key")
+    config_set = config_actions.add_parser("set", help="Set one key.")
+    _scope_arguments(config_set)
+    config_set.add_argument("key")
+    config_set.add_argument("value")
+    config_add = config_actions.add_parser("add", help="Append to a list key.")
+    _scope_arguments(config_add)
+    config_add.add_argument("key")
+    config_add.add_argument("value")
+    config_remove = config_actions.add_parser("remove", help="Unset a key.")
+    _scope_arguments(config_remove)
+    config_remove.add_argument("key")
+    config_remove.add_argument("value", nargs="?", default=None)
+
     cache = commands.add_parser(
         "cache",
         help="Inspect or reclaim the shared discovery cache.",
@@ -147,6 +169,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Return freed pages to the filesystem (implies --prune).",
     )
+    cache.add_argument(
+        "--gc",
+        action="store_true",
+        help="Drop cached snapshots for sources that are no longer configured.",
+    )
 
     registry = commands.add_parser("registry", help="Inspect capability manifests.")
     registry_commands = registry.add_subparsers(dest="registry_command", required=True)
@@ -157,6 +184,26 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _config_argument(listing)
     return parser
+
+
+def _scope_arguments(parser: argparse.ArgumentParser) -> None:
+    """Which settings file a `config` write targets.
+
+    Neither flag means the user file: a plane server's working directory is
+    whatever the MCP client that launched it happened to be started in, so
+    project scope has to be asked for.
+    """
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument(
+        "--project",
+        action="store_true",
+        help="Target ./.molmcp/settings.json instead of the user file.",
+    )
+    scope.add_argument(
+        "--local",
+        action="store_true",
+        help="Target ./.molmcp/settings.local.json (untracked).",
+    )
 
 
 def _config_argument(parser: argparse.ArgumentParser) -> None:
@@ -362,6 +409,55 @@ def _index(args: argparse.Namespace) -> int:
     return 0
 
 
+def _config(args: argparse.Namespace) -> int:
+    """Read or edit the settings that decide what this install indexes.
+
+    Writes go to the user file unless ``--project``/``--local`` is given:
+    a plane server inherits its working directory from whichever MCP client
+    launched it, so a project-scoped default would make configuration
+    depend on an accident.
+    """
+    if args.config_action == "list":
+        _emit(settings.load_settings(Path.cwd()).to_dict())
+        return 0
+    if args.config_action == "get":
+        _emit(
+            settings.get_value(settings.load_settings(Path.cwd()).to_dict(), args.key)
+        )
+        return 0
+    if getattr(args, "project", False) or getattr(args, "local", False):
+        target = settings.project_settings_path(Path.cwd(), local=args.local)
+    else:
+        target = settings.user_settings_path()
+    if args.config_action == "set":
+        settings.set_value(target, args.key, args.value)
+    elif args.config_action == "add":
+        settings.add_value(target, args.key, args.value)
+    else:
+        settings.remove_value(target, args.key, args.value)
+    print(f"wrote {target}", file=sys.stderr)
+    _emit(settings.read_settings_file(target))
+    return 0
+
+
+def _cache_hint(
+    vacuum_report: dict[str, Any] | None, size: int, used: int
+) -> str | None:
+    """One actionable sentence, or nothing when there is nothing to say."""
+    if vacuum_report is not None and not vacuum_report["checkpointed"]:
+        return (
+            "a running `molmcp serve` process held the write-ahead log open, "
+            "so the rebuilt database could not be folded back — stop the "
+            "plane servers and re-run `molmcp cache --vacuum`"
+        )
+    if vacuum_report is None and size - used >= 64 * 1024 * 1024:
+        return (
+            "run `molmcp cache --vacuum` (with no plane server running) to "
+            "return the freed pages to the filesystem"
+        )
+    return None
+
+
 def _cache(args: argparse.Namespace) -> int:
     """Report the shared cache, and optionally reclaim it.
 
@@ -369,14 +465,20 @@ def _cache(args: argparse.Namespace) -> int:
     both are too expensive to repeat inside a tool call. Reclaiming a cache
     that already grew large is therefore an explicit operator action.
     """
-    from .discovery.cache import ExtractCache
+    from .discovery.cache import ExtractCache, SnapshotCache
     from .discovery.config import DiscoveryConfig
     from .discovery.schema import ANALYZER_VERSION
 
+    vacuum_report: dict[str, Any] | None = None
     config = _load(args)
     discovery = DiscoveryConfig(
         cache_dir=config.cache_dir or DiscoveryConfig().cache_dir
     )
+    gc_report: dict[str, Any] | None = None
+    if args.gc:
+        gc_report = SnapshotCache(discovery).collect_out_of_scope(
+            set(config.sources.values())
+        )
     cache = ExtractCache(discovery.cache_dir / "extract.db", ANALYZER_VERSION)
     try:
         if not cache.exists():
@@ -407,7 +509,7 @@ def _cache(args: argparse.Namespace) -> int:
                         break
                     pruned += shed
             if args.vacuum:
-                cache.vacuum()
+                vacuum_report = cache.vacuum()
         except sqlite3.OperationalError as exc:
             raise ConfigurationError(
                 f"cannot reclaim {cache.db_path}: {exc}. A running "
@@ -432,13 +534,9 @@ def _cache(args: argparse.Namespace) -> int:
                     "limit_bytes": discovery.max_extract_cache_bytes,
                 },
                 "pruned": pruned,
-                "vacuumed": bool(args.vacuum),
-                "hint": (
-                    None
-                    if args.vacuum or size - used < 64 * 1024 * 1024
-                    else "run `molmcp cache --vacuum` (with no plane server "
-                    "running) to return the freed pages to the filesystem"
-                ),
+                "vacuumed": vacuum_report,
+                "gc": gc_report,
+                "hint": _cache_hint(vacuum_report, size, used),
             }
         )
     finally:
@@ -477,6 +575,7 @@ def main(argv: list[str] | None = None) -> int:
         "search": _search,
         "explore": _explore,
         "index": _index,
+        "config": _config,
         "cache": _cache,
         "registry": _registry,
     }
@@ -487,6 +586,7 @@ def main(argv: list[str] | None = None) -> int:
         ManifestError,
         FileNotFoundError,
         ValueError,
+        settings.SettingsError,
         # A busy or corrupt cache is an operating condition, not a crash:
         # the CLI owes the user a sentence, not a traceback.
         sqlite3.Error,

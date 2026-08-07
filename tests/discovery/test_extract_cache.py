@@ -296,3 +296,79 @@ class TestEngineBoundsTheExtractCache:
         engine.close()
 
         assert _count(db_path, "path = 'later.py'") == 1
+
+
+class TestVacuumActuallyReclaims:
+    """`vacuumed: true` has to mean the space came back.
+
+    Under WAL, VACUUM rebuilds the database *into the log*; the main file
+    only shrinks once a checkpoint folds it back. Reporting success off the
+    VACUUM alone once claimed a 3.5 GB file had been reclaimed while it sat
+    there untouched beside a 2.3 GB write-ahead log.
+    """
+
+    def test_vacuum_shrinks_the_file_and_reports_what_it_freed(self, tmp_path):
+        cache = _cache(tmp_path)
+        try:
+            _put_bulk(cache, 200)
+            cache.prune_older_than(time.time() + 1)  # drop everything
+            before = cache.size_bytes()
+
+            report = cache.vacuum()
+
+            assert report["checkpointed"] is True
+            assert report["skipped"] is False
+            assert report["before_bytes"] == before
+            assert report["after_bytes"] < before
+            assert cache.size_bytes() < before
+        finally:
+            cache.close()
+
+    def test_a_blocked_checkpoint_is_reported_not_claimed(self, tmp_path):
+        cache = _cache(tmp_path)
+        reader = None
+        try:
+            _put_bulk(cache, 60)
+            cache.prune_older_than(time.time() + 1)
+            # A second connection mid-read is what a live plane server is.
+            reader = sqlite3.connect(cache.db_path, isolation_level=None)
+            reader.execute("BEGIN")
+            cursor = reader.execute("SELECT path FROM extract")
+            cursor.fetchone()
+
+            report = cache.vacuum()
+
+            assert report["checkpointed"] is False
+        finally:
+            if reader is not None:
+                reader.close()
+            cache.close()
+
+    def test_a_blocked_vacuum_costs_nothing(self, tmp_path):
+        """A refused attempt must not be worse than no attempt.
+
+        VACUUM under WAL writes the whole rebuild into the log before the
+        checkpoint can fail, so retrying against a live server grew a real
+        cache by half a gigabyte per attempt. Check for readers first.
+        """
+        cache = _cache(tmp_path)
+        reader = None
+        try:
+            _put_bulk(cache, 200)
+            # A reader pinned *behind* the head of the log is what a live
+            # plane server looks like mid-query while indexing continues.
+            reader = sqlite3.connect(cache.db_path, isolation_level=None)
+            reader.execute("BEGIN")
+            reader.execute("SELECT path FROM extract").fetchone()
+            _put_bulk(cache, 40, payload_bytes=16 * 1024)
+            before = cache.size_bytes()
+
+            report = cache.vacuum()
+
+            assert report["checkpointed"] is False
+            assert report["skipped"] is True
+            assert cache.size_bytes() == before
+        finally:
+            if reader is not None:
+                reader.close()
+            cache.close()

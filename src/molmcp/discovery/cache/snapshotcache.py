@@ -159,6 +159,43 @@ class SnapshotCache:
             )
         return entries
 
+    def collect_out_of_scope(self, keep_specs: set[str]) -> dict:
+        """Drop snapshots and refs for specs that are no longer configured.
+
+        ``evict`` bounds each spec's history but never questions the spec
+        itself, so anything indexed once stays cached forever. When the
+        working directory was an implicit source that meant unrelated
+        repositories and temp directories accumulated indefinitely — this
+        is how they are reclaimed once scope is corrected.
+        """
+        removed_snapshots: list[str] = []
+        removed_specs: list[str] = []
+        for entry in self._scan_snapshots():
+            if entry.spec in keep_specs:
+                continue
+            shutil.rmtree(entry.directory, ignore_errors=True)
+            removed_snapshots.append(entry.snapshot_id)
+            if entry.spec not in removed_specs:
+                removed_specs.append(entry.spec)
+
+        removed_refs = 0
+        if self.refs_root.is_dir():
+            for ref_file in self.refs_root.glob("*.json"):
+                try:
+                    spec = json.loads(ref_file.read_text(encoding="utf-8")).get("spec")
+                except (json.JSONDecodeError, OSError):
+                    spec = None
+                if spec is None or spec in keep_specs:
+                    continue
+                ref_file.unlink(missing_ok=True)
+                removed_refs += 1
+
+        return {
+            "removed_snapshots": len(removed_snapshots),
+            "removed_refs": removed_refs,
+            "dropped_specs": sorted(removed_specs),
+        }
+
     def evict(self) -> dict:
         """Prune cached snapshots past the configured limits.
 
