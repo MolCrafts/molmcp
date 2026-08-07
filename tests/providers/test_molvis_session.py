@@ -18,8 +18,6 @@ from typing import Any
 
 import pytest
 
-pytest.importorskip("molmcp", reason="molcrafts-molmcp not installed")
-
 from molmcp.providers.molvis.session import (  # noqa: E402
     EventRecord,
     ExecResult,
