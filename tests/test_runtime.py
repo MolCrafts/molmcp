@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from molmcp import CollectionIndex, Registry, create_server, runtime
+from molmcp import CollectionIndex, Registry, create_plane, runtime
 from molmcp.config import AppConfig, RegistrySourceConfig, load_config
 from molmcp.discovery.config import DEFAULT_EXCLUDES
 from molmcp.environment import DiscoveredSource, EnvironmentReport
@@ -70,7 +70,7 @@ def test_file_registry_cannot_escape_configured_namespace(tmp_path, monkeypatch)
     )
     config = AppConfig.from_dict(
         {
-            "schema_version": "1",
+            "schema_version": "2",
             "registries": [
                 {
                     "kind": "file",
@@ -94,7 +94,7 @@ def test_registry_expected_digest_mismatch_fails_closed(tmp_path, monkeypatch):
     )
     config = AppConfig.from_dict(
         {
-            "schema_version": "1",
+            "schema_version": "2",
             "registries": [
                 {
                     "kind": "file",
@@ -171,7 +171,7 @@ def test_remote_redirects_are_rejected():
 
 def test_custom_excludes_extend_safety_defaults(tmp_path):
     config = AppConfig.from_dict(
-        {"schema_version": "1", "excludes": ["generated"]},
+        {"schema_version": "2", "excludes": ["generated"]},
         workspace_root=tmp_path,
     )
     collection = runtime.build_collection(config, Registry())
@@ -184,12 +184,13 @@ def test_explicit_config_is_not_ignored_with_injected_collection(tmp_path, monke
     monkeypatch.setenv("MOLMCP_TOKEN", "secret")
     config = AppConfig.from_dict(
         {
-            "schema_version": "1",
+            "schema_version": "2",
             "server": {"auth_token_env": "MOLMCP_TOKEN"},
         },
         workspace_root=tmp_path,
     )
-    server = create_server(
+    server = create_plane(
+        "molcrafts",
         collection=CollectionIndex([], Registry()),
         config=config,
         discover_entry_points=False,
@@ -203,12 +204,13 @@ async def test_environment_token_verifier_accepts_only_current_secret(
     monkeypatch.setenv("MOLMCP_TOKEN", "secret")
     config = AppConfig.from_dict(
         {
-            "schema_version": "1",
+            "schema_version": "2",
             "server": {"auth_token_env": "MOLMCP_TOKEN"},
         },
         workspace_root=tmp_path,
     )
-    server = create_server(
+    server = create_plane(
+        "molcrafts",
         collection=CollectionIndex([], Registry()),
         config=config,
         discover_entry_points=False,

@@ -186,9 +186,6 @@ def build_collection(
         metadata={
             "workspace_root": str(config.workspace_root),
             "watch": config.watch,
-            "configured_providers": (
-                sorted(config.providers) if config.providers is not None else None
-            ),
             "discovery": config.discovery,
         },
     )
@@ -201,7 +198,6 @@ def config_summary(config: AppConfig) -> str:
             "workspace_root": str(config.workspace_root),
             "sources": config.sources,
             "registry_count": len(config.registries),
-            "providers": sorted(config.providers) if config.providers else None,
             "watch": config.watch,
             "transport": config.server.transport,
             "discovery": config.discovery,

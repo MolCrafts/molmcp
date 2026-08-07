@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-CONFIG_SCHEMA_VERSION = "1"
+CONFIG_SCHEMA_VERSION = "2"
 DEFAULT_CONFIG_NAME = "molcrafts.json"
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SECRET_HEADER_RE = re.compile(
@@ -21,7 +21,6 @@ _SECRET_HEADER_RE = re.compile(
 _HEADER_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 _NAMESPACE_RE = re.compile(r"^@[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$")
 _SOURCE_NAME_RE = re.compile(r"^[a-z][a-z0-9._-]{0,63}$")
-_PROVIDER_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -214,7 +213,6 @@ class AppConfig:
     workspace_root: Path
     sources: dict[str, str]
     registries: tuple[RegistrySourceConfig, ...] = ()
-    providers: frozenset[str] | None = None
     cache_dir: Path | None = None
     watch: bool = True
     excludes: tuple[str, ...] = ()
@@ -247,7 +245,6 @@ class AppConfig:
                 "schema_version",
                 "sources",
                 "registries",
-                "providers",
                 "cache_dir",
                 "watch",
                 "excludes",
@@ -257,7 +254,8 @@ class AppConfig:
         )
         if data.get("schema_version") != CONFIG_SCHEMA_VERSION:
             raise ConfigurationError(
-                f"schema_version must be {CONFIG_SCHEMA_VERSION!r}"
+                f"schema_version must be {CONFIG_SCHEMA_VERSION!r} "
+                "(v1 mega-server config is not supported; see molmcp planes)"
             )
         root = Path(workspace_root).expanduser().resolve()
         sources_raw = data.get("sources", {"workspace": str(root)})
@@ -284,30 +282,6 @@ class AppConfig:
             for index, item in enumerate(registries_raw)
         )
 
-        providers_raw = data.get("providers")
-        providers: frozenset[str] | None
-        if providers_raw is None:
-            providers = None
-        elif isinstance(providers_raw, list) and all(
-            isinstance(item, str) and item.strip() for item in providers_raw
-        ):
-            provider_names = [item.strip() for item in providers_raw]
-            if len(set(provider_names)) != len(provider_names):
-                raise ConfigurationError("providers must not contain duplicates")
-            invalid = [
-                name
-                for name in provider_names
-                if _PROVIDER_NAME_RE.fullmatch(name) is None or name == "molcrafts"
-            ]
-            if invalid:
-                raise ConfigurationError(
-                    "providers contains invalid or reserved name(s): "
-                    + ", ".join(sorted(invalid))
-                )
-            providers = frozenset(provider_names)
-        else:
-            raise ConfigurationError("providers must be an array of names")
-
         cache_raw = data.get("cache_dir")
         cache_dir = (
             _resolve_path(_require_string(cache_raw, "cache_dir"), root)
@@ -326,7 +300,6 @@ class AppConfig:
             workspace_root=root,
             sources=sources,
             registries=registries,
-            providers=providers,
             cache_dir=cache_dir,
             watch=watch,
             excludes=tuple(excludes_raw),

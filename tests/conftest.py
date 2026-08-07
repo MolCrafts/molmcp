@@ -1,4 +1,9 @@
-"""Shared pytest fixtures for molmcp tests."""
+"""Shared pytest fixtures for molmcp tests.
+
+Provider integration tests require real optional packages (dev deps).
+Runtime silent omission of missing science packages lives in
+``provider.discover_providers(only_available=True)`` — not in tests.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +11,7 @@ import json
 
 import pytest
 
-from molmcp import CollectionIndex, SourceBinding, create_server
+from molmcp import CollectionIndex, SourceBinding, create_plane
 from molmcp.discovery import DiscoveryConfig
 from molmcp.discovery.engine import DiscoveryEngine
 from molmcp.registry import Registry
@@ -14,7 +19,7 @@ from molmcp.registry import Registry
 
 @pytest.fixture
 def server(tmp_path):
-    """A vNext server with the in-tree fixture package as one collection source."""
+    """A molcrafts-plane server with the in-tree fixture package as one source."""
     engine = DiscoveryEngine(DiscoveryConfig(cache_dir=tmp_path / "discovery-cache"))
     collection = CollectionIndex(
         [
@@ -27,8 +32,8 @@ def server(tmp_path):
         ],
         Registry(),
     )
-    return create_server(
-        "test",
+    return create_plane(
+        "molcrafts",
         collection=collection,
         discover_entry_points=False,
     )
