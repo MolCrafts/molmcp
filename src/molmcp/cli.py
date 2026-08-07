@@ -479,7 +479,7 @@ def _cache(args: argparse.Namespace) -> int:
         gc_report = SnapshotCache(discovery).collect_out_of_scope(
             set(config.sources.values())
         )
-    cache = ExtractCache(discovery.cache_dir / "extract.db", ANALYZER_VERSION)
+    cache = ExtractCache(SnapshotCache(discovery).extract_db_path(), ANALYZER_VERSION)
     try:
         if not cache.exists():
             _emit(

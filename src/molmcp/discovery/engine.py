@@ -339,6 +339,9 @@ class DiscoveryEngine:
         if self._extract_pruned:
             return
         self._extract_pruned = True
+        legacy = self.cache.discard_legacy_caches()
+        if legacy:
+            logger.info("removed legacy cache file(s): %s", ", ".join(legacy))
         days = self.config.max_cache_age_days
         try:
             removed = 0

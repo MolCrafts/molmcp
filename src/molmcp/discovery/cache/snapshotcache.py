@@ -5,6 +5,7 @@
                             /raw/         (GitHub sources)
                             /evidence/<query_hash>.json
 <cache_dir>/refs/<spec-slug>.json
+<cache_dir>/extraction-cache.db  (shared, per-file extraction)
 """
 
 from __future__ import annotations
@@ -17,6 +18,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import DiscoveryConfig
+
+#: Filename of the shared extraction cache. Says "cache" so an operator who
+#: finds it large knows it is disposable.
+EXTRACT_DB_NAME = "extraction-cache.db"
+
+#: Earlier names, deleted on sight so a rename never strands gigabytes.
+LEGACY_EXTRACT_DB_NAMES = ("extract.db",)
+
+#: Grace period before a snapshot directory with no manifest is treated as
+#: an orphan: ``_persist`` writes graph.db first, so a fresh one may simply
+#: still be in flight.
+_ORPHAN_GRACE_SECONDS = 3600.0
 
 
 @dataclass(slots=True)
@@ -65,7 +78,32 @@ class SnapshotCache:
         return self.snapshot_dir(snapshot_id) / "raw"
 
     def extract_db_path(self) -> Path:
-        return self.root / "extract.db"
+        """The shared per-file extraction cache.
+
+        Named for what an operator needs to know when they find it taking
+        up gigabytes: it is a *cache*, and deleting it costs a re-index and
+        nothing else. The former ``extract.db`` said none of that.
+        """
+        return self.root / EXTRACT_DB_NAME
+
+    def discard_legacy_caches(self) -> list[str]:
+        """Remove caches left behind by an earlier on-disk name.
+
+        A rename that strands the old file is not an improvement — the one
+        this replaces routinely reached several gigabytes.
+        """
+        removed: list[str] = []
+        for name in LEGACY_EXTRACT_DB_NAMES:
+            for path in (
+                self.root / name,
+                self.root / f"{name}-wal",
+                self.root / f"{name}-shm",
+                self.root / f"{name}-journal",
+            ):
+                if path.is_file():
+                    path.unlink(missing_ok=True)
+                    removed.append(path.name)
+        return removed
 
     def evidence_dir(self, snapshot_id: str) -> Path:
         return self.snapshot_dir(snapshot_id) / "evidence"
@@ -178,6 +216,8 @@ class SnapshotCache:
             if entry.spec not in removed_specs:
                 removed_specs.append(entry.spec)
 
+        removed_orphans = self._collect_orphans()
+
         removed_refs = 0
         if self.refs_root.is_dir():
             for ref_file in self.refs_root.glob("*.json"):
@@ -193,8 +233,37 @@ class SnapshotCache:
         return {
             "removed_snapshots": len(removed_snapshots),
             "removed_refs": removed_refs,
+            "removed_orphans": removed_orphans,
             "dropped_specs": sorted(removed_specs),
         }
+
+    def _collect_orphans(self) -> int:
+        """Drop snapshot directories that carry no readable manifest.
+
+        Without one a snapshot can never be validated, so it is never
+        served — but ``_scan_snapshots`` skips it for exactly that reason,
+        which left it invisible to every cleanup path. One real cache held
+        2305 snapshot directories backing 19 usable graphs.
+        """
+        if not self.snapshots_root.is_dir():
+            return 0
+        cutoff = time.time() - _ORPHAN_GRACE_SECONDS
+        removed = 0
+        for directory in self.snapshots_root.iterdir():
+            if not directory.is_dir():
+                continue
+            if any(directory.rglob("manifest.json")):
+                continue
+            try:
+                # A snapshot mid-write has its graph.db but not yet its
+                # manifest; age keeps this from racing _persist.
+                if directory.stat().st_mtime > cutoff:
+                    continue
+            except OSError:
+                continue
+            shutil.rmtree(directory, ignore_errors=True)
+            removed += 1
+        return removed
 
     def evict(self) -> dict:
         """Prune cached snapshots past the configured limits.

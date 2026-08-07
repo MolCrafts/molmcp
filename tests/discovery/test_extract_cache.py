@@ -372,3 +372,39 @@ class TestVacuumActuallyReclaims:
             if reader is not None:
                 reader.close()
             cache.close()
+
+
+class TestCacheFileNaming:
+    """The file has to announce that it is disposable.
+
+    A 6 GB file called ``extract.db`` tells an operator nothing about
+    whether it is safe to delete — which is exactly the question it
+    provoked. ``extraction-cache.db`` answers it in the name.
+    """
+
+    def test_the_cache_lives_at_a_self_describing_name(self, tmp_path):
+        from molmcp.discovery.cache import SnapshotCache
+        from molmcp.discovery.config import DiscoveryConfig
+
+        cache = SnapshotCache(DiscoveryConfig(cache_dir=tmp_path))
+
+        assert cache.extract_db_path().name == "extraction-cache.db"
+
+    def test_a_legacy_extract_db_is_reclaimed(self, tmp_path):
+        """Renaming must not strand the old file; it can be gigabytes."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "m.py").write_text("x = 1\n", encoding="utf-8")
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        legacy = cache_dir / "extract.db"
+        legacy.write_bytes(b"x" * 2048)
+        (cache_dir / "extract.db-wal").write_bytes(b"x" * 512)
+
+        engine = DiscoveryEngine(DiscoveryConfig(cache_dir=cache_dir))
+        engine.index(str(repo))
+        engine.close()
+
+        assert not legacy.exists()
+        assert not (cache_dir / "extract.db-wal").exists()
+        assert (cache_dir / "extraction-cache.db").is_file()
