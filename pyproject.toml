@@ -51,9 +51,6 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "ruff>=0.6",
     "tox>=4.23",
-    # Provider integration tests require upstream packages (hard fail if missing).
-    "molcrafts-molq>=0.6.0",
-    "molexp",
 ]
 docs = [
     "zensical>=0.0.53",
@@ -150,8 +147,3 @@ commands = [
 constraint-dependencies = [
     "fastmcp-slim==4.0.0b1",
 ]
-
-# Prefer monorepo siblings when developing inside MolCrafts checkout.
-[tool.uv.sources]
-molcrafts-molq = { path = "../molq", editable = true }
-molexp = { path = "../molexp", editable = true }
