@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -129,6 +131,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Configured source names; omit to index all.",
     )
     index.add_argument("--force", action="store_true")
+
+    cache = commands.add_parser(
+        "cache",
+        help="Inspect or reclaim the shared discovery cache.",
+    )
+    _config_argument(cache)
+    cache.add_argument(
+        "--prune",
+        action="store_true",
+        help="Drop extraction payloads past the retention window.",
+    )
+    cache.add_argument(
+        "--vacuum",
+        action="store_true",
+        help="Return freed pages to the filesystem (implies --prune).",
+    )
 
     registry = commands.add_parser("registry", help="Inspect capability manifests.")
     registry_commands = registry.add_subparsers(dest="registry_command", required=True)
@@ -344,6 +362,90 @@ def _index(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cache(args: argparse.Namespace) -> int:
+    """Report the shared cache, and optionally reclaim it.
+
+    Indexing prunes conservatively — once per process, never VACUUM — because
+    both are too expensive to repeat inside a tool call. Reclaiming a cache
+    that already grew large is therefore an explicit operator action.
+    """
+    from .discovery.cache import ExtractCache
+    from .discovery.config import DiscoveryConfig
+    from .discovery.schema import ANALYZER_VERSION
+
+    config = _load(args)
+    discovery = DiscoveryConfig(
+        cache_dir=config.cache_dir or DiscoveryConfig().cache_dir
+    )
+    cache = ExtractCache(discovery.cache_dir / "extract.db", ANALYZER_VERSION)
+    try:
+        if not cache.exists():
+            _emit(
+                {
+                    "extract_cache": {
+                        "path": str(cache.db_path),
+                        "exists": False,
+                        "entries": 0,
+                        "size_bytes": 0,
+                    },
+                    "pruned": None,
+                    "vacuumed": False,
+                }
+            )
+            return 0
+
+        pruned: int | None = None
+        try:
+            if args.prune or args.vacuum:
+                cutoff = time.time() - discovery.max_cache_age_days * 86400
+                pruned = cache.prune_older_than(cutoff)
+                # Indexing sheds one decile per process so a tool call stays
+                # cheap; an operator reclaiming wants it brought fully under.
+                while True:
+                    shed = cache.enforce_size_limit(discovery.max_extract_cache_bytes)
+                    if not shed:
+                        break
+                    pruned += shed
+            if args.vacuum:
+                cache.vacuum()
+        except sqlite3.OperationalError as exc:
+            raise ConfigurationError(
+                f"cannot reclaim {cache.db_path}: {exc}. A running "
+                "`molmcp serve` process is holding the cache — stop the plane "
+                "servers (or close the MCP client) and retry."
+            ) from exc
+        # Live content and file size diverge after a prune: freed pages stay
+        # in the file for reuse. Reporting only the file size would read as
+        # "the prune did nothing".
+        size = cache.size_bytes()
+        used = cache.used_bytes()
+        _emit(
+            {
+                "extract_cache": {
+                    "path": str(cache.db_path),
+                    "exists": True,
+                    "entries": cache.entry_count(),
+                    "used_bytes": used,
+                    "size_bytes": size,
+                    "reclaimable_bytes": max(size - used, 0),
+                    "retention_days": discovery.max_cache_age_days,
+                    "limit_bytes": discovery.max_extract_cache_bytes,
+                },
+                "pruned": pruned,
+                "vacuumed": bool(args.vacuum),
+                "hint": (
+                    None
+                    if args.vacuum or size - used < 64 * 1024 * 1024
+                    else "run `molmcp cache --vacuum` (with no plane server "
+                    "running) to return the freed pages to the filesystem"
+                ),
+            }
+        )
+    finally:
+        cache.close()
+    return 0
+
+
 def _registry(args: argparse.Namespace) -> int:
     if args.registry_command == "validate":
         manifest = load_manifest(args.manifest)
@@ -375,11 +477,21 @@ def main(argv: list[str] | None = None) -> int:
         "search": _search,
         "explore": _explore,
         "index": _index,
+        "cache": _cache,
         "registry": _registry,
     }
     try:
         return handlers[args.command](args)
-    except (ConfigurationError, ManifestError, FileNotFoundError, ValueError) as exc:
+    except (
+        ConfigurationError,
+        ManifestError,
+        FileNotFoundError,
+        ValueError,
+        # A busy or corrupt cache is an operating condition, not a crash:
+        # the CLI owes the user a sentence, not a traceback.
+        sqlite3.Error,
+        OSError,
+    ) as exc:
         print(f"molmcp: {exc}", file=sys.stderr)
         return 2
 

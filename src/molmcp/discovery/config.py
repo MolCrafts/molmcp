@@ -62,6 +62,10 @@ class DiscoveryConfig:
     excludes: tuple[str, ...] = DEFAULT_EXCLUDES
     max_snapshots_per_spec: int = 3
     max_cache_age_days: int = 30
+    # Ceiling on the shared extraction cache. Retention by age does not bound
+    # it: an indexed environment of tens of thousands of files is all current,
+    # none of it stale, and left uncapped it reached gigabytes in normal use.
+    max_extract_cache_bytes: int = 512 * 1024 * 1024
     watch: bool = False
     watch_interval: float = 5.0
     github_token: str | None = None

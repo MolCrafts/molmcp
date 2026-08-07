@@ -12,6 +12,7 @@ import importlib.metadata
 import inspect
 import json
 import logging
+import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -75,6 +76,7 @@ class DiscoveryEngine:
             self.cache.extract_db_path(), ANALYZER_VERSION
         )
         self.extractor = Extractor(self.extract_cache)
+        self._extract_pruned = False
         if overlays is None:
             from .overlay import load_overlays
 
@@ -318,6 +320,40 @@ class DiscoveryEngine:
             },
         )
         self.cache.evict()
+        self._prune_extract_cache()
+
+    def _prune_extract_cache(self) -> None:
+        """Bound the shared extraction cache, at most once per process.
+
+        ``SnapshotCache.evict`` only reclaims snapshot directories; the
+        extract table lives beside them and used to grow without limit —
+        every analyzer or overlay change re-keys it via ``build_id``, so each
+        edit orphaned a whole generation that nothing would ever read again.
+        Left alone this reached multiple gigabytes in normal use, which is
+        what made opening the cache slow enough to be felt in a tool call.
+
+        A full-table delete is too expensive to repeat per index, and the
+        window is measured in days, so once per process is enough.
+        ``max_cache_age_days = 0`` disables retention, matching ``evict``.
+        """
+        if self._extract_pruned:
+            return
+        self._extract_pruned = True
+        days = self.config.max_cache_age_days
+        try:
+            removed = 0
+            if days > 0:
+                removed = self.extract_cache.prune_older_than(
+                    time.time() - days * 86400
+                )
+            removed += self.extract_cache.enforce_size_limit(
+                self.config.max_extract_cache_bytes
+            )
+        except sqlite3.Error as exc:  # a cache chore must never fail an index
+            logger.warning("extract cache prune failed: %s", exc)
+            return
+        if removed:
+            logger.info("pruned %d extraction payload(s)", removed)
 
 
 def _source_digest(value: object) -> str:

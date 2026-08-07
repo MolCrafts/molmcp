@@ -63,6 +63,14 @@ class ExtractCache:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(self.db_path, check_same_thread=False)
             conn.execute("PRAGMA busy_timeout=5000")
+            # Every plane process opens this same file, so a rollback journal
+            # would serialize each of them behind whichever one is indexing —
+            # readers hit the busy timeout and the tool call stalls for
+            # seconds. WAL lets them read the last commit instead of waiting.
+            # Unlike a published graph.db this file is never atomically
+            # replaced, so the -wal/-shm sidecars are safe here.
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute(_CREATE)
             conn.commit()
             self._conn = conn
@@ -97,16 +105,97 @@ class ExtractCache:
         if self._conn is not None:
             self._conn.commit()
 
+    def exists(self) -> bool:
+        """True when the cache file has been created on disk."""
+        return self.db_path.is_file()
+
     def entry_count(self) -> int:
         return self._connect().execute("SELECT COUNT(*) FROM extract").fetchone()[0]
 
     def prune_older_than(self, cutoff: float) -> int:
+        """Drop payloads written before ``cutoff``; returns the row count.
+
+        Age is write time, not last use, so a file that has not changed in a
+        full retention window is re-analyzed once and re-cached with a fresh
+        timestamp. Tracking real recency would turn every cache *hit* into a
+        write, which is the wrong trade for a cache this hot.
+        """
         conn = self._connect()
         removed = conn.execute(
             "DELETE FROM extract WHERE created_at < ?", (cutoff,)
         ).rowcount
         conn.commit()
         return removed
+
+    def enforce_size_limit(self, max_bytes: int, *, shed: float = 0.1) -> int:
+        """Shed the oldest entries while the cache is over ``max_bytes``.
+
+        Age alone does not bound this cache. A single indexed environment can
+        hold tens of thousands of files whose extraction payloads are fat
+        JSON, all of it current and none of it stale — which is how a real
+        cache reached 3.6 GB with only a few hundred rows past its retention
+        window. This is the ceiling that actually holds.
+
+        Measured against :meth:`used_bytes`, not the file size: deleting rows
+        frees pages for reuse but never shrinks the file, so growth stops at
+        the high-water mark and only ``vacuum`` hands the space back.
+        ``max_bytes <= 0`` disables the ceiling.
+
+        Args:
+            max_bytes: Live content the cache may hold.
+            shed: Fraction of the oldest rows to drop per pass. A caller that
+                wants the cache brought all the way under the ceiling loops
+                until this returns 0.
+
+        Returns:
+            The number of rows removed.
+        """
+        if max_bytes <= 0 or self.used_bytes() <= max_bytes:
+            return 0
+        conn = self._connect()
+        total = conn.execute("SELECT COUNT(*) FROM extract").fetchone()[0]
+        if not total:
+            return 0
+        removed = conn.execute(
+            "DELETE FROM extract WHERE rowid IN "
+            "(SELECT rowid FROM extract ORDER BY created_at LIMIT ?)",
+            (max(int(total * shed), 1),),
+        ).rowcount
+        conn.commit()
+        return removed
+
+    def vacuum(self) -> None:
+        """Return freed pages to the filesystem.
+
+        Pruning alone only marks pages reusable, so a cache that once grew to
+        gigabytes keeps occupying them. Exclusive and proportional to file
+        size — an operator action (``molmcp cache prune --vacuum``), never
+        something a tool call does behind the user's back.
+        """
+        self._connect().execute("VACUUM")
+
+    def size_bytes(self) -> int:
+        """On-disk size of the cache, including its write-ahead log."""
+        total = 0
+        for suffix in ("", "-wal", "-shm"):
+            path = self.db_path.with_name(self.db_path.name + suffix)
+            if path.is_file():
+                total += path.stat().st_size
+        return total
+
+    def used_bytes(self) -> int:
+        """Bytes of *live* content, excluding pages freed by earlier deletes.
+
+        The size ceiling has to read this rather than the file size: deleting
+        rows never shrinks the file, so a ceiling that watched bytes-on-disk
+        would find itself still over the limit after every shed and keep
+        cutting until the cache was empty. Both pragmas are O(1).
+        """
+        conn = self._connect()
+        page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+        page_count = conn.execute("PRAGMA page_count").fetchone()[0]
+        free = conn.execute("PRAGMA freelist_count").fetchone()[0]
+        return max(page_count - free, 0) * page_size
 
     def close(self) -> None:
         if self._conn is not None:
