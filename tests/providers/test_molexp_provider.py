@@ -7,11 +7,6 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip(
-    "molexp",
-    reason="the optional Molexp provider contract requires the upstream package",
-)
-
 # Source package root for AST non-executor check
 _PROVIDER_PKG = (
     Path(__file__).resolve().parents[2] / "src" / "molmcp" / "providers" / "molexp"
@@ -161,15 +156,15 @@ async def test_provider_registers_scaffold_tools() -> None:
     listed = await mcp.list_tools()
     names = {t.name for t in listed}
     expected = {
-        "molexp_list_projects",
-        "molexp_list_experiments",
-        "molexp_list_runs",
-        "molexp_workspace_layout",
-        "molexp_check_layout",
-        "molexp_materialize_workspace",
-        "molexp_add_project",
-        "molexp_add_experiment",
-        "molexp_create_run",
-        "molexp_validate_workflow",
+        "list_projects",
+        "list_experiments",
+        "list_runs",
+        "workspace_layout",
+        "check_layout",
+        "materialize_workspace",
+        "add_project",
+        "add_experiment",
+        "create_run",
+        "validate_workflow",
     }
     assert expected.issubset(names)

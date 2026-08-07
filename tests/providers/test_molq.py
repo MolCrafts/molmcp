@@ -1,7 +1,6 @@
 """Tests for ``MolqProvider`` lifecycle tools.
 
-Helper-level tests run without ``molq``; integration tests skip cleanly
-when molcrafts-molq is absent.
+Requires ``molcrafts-molq`` (dev extra). Do not skip.
 """
 
 from __future__ import annotations
@@ -17,12 +16,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-pytest.importorskip("molmcp", reason="molcrafts-molmcp not installed")
-pytest.importorskip("fastmcp", reason="fastmcp not installed")
-
-from molmcp import CollectionIndex, Registry, create_server  # noqa: E402
-from molmcp.providers.molq import MolqProvider  # noqa: E402
-from molmcp.providers.molq.provider import (  # noqa: E402
+from molmcp import create_plane
+from molmcp.providers.molq import MolqProvider
+from molmcp.providers.molq.provider import (
     _resolve_db_path,
     _serialize,
     _validate_argv,
@@ -30,10 +26,9 @@ from molmcp.providers.molq.provider import (  # noqa: E402
 
 
 def _build_server(provider: MolqProvider) -> Any:
-    return create_server(
-        name="molq-test",
-        collection=CollectionIndex([], Registry()),
-        providers=[provider],
+    return create_plane(
+        provider.name,
+        provider=provider,
         discover_entry_points=False,
     )
 
@@ -66,7 +61,6 @@ def _list_tools(server: Any) -> list[Any]:
 
 @pytest.fixture
 def provider_factory(tmp_path: Path):
-    pytest.importorskip("molq", reason="molcrafts-molq not installed")
 
     def _make(*, db_path=None, allow_submit: bool = False) -> MolqProvider:
         return MolqProvider(
@@ -81,7 +75,6 @@ def provider_factory(tmp_path: Path):
 @pytest.fixture
 def populated_db(tmp_path: Path):
     """Submit one local ``true`` job and return (db_path, cluster, job_id)."""
-    pytest.importorskip("molq", reason="molcrafts-molq not installed")
 
     from molq import Cluster
     from molq.store import JobStore
@@ -171,7 +164,6 @@ class TestResolveDbPath:
         assert out == tmp_path / "env.db"
 
     def test_falls_back_to_molq_default(self, monkeypatch):
-        pytest.importorskip("molq", reason="molcrafts-molq not installed")
         monkeypatch.delenv("MOLQ_DB_PATH", raising=False)
         from molq.store import default_jobs_db_path
 
@@ -225,30 +217,30 @@ class TestProtocol:
     def test_tool_set(self, provider_factory):
         server = _build_server(provider_factory())
         names = {t.name for t in _list_tools(server)}
-        # Mounted under namespace "molq" → molq_<tool>
+        # Bare tool names on molq plane
         assert names >= {
-            "molq_list_jobs",
-            "molq_get_job",
-            "molq_job_logs",
-            "molq_list_destinations",
-            "molq_list_queue",
-            "molq_submit_job",
-            "molq_cancel_job",
+            "list_jobs",
+            "get_job",
+            "job_logs",
+            "list_destinations",
+            "list_queue",
+            "submit_job",
+            "cancel_job",
         }
 
     def test_list_jobs_is_read_only(self, provider_factory):
         server = _build_server(provider_factory())
         tools = {t.name: t for t in _list_tools(server)}
-        ann = tools["molq_list_jobs"].annotations
-        assert getattr(ann, "readOnlyHint", False) is True
+        ann = tools["list_jobs"].annotations
+        assert getattr(ann, "read_only_hint", False) is True
 
     def test_submit_and_cancel_are_destructive(self, provider_factory):
         server = _build_server(provider_factory())
         tools = {t.name: t for t in _list_tools(server)}
-        for name in ("molq_submit_job", "molq_cancel_job"):
+        for name in ("submit_job", "cancel_job"):
             ann = tools[name].annotations
-            assert getattr(ann, "destructiveHint", False) is True
-            assert getattr(ann, "readOnlyHint", True) is False
+            assert getattr(ann, "destructive_hint", False) is True
+            assert getattr(ann, "read_only_hint", True) is False
 
 
 # ---------------------------------------------------------------------------
@@ -262,27 +254,27 @@ class TestMolqListJobs:
         server = _build_server(provider_factory(db_path=db))
         records = _call(
             server,
-            "molq_list_jobs",
+            "list_jobs",
             {"cluster_name": alias, "include_terminal": True},
         )
         assert any(r["job_id"] == job_id for r in records)
 
     def test_empty_db_returns_empty_list(self, provider_factory):
         server = _build_server(provider_factory())
-        records = _call(server, "molq_list_jobs")
+        records = _call(server, "list_jobs")
         assert records == []
 
     def test_excludes_terminal_by_default(self, populated_db, provider_factory):
         db, alias, _ = populated_db
         server = _build_server(provider_factory(db_path=db))
-        records = _call(server, "molq_list_jobs", {"cluster_name": alias})
+        records = _call(server, "list_jobs", {"cluster_name": alias})
         # ``true`` finishes immediately → terminal → filtered out.
         assert records == []
 
     def test_all_clusters_when_omitted(self, populated_db, provider_factory):
         db, _, job_id = populated_db
         server = _build_server(provider_factory(db_path=db))
-        records = _call(server, "molq_list_jobs", {"include_terminal": True})
+        records = _call(server, "list_jobs", {"include_terminal": True})
         assert any(r["job_id"] == job_id for r in records)
 
 
@@ -315,7 +307,7 @@ class TestStoreDispatch:
         captured.clear()
         _call(
             server,
-            "molq_list_jobs",
+            "list_jobs",
             {"cluster_name": "alpha", "limit": 5},
         )
         assert captured["scope"] == "per_cluster"
@@ -324,7 +316,7 @@ class TestStoreDispatch:
         assert captured["closed"] is True
 
         captured.clear()
-        _call(server, "molq_list_jobs", {"limit": 7})
+        _call(server, "list_jobs", {"limit": 7})
         assert captured["scope"] == "all"
         assert captured["limit"] == 7
 
@@ -340,14 +332,14 @@ class TestMolqSubmitJob:
 
         server = _build_server(provider_factory(allow_submit=False))
         with pytest.raises(ToolError, match="disabled"):
-            _call(server, "molq_submit_job", {"argv": ["true"]})
+            _call(server, "submit_job", {"argv": ["true"]})
 
     def test_env_opt_in(self, provider_factory, monkeypatch):
         monkeypatch.setenv("MOLMCP_MOLQ_SUBMIT", "1")
         server = _build_server(provider_factory(allow_submit=False))
         result = _call(
             server,
-            "molq_submit_job",
+            "submit_job",
             {"argv": ["true"], "scheduler": "local", "cluster": "mcp-test"},
         )
         assert "job_id" in result
@@ -359,7 +351,7 @@ class TestMolqSubmitJob:
         server = _build_server(provider_factory(allow_submit=True))
         result = _call(
             server,
-            "molq_submit_job",
+            "submit_job",
             {
                 "argv": ["echo", "hello"],
                 "scheduler": "local",
@@ -372,7 +364,7 @@ class TestMolqSubmitJob:
         # Visible via list_jobs once we include terminal (echo exits fast).
         records = _call(
             server,
-            "molq_list_jobs",
+            "list_jobs",
             {"cluster_name": "mcp-test", "include_terminal": True},
         )
         assert any(r["job_id"] == result["job_id"] for r in records)
@@ -382,7 +374,7 @@ class TestMolqSubmitJob:
 
         server = _build_server(provider_factory(allow_submit=True))
         with pytest.raises(ToolError, match="non-empty"):
-            _call(server, "molq_submit_job", {"argv": []})
+            _call(server, "submit_job", {"argv": []})
 
     def test_rejects_unknown_scheduler(self, provider_factory):
         from fastmcp.exceptions import ToolError
@@ -391,7 +383,7 @@ class TestMolqSubmitJob:
         with pytest.raises(ToolError, match="scheduler"):
             _call(
                 server,
-                "molq_submit_job",
+                "submit_job",
                 {"argv": ["true"], "scheduler": "htcondor"},
             )
 
@@ -402,7 +394,7 @@ class TestMolqSubmitJob:
         with pytest.raises(ToolError, match="unsafe workdir"):
             _call(
                 server,
-                "molq_submit_job",
+                "submit_job",
                 {"argv": ["true"], "workdir": "../escape"},
             )
 
@@ -418,7 +410,7 @@ class TestMolqGetJob:
         server = _build_server(provider_factory(db_path=db))
         row = _call(
             server,
-            "molq_get_job",
+            "get_job",
             {"job_id": job_id, "refresh": True, "include_transitions": True},
         )
         assert row["job_id"] == job_id
@@ -442,7 +434,7 @@ class TestMolqGetJob:
 
         server = _build_server(provider_factory())
         with pytest.raises(ToolError, match="not found"):
-            _call(server, "molq_get_job", {"job_id": "does-not-exist"})
+            _call(server, "get_job", {"job_id": "does-not-exist"})
 
 
 class TestMolqJobLogs:
@@ -451,7 +443,7 @@ class TestMolqJobLogs:
         server = _build_server(provider_factory(db_path=db))
         out = _call(
             server,
-            "molq_job_logs",
+            "job_logs",
             {"job_id": job_id, "stream": "stdout", "tail": 50},
         )
         assert out["job_id"] == job_id
@@ -467,7 +459,7 @@ class TestMolqJobLogs:
         server = _build_server(provider_factory(allow_submit=True))
         submitted = _call(
             server,
-            "molq_submit_job",
+            "submit_job",
             {
                 "argv": ["echo", "molq-mcp-log-marker"],
                 "scheduler": "local",
@@ -480,7 +472,7 @@ class TestMolqJobLogs:
         time.sleep(0.3)
         out = _call(
             server,
-            "molq_job_logs",
+            "job_logs",
             {
                 "job_id": submitted["job_id"],
                 "stream": "stdout",
@@ -500,7 +492,7 @@ class TestMolqCancelJob:
         db, _alias, job_id = populated_db
         server = _build_server(provider_factory(db_path=db, allow_submit=False))
         with pytest.raises(ToolError, match="disabled"):
-            _call(server, "molq_cancel_job", {"job_id": job_id})
+            _call(server, "cancel_job", {"job_id": job_id})
 
     def test_cancel_running_or_done_job(self, provider_factory):
         server = _build_server(provider_factory(allow_submit=True))
@@ -508,7 +500,7 @@ class TestMolqCancelJob:
         # cancel still returns a cancelled (or terminal) state from store.
         submitted = _call(
             server,
-            "molq_submit_job",
+            "submit_job",
             {
                 "argv": ["sleep", "30"],
                 "scheduler": "local",
@@ -517,7 +509,7 @@ class TestMolqCancelJob:
         )
         result = _call(
             server,
-            "molq_cancel_job",
+            "cancel_job",
             {"job_id": submitted["job_id"]},
         )
         assert result["job_id"] == submitted["job_id"]
@@ -527,7 +519,7 @@ class TestMolqCancelJob:
 class TestMolqListDestinations:
     def test_returns_list(self, provider_factory):
         server = _build_server(provider_factory())
-        rows = _call(server, "molq_list_destinations", {"include_ssh": False})
+        rows = _call(server, "list_destinations", {"include_ssh": False})
         assert isinstance(rows, list)
 
 
@@ -536,7 +528,7 @@ class TestMolqListQueue:
         server = _build_server(provider_factory())
         rows = _call(
             server,
-            "molq_list_queue",
+            "list_queue",
             {"scheduler": "local", "cluster": "qbox"},
         )
         assert rows == []

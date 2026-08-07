@@ -55,6 +55,15 @@ class MolexpProvider:
     def __init__(self, workspace: str | Path | None = None) -> None:
         self._workspace = Path(workspace).expanduser().resolve() if workspace else None
 
+    @staticmethod
+    def probe() -> bool:
+        """True when the optional ``molexp`` package is importable."""
+        try:
+            import molexp  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
     def _get_workspace(self, workspace: str | None = None):
         if workspace:
             return _open_workspace(workspace)
@@ -63,25 +72,23 @@ class MolexpProvider:
         return _resolve_workspace(None)
 
     def register(self, mcp: FastMCP) -> None:
-        try:
-            import molexp  # noqa: F401
-        except ImportError as exc:
+        if not self.probe():
             raise RuntimeError(
                 "MolexpProvider requires molexp to be installed in this environment"
-            ) from exc
+            )
 
         from mcp.types import ToolAnnotations
 
-        read_only = ToolAnnotations(readOnlyHint=True, destructiveHint=False)
+        read_only = ToolAnnotations(read_only_hint=True, destructive_hint=False)
         # Idempotent scaffold (create-or-get) — not a free-form write surface.
         scaffold = ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=False,
-            idempotentHint=True,
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=True,
         )
 
         @mcp.tool(annotations=read_only)
-        def molexp_list_projects(workspace: str | None = None) -> list[dict[str, Any]]:
+        def list_projects(workspace: str | None = None) -> list[dict[str, Any]]:
             """Enumerate projects in the workspace."""
             ws = self._get_workspace(workspace)
             rows: list[dict[str, Any]] = []
@@ -96,18 +103,18 @@ class MolexpProvider:
             return rows
 
         @mcp.tool(annotations=read_only)
-        def molexp_list_experiments(
+        def list_experiments(
             project_id: str,
             workspace: str | None = None,
         ) -> list[dict[str, Any]]:
             """List experiments under a project (read-only)."""
-            from .scaffold import list_experiments
+            from .scaffold import list_experiments as _list_experiments
 
             ws = self._get_workspace(workspace)
-            return list_experiments(ws.resolve(), project_id)
+            return _list_experiments(ws.resolve(), project_id)
 
         @mcp.tool(annotations=read_only)
-        def molexp_list_runs(
+        def list_runs(
             scope_kind: Literal["workspace", "project", "experiment"] = "workspace",
             scope_id: str = "",
             status: str | None = None,
@@ -155,14 +162,14 @@ class MolexpProvider:
             return rows
 
         @mcp.tool(annotations=read_only)
-        def molexp_workspace_layout() -> dict[str, Any]:
+        def workspace_layout() -> dict[str, Any]:
             """Canonical molexp workspace on-disk layout contract (OKF)."""
             from .layout import layout_spec
 
             return layout_spec()
 
         @mcp.tool(annotations=read_only)
-        def molexp_check_layout(path: str) -> dict[str, Any]:
+        def check_layout(path: str) -> dict[str, Any]:
             """Read-only lint of ``path`` against the layout contract."""
             from .layout import validate_workspace
 
@@ -189,21 +196,21 @@ class MolexpProvider:
                 }
 
         @mcp.tool(annotations=scaffold)
-        def molexp_materialize_workspace(
+        def materialize_workspace(
             path: str,
             name: str = "workspace",
         ) -> dict[str, Any]:
             """Create or open a top-level molexp Workspace at ``path`` (idempotent).
 
             Do **not** use this to create a project under the session workspace —
-            use ``molexp_add_project`` instead. Nesting is rejected.
+            use ``add_project`` instead. Nesting is rejected.
             """
-            from .scaffold import materialize_workspace
+            from .scaffold import materialize_workspace as _materialize_workspace
 
-            return _scaffold_result(materialize_workspace, path, name=name)
+            return _scaffold_result(_materialize_workspace, path, name=name)
 
         @mcp.tool(annotations=scaffold)
-        def molexp_add_project(
+        def add_project(
             name: str,
             workspace: str | None = None,
         ) -> dict[str, Any]:
@@ -212,40 +219,40 @@ class MolexpProvider:
             Prefer this (or omit workspace to use MOLEXP_WORKSPACE) when the user
             asks to create a project.
             """
-            from .scaffold import add_project
+            from .scaffold import add_project as _add_project
 
             ws = self._get_workspace(workspace)
-            return _scaffold_result(add_project, ws.resolve(), name)
+            return _scaffold_result(_add_project, ws.resolve(), name)
 
         @mcp.tool(annotations=scaffold)
-        def molexp_add_experiment(
+        def add_experiment(
             project_id: str,
             name: str,
             workspace: str | None = None,
         ) -> dict[str, Any]:
             """Create-or-get an experiment under a project (idempotent on slug)."""
-            from .scaffold import add_experiment
+            from .scaffold import add_experiment as _add_experiment
 
             ws = self._get_workspace(workspace)
-            return _scaffold_result(add_experiment, ws.resolve(), project_id, name)
+            return _scaffold_result(_add_experiment, ws.resolve(), project_id, name)
 
         @mcp.tool(annotations=scaffold)
-        def molexp_create_run(
+        def create_run(
             project_id: str,
             experiment_id: str,
             params: dict[str, Any] | None = None,
             workspace: str | None = None,
         ) -> dict[str, Any]:
             """Scaffold a pending run with params — does not drive the workflow."""
-            from .scaffold import create_run
+            from .scaffold import create_run as _create_run
 
             ws = self._get_workspace(workspace)
             return _scaffold_result(
-                create_run, ws.resolve(), project_id, experiment_id, params=params
+                _create_run, ws.resolve(), project_id, experiment_id, params=params
             )
 
         @mcp.tool(annotations=read_only)
-        def molexp_validate_workflow(source: str) -> dict[str, Any]:
+        def validate_workflow(source: str) -> dict[str, Any]:
             """Compile-only validation of workflow source (no task bodies run).
 
             Provide a Python snippet that builds a ``WorkflowCompiler`` as

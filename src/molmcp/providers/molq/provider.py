@@ -155,6 +155,15 @@ class MolqProvider:
         self._allow_submit = allow_submit
         self._jobs_dir = Path(jobs_dir).expanduser() if jobs_dir is not None else None
 
+    @staticmethod
+    def probe() -> bool:
+        """True when the optional ``molq`` package is importable."""
+        try:
+            import molq  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
     def _mutate_enabled(self) -> bool:
         return self._allow_submit or _env_allows_mutate()
 
@@ -247,32 +256,30 @@ class MolqProvider:
         return submitor, record
 
     def register(self, mcp: FastMCP) -> None:
-        try:
-            import molq  # noqa: F401 — eager probe; surface the missing dep
-        except ImportError as exc:
+        if not self.probe():
             raise RuntimeError(
                 "MolqProvider requires the 'molcrafts-molq' package. "
                 "Install with: pip install molcrafts-molq"
-            ) from exc
+            )
 
         from mcp.types import ToolAnnotations
 
         read_only = ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            open_world_hint=False,
         )
         # Live scheduler / SSH may touch the network.
         read_open = ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            openWorldHint=True,
+            read_only_hint=True,
+            destructive_hint=False,
+            open_world_hint=True,
         )
         mutation = ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=True,
-            openWorldHint=True,
-            idempotentHint=False,
+            read_only_hint=False,
+            destructive_hint=True,
+            open_world_hint=True,
+            idempotent_hint=False,
         )
         provider = self
 
