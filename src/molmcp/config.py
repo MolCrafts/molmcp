@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from .settings import Settings, load_settings
+
 CONFIG_SCHEMA_VERSION = "2"
 DEFAULT_CONFIG_NAME = "molcrafts.json"
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -225,15 +227,50 @@ class AppConfig:
         workspace_root: str | Path,
         *,
         discovered: Iterable[tuple[str, str]] = (),
+        settings: Settings | None = None,
         discovery: dict[str, Any] | None = None,
     ) -> AppConfig:
+        """Resolve the sources to index when nothing was passed explicitly.
+
+        The working directory is **not** one of them. It used to be, which
+        made "what does molmcp index" depend on wherever the MCP client
+        happened to launch the server: one install had accumulated two
+        unrelated repositories, /private/tmp, and a monorepo root this way.
+        Set ``indexWorkspace`` to opt back in per project.
+
+        Precedence, lowest first: the workspace opt-in, auto-discovered
+        MolCrafts distributions, then sources named in settings.
+        """
         root = Path(workspace_root).expanduser().resolve()
-        sources: dict[str, str] = {"workspace": str(root)}
+        resolved_settings = settings if settings is not None else Settings()
+        sources: dict[str, str] = {}
+        if resolved_settings.index_workspace:
+            sources["workspace"] = str(root)
+        # One distribution can be found twice on sys.path (a project venv
+        # plus a monorepo one). Both entries resolve to the same spec, so
+        # keeping both means indexing and searching it twice per query.
+        seen_specs = set(sources.values())
         for name, spec in discovered:
-            sources[_dedupe_source_name(name, sources)] = _resolve_source_spec(
-                spec, root
-            )
-        return cls(workspace_root=root, sources=sources, discovery=discovery)
+            resolved = _resolve_source_spec(spec, root)
+            if resolved in seen_specs:
+                continue
+            seen_specs.add(resolved)
+            sources[_dedupe_source_name(name, sources)] = resolved
+        for name, spec in resolved_settings.sources.items():
+            sources[name] = _resolve_source_spec(spec, root)
+        cache_dir = (
+            _resolve_path(resolved_settings.cache_dir, root)
+            if resolved_settings.cache_dir
+            else None
+        )
+        return cls(
+            workspace_root=root,
+            sources=sources,
+            cache_dir=cache_dir,
+            watch=resolved_settings.watch,
+            excludes=resolved_settings.excludes,
+            discovery=discovery,
+        )
 
     @classmethod
     def from_dict(cls, data: object, *, workspace_root: str | Path) -> AppConfig:
@@ -346,13 +383,15 @@ def _resolve_registry_source(
 def load_config(
     path: str | Path | None = None, *, env_locator: str | None = None
 ) -> AppConfig:
-    """Load ``molcrafts.json`` or return a current-workspace default."""
-    config_path = Path(path or DEFAULT_CONFIG_NAME).expanduser()
-    if not config_path.is_absolute():
-        config_path = Path.cwd() / config_path
-    if not config_path.is_file():
-        if path is not None:
-            raise ConfigurationError(f"configuration file not found: {config_path}")
+    """Resolve configuration from settings, or from an explicit file.
+
+    Scope is owned by ``~/.molmcp/settings.json`` and ``molmcp config``.
+    A ``molcrafts.json`` sitting in the working directory is **not** picked
+    up any more — auto-loading it reintroduced exactly the cwd dependence
+    that made an unconfigured install index the world. Passing ``path``
+    explicitly still works.
+    """
+    if path is None:
         # Function-level import breaks the config <-> environment cycle:
         # environment.py imports ConfigurationError from this module.
         from .environment import discover_sources
@@ -364,8 +403,14 @@ def load_config(
         return AppConfig.default(
             Path.cwd(),
             discovered=[(source.name, source.spec) for source in report.sources],
+            settings=load_settings(Path.cwd()),
             discovery=report.to_dict(),
         )
+    config_path = Path(path).expanduser()
+    if not config_path.is_absolute():
+        config_path = Path.cwd() / config_path
+    if not config_path.is_file():
+        raise ConfigurationError(f"configuration file not found: {config_path}")
     try:
         data = json.loads(
             config_path.read_text(encoding="utf-8"),

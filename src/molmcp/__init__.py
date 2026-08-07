@@ -21,7 +21,7 @@ from .registry import (
 )
 from .server import create_plane, create_server
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 __all__ = [
     "CAPABILITY_ENTRY_POINT_GROUP",

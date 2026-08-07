@@ -39,8 +39,9 @@ def test_default_config_indexes_current_workspace(tmp_path, monkeypatch):
         "molmcp.environment.discover_sources", lambda locator=None: _env_report()
     )
     config = load_config()
-    # Workspace is unconditional; an empty discovery report folds nothing.
-    assert config.sources == {"workspace": str(tmp_path.resolve())}
+    # Scope is explicit now: an empty discovery report yields no sources at
+    # all, where this used to silently index the working directory.
+    assert config.sources == {}
     assert config.server.transport == "stdio"
 
 
@@ -285,7 +286,6 @@ def test_no_file_folds_auto_discovered_sources(tmp_path, monkeypatch):
     )
     config = load_config()
     assert config.sources == {
-        "workspace": str(tmp_path.resolve()),
         "molpy": "pkg:molpy",
         "molfoo": f"local:{pkg_dir}",
     }
@@ -318,9 +318,12 @@ def test_explicit_config_is_not_augmented(tmp_path, monkeypatch):
 
 
 def test_default_dedupes_discovered_names_colliding_with_workspace(tmp_path):
+    from molmcp.settings import Settings
+
     config = AppConfig.default(
         tmp_path,
         discovered=[("workspace", "pkg:a"), ("workspace", "pkg:b")],
+        settings=Settings(index_workspace=True),
     )
     root = str(tmp_path.resolve())
     assert config.sources["workspace"] == root
@@ -330,9 +333,12 @@ def test_default_dedupes_discovered_names_colliding_with_workspace(tmp_path):
 
 
 def test_default_dedupes_mutually_colliding_discovered_names(tmp_path):
+    from molmcp.settings import Settings
+
     config = AppConfig.default(
         tmp_path,
         discovered=[("molpy", "pkg:x"), ("molpy", "pkg:y")],
+        settings=Settings(index_workspace=True),
     )
     assert config.sources["workspace"] == str(tmp_path.resolve())
     assert config.sources["molpy"] == "pkg:x"

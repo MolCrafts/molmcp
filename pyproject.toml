@@ -1,6 +1,6 @@
 [project]
 name = "molcrafts-molmcp"
-version = "0.4.1"
+version = "0.5.0"
 description = "Multi-plane on-demand MCP for MolCrafts: one product domain per connection"
 readme = "README.md"
 requires-python = ">=3.12"
