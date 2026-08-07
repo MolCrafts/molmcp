@@ -6,9 +6,14 @@ This is what the MCP tools and the CLI both call.
 
 from __future__ import annotations
 
+from .ranking import RankCandidate, rank_matches
 from .schema import Edge, EdgeKind, Node, NodeKind, Provenance
 from .source import Snapshot
 from .store import GraphStore
+
+#: Recall multiplier before re-ranking: refinement can only reorder what
+#: it was given, so the lexical stage hands over more than the caller wants.
+_OVERSAMPLE = 3
 
 _KIND_ORDER: dict[str, int] = {
     NodeKind.PACKAGE: 0,
@@ -69,7 +74,43 @@ class DiscoveryQuery:
     def search(
         self, query: str, kind: str | None = None, limit: int = 30
     ) -> list[Node]:
-        return self.store.search(query, kind, limit)
+        """Recall by field-weighted bm25, then refine by graph signals.
+
+        The store answers *what matched*; this decides *what to read first*.
+        Lexical position still leads, and export status, resolved-caller
+        count, and example/test coverage refine it — a documented exported
+        entry point with tests beats an equally-worded private helper.
+
+        Recall is oversampled so refinement has material to work with, and
+        every signal is one batched read: two queries per candidate would
+        cost more than the ordering is worth.
+        """
+        candidates = self.store.search(query, kind, max(limit * _OVERSAMPLE, limit))
+        if len(candidates) <= 1:
+            return candidates[:limit]
+        node_ids = [node.id for node in candidates]
+        callers = self.store.incoming_edge_counts(
+            node_ids, EdgeKind.CALLS, provenance=Provenance.RESOLVED
+        )
+        # Example and test edges are heuristic by construction (the resolver
+        # links them by name), so filtering them by provenance would score
+        # every symbol at zero. Caller counts are the ones that must stay
+        # resolved-only: a guessed edge cannot be allowed to buy a rank.
+        examples = self.store.incoming_edge_counts(node_ids, EdgeKind.EXEMPLIFIES)
+        tests = self.store.incoming_edge_counts(node_ids, EdgeKind.TESTS)
+        ranked = rank_matches(
+            [
+                RankCandidate(
+                    node=node,
+                    fts_rank=position,
+                    caller_count=callers.get(node.id, 0),
+                    example_count=examples.get(node.id, 0),
+                    test_count=tests.get(node.id, 0),
+                )
+                for position, node in enumerate(candidates)
+            ]
+        )
+        return [candidate.node for candidate in ranked[:limit]]
 
     def get_node(self, qualname: str) -> Node | None:
         """Best node for a qualname (a qualname may map to several)."""
