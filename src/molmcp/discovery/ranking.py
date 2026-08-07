@@ -35,10 +35,20 @@ W_EXAMPLE = 0.8
 W_TEST = 0.8
 W_FTS = 1.5  # contributes W_FTS / (1 + fts_rank)
 
+# Modules, packages and namespaces are navigational: places to browse, not
+# answers to "how do I do this". They used to fall through to the default
+# prior *and* collect the full export bonus — every module is importable —
+# which on the golden fixture ranked `readers.top` above `read_gromacs_top`
+# for "read a gromacs topology file". The reply was the file to look in
+# rather than the function to call.
+NAVIGATIONAL_KINDS = frozenset({NodeKind.MODULE, NodeKind.PACKAGE, NodeKind.NAMESPACE})
+
 # Containers and callables are likelier capability entry points than
-# data members. Capability nodes bypass this ranker entirely (they are
-# surfaced by the capability-first stage in evidence.py).
+# data members.
 KIND_PRIOR: dict[str, float] = {
+    NodeKind.MODULE: 0.0,
+    NodeKind.PACKAGE: 0.0,
+    NodeKind.NAMESPACE: 0.0,
     NodeKind.CLASS: 1.0,
     NodeKind.STRUCT: 1.0,
     NodeKind.INTERFACE: 1.0,
@@ -75,7 +85,9 @@ def _score(candidate: RankCandidate) -> float:
     node = candidate.node
     score = W_FTS / (1 + candidate.fts_rank)
     score += KIND_PRIOR.get(node.kind, _DEFAULT_PRIOR)
-    if node.is_exported:
+    # Export status is evidence for a symbol and noise for a container: a
+    # module is importable by definition, so the flag distinguishes nothing.
+    if node.is_exported and node.kind not in NAVIGATIONAL_KINDS:
         score += W_EXPORTED
     score += W_CALLERS * math.log1p(candidate.caller_count)
     if candidate.example_count > 0:

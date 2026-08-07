@@ -18,6 +18,15 @@ from .models import ContextPack, SearchHit, SourceBinding
 
 DEFAULT_CONTEXT_BUDGET = 16_000
 MAX_CONTEXT_BUDGET = 32_000
+
+#: Per-field caps on a single symbol page. ``explore`` budgets a whole pack,
+#: but ``open`` returns one detail and was bounded only by the 256 KB
+#: response middleware — a backstop that truncates the entire payload. One
+#: uncapped ``open(include_source=True)`` on a large module measured 41 568
+#: characters of source alone.
+MAX_SOURCE_CHARS = 12_000
+MAX_EXAMPLE_CHARS = 2_000
+MAX_CONVENTION_CHARS = 1_200
 _RRF_K = 60
 _SEARCH_OVERSAMPLE = 3
 _CONTEXT_LIMIT = 12
@@ -698,9 +707,10 @@ class CollectionIndex:
         if include_examples:
             detail["examples"] = self._related_nodes(query, "examples_of", qualname, 3)
         detail["tests"] = self._related_nodes(query, "tests_of", qualname, 5)
-        detail["conventions"] = self._related_nodes(
-            query, "conventions_for", qualname, 3
-        )
+        detail["conventions"] = [
+            _convention_view(node)
+            for node in self._related_nodes_raw(query, "conventions_for", qualname, 3)
+        ]
         detail["relationships"] = {
             "callers": self._reliable_pairs(query, "callers_pairs", qualname, 6),
             "callees": self._reliable_pairs(query, "callees_pairs", qualname, 6),
@@ -712,14 +722,21 @@ class CollectionIndex:
     def _related_nodes(
         self, query: Any, method_name: str, qualname: str, limit: int
     ) -> list[dict[str, Any]]:
+        return [
+            _node_mapping(node)
+            for node in self._related_nodes_raw(query, method_name, qualname, limit)
+        ]
+
+    def _related_nodes_raw(
+        self, query: Any, method_name: str, qualname: str, limit: int
+    ) -> list[Any]:
         method = getattr(query, method_name, None)
         if not callable(method):
             return []
         try:
-            nodes = _call_supported(method, qualname, limit=limit)
+            return list(_call_supported(method, qualname, limit=limit) or ())
         except Exception:  # noqa: BLE001 - optional evidence channel
             return []
-        return [_node_mapping(node) for node in (nodes or ())]
 
     def _reliable_pairs(
         self, query: Any, method_name: str, qualname: str, limit: int
@@ -761,7 +778,7 @@ class CollectionIndex:
             return f"<source unavailable: {exc}>"
         start = max(int(getattr(node, "start_line", 1)) - 1, 0)
         end = max(int(getattr(node, "end_line", start + 1)), start + 1)
-        return "\n".join(lines[start:end])
+        return _capped("\n".join(lines[start:end]), MAX_SOURCE_CHARS)
 
     def _node_for_id(self, query: Any, node_id: str) -> Any | None:
         store = getattr(query, "store", None)
@@ -1074,10 +1091,61 @@ def _object_mapping(value: Any) -> dict[str, Any]:
     return {key: _jsonable(getattr(value, key)) for key in keys if hasattr(value, key)}
 
 
+def _convention_view(node: Any) -> dict[str, Any]:
+    """A convention as an agent needs to read it.
+
+    The rule text is the whole point, so it belongs at the top level rather
+    than buried in a metadata blob — and capped, since it is authored
+    somewhere this index does not control.
+    """
+    metadata = getattr(node, "metadata", None) or {}
+    rules = metadata.get("rules", [])
+    if isinstance(rules, str):
+        joined = rules
+    else:
+        joined = "\n".join(str(rule) for rule in rules)
+    return {
+        "id": str(getattr(node, "qualname", "")),
+        "title": str(metadata.get("title", "")),
+        "scope": list(metadata.get("scope", [])),
+        "rules": _capped(joined, MAX_CONVENTION_CHARS),
+        "tags": list(metadata.get("tags", [])),
+    }
+
+
+def _capped(text: str, limit: int) -> str:
+    """Trim ``text`` to ``limit``, saying so when anything was dropped."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n... (truncated)"
+
+
+def _cap_node_payload(mapping: dict[str, Any]) -> dict[str, Any]:
+    """Bound the free-text a node carries in its metadata.
+
+    An ``example`` node holds its whole snippet and a ``convention`` its
+    whole rule text; both are authored elsewhere and can be arbitrarily
+    long, so neither belongs in a page verbatim.
+    """
+    metadata = mapping.get("metadata")
+    if not isinstance(metadata, dict):
+        return mapping
+    capped = dict(metadata)
+    if isinstance(capped.get("code"), str):
+        capped["code"] = _capped(capped["code"], MAX_EXAMPLE_CHARS)
+    rules = capped.get("rules")
+    if isinstance(rules, list):
+        capped["rules"] = [_capped(str(rule), MAX_CONVENTION_CHARS) for rule in rules]
+    elif isinstance(rules, str):
+        capped["rules"] = _capped(rules, MAX_CONVENTION_CHARS)
+    mapping["metadata"] = capped
+    return mapping
+
+
 def _node_mapping(node: Any) -> dict[str, Any]:
     dumper = getattr(node, "to_dict", None)
     if callable(dumper):
-        return _jsonable(dumper())
+        return _cap_node_payload(_jsonable(dumper()))
     keys = (
         "id",
         "kind",
@@ -1098,7 +1166,9 @@ def _node_mapping(node: Any) -> dict[str, Any]:
         "is_abstract",
         "metadata",
     )
-    return {key: _jsonable(getattr(node, key)) for key in keys if hasattr(node, key)}
+    return _cap_node_payload(
+        {key: _jsonable(getattr(node, key)) for key in keys if hasattr(node, key)}
+    )
 
 
 def _jsonable(value: Any) -> Any:

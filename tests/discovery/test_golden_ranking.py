@@ -2,7 +2,7 @@
 
 The canary: "read a lammps data file" must surface the real LAMMPS reader
 first, not the alphabetically-first ``AcReader.read`` sink. Runs the full
-``find_capability`` path over a hermetic fixture — no molpy, no network,
+knowledge-plane search path over a hermetic fixture — no molpy, no network,
 no model.
 """
 
@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
+from molmcp.collection import CollectionIndex, SourceBinding
 from molmcp.discovery import DiscoveryConfig, DiscoveryEngine
-from molmcp.discovery.evidence import EvidenceBuilder
 
 from .golden_queries import GOLDEN, materialize_fixture
 
@@ -20,13 +20,15 @@ from .golden_queries import GOLDEN, materialize_fixture
 def finder(tmp_path):
     repo = materialize_fixture(tmp_path / "repo")
     engine = DiscoveryEngine(DiscoveryConfig(cache_dir=tmp_path / "cache"))
-    query = engine.query(str(repo))
-    return EvidenceBuilder(query)
+    # The path an MCP client takes, not a curated one beside it: locking
+    # the ordering of something no tool calls proves nothing.
+    return CollectionIndex(
+        [SourceBinding(name="fixture", spec=str(repo), engine=engine)], None
+    )
 
 
 def _ranked_quals(finder, task: str, k: int) -> list[str]:
-    result = finder.find_capability(task, k)
-    return [m["node"]["qualname"] for m in result["matches"]]
+    return [hit.title for hit in finder.search(task, limit=k)]
 
 
 @pytest.mark.parametrize("case", GOLDEN, ids=lambda c: c["task"])

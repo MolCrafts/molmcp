@@ -3,8 +3,9 @@
 
 The deterministic golden-set regression (``tests/discovery/test_golden_ranking``)
 locks exact top-k ordering. This script is the *fuzzy* companion: it asks a
-lightweight model (Claude Haiku) whether the symbols ``find_capability``
-returns are actually relevant to each golden task, and prints a mean score.
+lightweight model (Claude Haiku) whether the symbols the knowledge plane's
+``search`` returns are actually relevant to each golden task, and prints a
+mean score.
 
 Advisory only — it is NOT part of the CI gate. It runs against the same
 hermetic fixture the pytest regression uses, so it needs no molpy checkout.
@@ -34,23 +35,24 @@ _TOP_K = 5
 
 
 def _finder(cache_dir: Path, repo: Path):
+    from molmcp.collection import CollectionIndex, SourceBinding
     from molmcp.discovery import DiscoveryConfig, DiscoveryEngine
-    from molmcp.discovery.evidence import EvidenceBuilder
 
     engine = DiscoveryEngine(DiscoveryConfig(cache_dir=cache_dir))
-    return EvidenceBuilder(engine.query(str(repo)))
+    return CollectionIndex(
+        [SourceBinding(name="fixture", spec=str(repo), engine=engine)], None
+    )
 
 
 def _rank_symbols(finder, task: str) -> list[dict]:
-    result = finder.find_capability(task, _TOP_K)
     return [
         {
-            "rank": m["rank"],
-            "qualname": m["node"]["qualname"],
-            "signature": m.get("signature"),
-            "summary": m.get("summary"),
+            "rank": rank,
+            "qualname": hit.title,
+            "signature": hit.signature,
+            "summary": hit.summary,
         }
-        for m in result["matches"]
+        for rank, hit in enumerate(finder.search(task, limit=_TOP_K), 1)
     ]
 
 

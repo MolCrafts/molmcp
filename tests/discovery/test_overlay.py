@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from molmcp.collection import CollectionIndex, SourceBinding
 from molmcp.discovery import DiscoveryConfig, DiscoveryEngine
-from molmcp.discovery.evidence import EvidenceBuilder
 from molmcp.discovery.overlay import OverlayContribution
 from molmcp.discovery.overlay.catalog import CatalogOverlay, load_catalog
 from molmcp.discovery.schema import Node, NodeKind
@@ -102,11 +102,14 @@ def test_implementations_relation(overlay_engine):
     assert impls == {"compute.RDF"}
 
 
-def test_find_capability_surfaces_overlay(overlay_engine):
+def test_search_surfaces_an_overlay_capability(overlay_engine):
+    """An overlay capability has to be reachable from the tool path."""
     engine, repo = overlay_engine
-    query = engine.query(repo)
-    result = EvidenceBuilder(query).find_capability("radial distribution", 8)
-    assert any(m["node"]["qualname"] == "compute.rdf" for m in result["matches"])
+    collection = CollectionIndex(
+        [SourceBinding(name="ov", spec=repo, engine=engine)], None
+    )
+    hits = collection.search("radial distribution", limit=8)
+    assert any(hit.title == "compute.rdf" for hit in hits)
 
 
 def test_custom_overlay_protocol(tmp_path):
