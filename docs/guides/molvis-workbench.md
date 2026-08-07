@@ -2,19 +2,22 @@
 
 You're driving a molecular viewer through a conversation: the user says "make me an aspirin", sees the 3D structure appear in a browser, clicks part of it, and says "change this". This page teaches the **loop** that makes that work — open a session, execute Python inside it, pull the events the browser sends back.
 
-It deliberately documents **no** molvis or molpy method. Every API you call inside `molvis_exec` belongs to those packages, and the truth about it lives in their docstrings, one `molcrafts_search` away. Read [Provider design](../concepts/provider-design.md) for why the tool surface is only five primitives.
+It deliberately documents **no** molvis or molpy method. Every API you call inside `molvis_exec` belongs to those packages, and the truth about it lives in their docstrings, one `molcrafts_search` away. Read [Provider design](../concepts/provider-design.md) for why the tool surface is only these few primitives.
 
 ## One session, two surfaces, two wills
 
-A viewer session is one live molvis `Stage` — the Python object that controls one viewer — held inside the running `molmcp serve` process, together with a Python namespace bound to it. Four parties share it. The **human** watches and clicks. The **canvas** is the browser page molvis renders: it projects the structure and streams interaction events back. The **code surface** is that in-process namespace, holding `mol` (a molpy structure — the single source of truth) and `stage` (the controller that projects it). The **agent** — you — holds only the five MCP primitives and never touches the canvas directly.
+A viewer session is one live molvis `Stage` — the Python object that controls one viewer — held inside the running `molmcp serve` process, together with a Python namespace bound to it. Four parties share it. The **human** watches and clicks. The **canvas** is the browser page molvis renders: it projects the structure and streams interaction events back. The **code surface** is that in-process namespace, holding `mol` (a molpy structure — the single source of truth) and `stage` (the controller that projects it). The **agent** — you — holds only the MCP primitives and never touches the canvas directly.
 
 Two wills act on one session and neither blocks the other. The human's "change *that* bit" reaches you as an event you poll for; your "apply what we agreed" reaches them as the next redraw. They meet in session state, nowhere else.
 
 ## The loop
 
-`molvis_open` → `molvis_exec` (build and draw) → the human looks and clicks → `molvis_poll_events` → `molvis_exec` (read the selection, edit, redraw) → `molvis_close`.
+Connect the **molvis** plane (`molmcp serve molvis`). Tool ids are
+`molvis__open`, `molvis__exec`, … (server name + bare tool).
 
-Step one, once `molvis_open` has returned and the user has the viewer open in a browser: build the molecule and put it on the canvas. `stage` is already bound in the namespace; nothing else is imported for you.
+`open` → `exec` (build and draw) → the human looks and clicks → `poll_events` → `exec` (read the selection, edit, redraw) → `close`.
+
+Step one, once `open` has returned and the user has the viewer open in a browser: build the molecule and put it on the canvas. `stage` is already bound in the namespace; nothing else is imported for you.
 
 ```python
 import molpy as mp
@@ -25,7 +28,7 @@ stage.draw_frame(mol)
 
 SMILES — Simplified Molecular-Input Line-Entry System — is a molecule written as a single line of text; parsing it yields connectivity without coordinates, which is why a conformer generator runs before anything can be drawn in 3D.
 
-The user now clicks part of the structure, and `molvis_poll_events` hands you a `selection_changed` record. Step two reads that selection back, edits the structure, and redraws. Note what is *not* in the code: no rebuild of `mol`, because the namespace persisted.
+The user now clicks part of the structure, and `poll_events` hands you a `selection_changed` record. Step two reads that selection back, edits the structure, and redraws. Note what is *not* in the code: no rebuild of `mol`, because the namespace persisted.
 
 ```python
 sel = stage.get_selected()             # standalone sub-Frame, with its own elements + coordinates
@@ -33,7 +36,7 @@ sel = stage.get_selected()             # standalone sub-Frame, with its own elem
 stage.clear(); stage.draw_frame(mol)   # refresh = clear first, then draw
 ```
 
-That is the whole pattern. Longer work is more turns of the same wheel, never a bigger tool: molmcp will not grow a `show_smiles` or a `replace_group`, because the vocabulary for those lives upstream and you already have a channel to it.
+That is the whole pattern. Longer work is more turns of the same wheel, never a bigger tool: the molvis plane will not grow a `show_smiles` or a `replace_group`, because the vocabulary for those lives upstream and you already have a channel to it. Use the **molcrafts** plane to discover APIs; never invent MCP science tools.
 
 ## Three facts the loop depends on
 
@@ -51,6 +54,18 @@ Before your first drawing call, check `stage.connected` inside `molvis_exec`. Dr
 
 The same reflex applies after any long pause: the user may have closed the tab. `molvis_list_sessions` tells you which sessions exist; `stage.connected` tells you whether anyone is looking.
 
+## Asking the stage what it can do
+
+Call `molvis_capabilities` instead of probing with `dir(stage)` and `inspect.signature` inside `molvis_exec`. It reads the surface off the live object, so it cannot disagree with the installed molvis, and it answers the question a signature alone does not: `kind` tells you whether to *call* a name or *read* it. Calling a property is a routine and thoroughly confusing mistake — `stage.n_frames()` when `n_frames` is a property fails with `'int' object is not callable`, which names neither the attribute nor the real problem. Pass `pattern` to narrow the list (`"draw"`, `"frame"`, `"select"`).
+
+## After the user edits a package
+
+`molvis_refresh` drops edited packages from the server's module cache so your next `molvis_exec` imports the current source. Two things it will not do, both of which have bitten before:
+
+**It cannot reload a compiled extension.** `molrs` is mapped into the process once and stays until the server restarts. When `restart_required` comes back true, stop and ask for a reconnect — running the test anyway means reporting a verdict on code that never executed. The same field is on every `molvis_capabilities` reply, so you can check it without refreshing anything.
+
+**It does not migrate live objects.** `stage`, `mol`, everything an earlier `exec` bound, keeps pointing at the classes it was built from. Rebuild them after refreshing, or open a new session — otherwise the session straddles two versions of the same package and the results are nobody's.
+
 ## Where the end-to-end playbook lives
 
 The full aspirin rehearsal — start the server, open, build, look, click, poll, edit, redraw, close, with a real browser and a real human in the middle — is an **out-of-tree** harness. It belongs in a sibling directory next to your molmcp checkout (`molvis-agent-e2e/`), never under the `molmcp/` or `molvis/` product trees, and specifically not in either project's `examples/` or `tests/`.
@@ -59,6 +74,6 @@ The reason is honesty about what the thing is. An interactive dialogue script th
 
 ## Read next
 
-- **[Provider design](../concepts/provider-design.md)** — the five primitives, the no-invented-API rule, and the local trust model
+- **[Provider design](../concepts/provider-design.md)** — the primitives, the no-invented-API rule, and the local trust model
 - **[Discovery engine](../concepts/discovery.md)** — where every API in the loop above is actually documented
 - **[Write a Provider](write-a-provider.md)** — the four-condition rule for adding tools of your own

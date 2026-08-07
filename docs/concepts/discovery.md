@@ -236,13 +236,16 @@ assert hits, "expected at least one match"
 print(hits[0].qualname, hits[0].file, hits[0].start_line)
 ```
 
-**4. The MCP tool path.** Run `python -m molmcp --source pkg:molpy` and
-call the tools — every response carries a `snapshot` block with a
-`freshness` status. The key property to check: an agent never invents a
-name. The flow is `molmcp_outline` → `molmcp_search_symbols` /
-`molmcp_find_capability` (which return real qualnames) →
-`molmcp_describe_symbol` / `molmcp_relations`; a wrong qualname yields a
-structured `{"error": …}`, never a hallucinated result.
+**4. The MCP tool path.** Serve the knowledge plane and call bare tools
+on the `molcrafts` server:
+
+```bash
+molmcp serve molcrafts   # sources from molcrafts.json
+```
+
+Client flow: `molcrafts__packages` → `molcrafts__outline` →
+`molcrafts__search` / `molcrafts__open`. Responses carry a `snapshot`
+block. A wrong ref yields a structured error, never a hallucinated symbol.
 
 The graph itself is plain SQLite — open
 `~/.cache/molmcp/discovery/snapshots/<slug>/graph.db` with any SQLite

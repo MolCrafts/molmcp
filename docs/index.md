@@ -1,12 +1,13 @@
 ---
 title: molmcp
-description: molmcp indexes a codebase into a queryable code graph, so an AI agent resolves the real API from real code instead of guessing.
+description: Multi-plane MCP for MolCrafts — one product domain per connection, knowledge pages on demand, no mega-server.
 hide:
   - navigation
   - toc
 hero:
+  kicker: molmcp Manual
   title: molmcp
-  description: "A read-only MCP server that turns source code into graph-backed discovery tools. Agents can find capabilities, inspect symbols, walk relations, see examples and tests, and verify every answer against a concrete source snapshot."
+  description: "Multi-plane, on-demand MCP for MolCrafts. Connect only the planes you need — catalog routing, molcrafts knowledge pages, molvis live sessions, molq jobs, molexp workspaces. Science APIs stay in code; agents discover them, then call them elsewhere."
   install:
     label: Install
     command: pip install molcrafts-molmcp
@@ -24,10 +25,10 @@ hero:
     - label: Get started
       href: get-started/installation/
       style: primary
-    - label: Discovery tools
-      href: reference/cli/
-    - label: Provider design
-      href: concepts/provider-design/
+    - label: Architecture
+      href: concepts/architecture/
+    - label: MolVis workbench
+      href: guides/molvis-workbench/
 ---
 
 <h1 class="molcrafts-sr-only">molmcp</h1>
@@ -44,38 +45,38 @@ hero:
 
 <span class="molcrafts-manual-eyebrow">Features</span>
 
-## Code discovery an agent can verify
+## One plane per connection
 
-molmcp gives an agent read-only tools backed by indexed source, not guessed
-names. Every result carries the symbol, file, line, signature, related examples
-or tests, and the exact source snapshot that produced it.
+There is **no** mega-server that mounts every tool under `molmcp`. Clients
+link planes on demand. Tool ids look like `molvis__open` or
+`molcrafts__packages` — server name plus bare tool.
 
 </div>
 
 <div class="molcrafts-manual-grid molcrafts-manual-grid--cols-3">
-  <a href="reference/cli/">
-    <strong>Capability search</strong>
-    <em>Describe a task in plain language and get ranked symbols with signatures, summaries, examples, tests, callers, and provenance.</em>
-  </a>
-  <a href="reference/cli/">
-    <strong>Symbol inspection</strong>
-    <em>Open one qualname and retrieve docstrings, signatures, source snippets, examples, tests, caller counts, and callee counts.</em>
-  </a>
-  <a href="reference/cli/">
-    <strong>Graph relations</strong>
-    <em>Walk callers, callees, subclasses, implementations, examples, tests, references, and impact from any indexed symbol.</em>
+  <a href="concepts/architecture/">
+    <strong>catalog</strong>
+    <em>Bootstrap only: list_planes and route(task) so the agent knows which product planes to connect.</em>
   </a>
   <a href="concepts/discovery/">
-    <strong>Source outline</strong>
-    <em>Map a package or repository into modules and symbols before deciding where to inspect more deeply.</em>
+    <strong>molcrafts</strong>
+    <em>OKF-style knowledge pages — packages → outline → open → search / compose — over a content-addressed code graph.</em>
+  </a>
+  <a href="guides/molvis-workbench/">
+    <strong>molvis</strong>
+    <em>Live viewer session: open a browser stage, exec Python, poll human selection events, redraw.</em>
+  </a>
+  <a href="concepts/provider-design/">
+    <strong>molq / molexp</strong>
+    <em>Job store and experiment workspace planes — each its own connection, gated by the four-condition rule.</em>
   </a>
   <a href="concepts/discovery/">
     <strong>Snapshot cache</strong>
-    <em>Index installed packages, local paths, or GitHub repositories into content-addressed SQLite graphs with FTS5 search.</em>
+    <em>Index installed packages, local paths, or GitHub repos into SQLite graphs with FTS5; every answer carries a snapshot.</em>
   </a>
   <a href="concepts/provider-design/">
-    <strong>Provider extension</strong>
-    <em>Add curated read-only tools for live state that static source cannot answer, gated by a strict four-condition rule.</em>
+    <strong>No invented science tools</strong>
+    <em>Science APIs stay in molpy/molrs/… Agents discover them on molcrafts, then call them in agent Python or molvis exec.</em>
   </a>
 </div>
 
@@ -89,28 +90,29 @@ or tests, and the exact source snapshot that produced it.
 
 <div class="molcrafts-manual-section__header" markdown>
 
-<span class="molcrafts-manual-eyebrow">The tool surface</span>
+<span class="molcrafts-manual-eyebrow">The molcrafts plane</span>
 
-## Six read-only MCP tools
+## Knowledge pages, not a tool mega-menu
 
-Every tool is `readOnlyHint=True` and every response includes a `snapshot`
-block, so agent actions remain inspectable and tied to a concrete revision.
+On the **molcrafts** plane, tools are bare names (`packages`, `outline`,
+`open`, …). Clients see `molcrafts__packages`. Every page-style response is
+meant to be **injected into context** — not skimmed as a search hit list.
 
 </div>
 
 <dl class="molcrafts-feature-matrix">
-  <dt><code>find_capability</code></dt>
-  <dd>Task description to ranked symbol matches. This is the primary entry point when the agent knows what it needs but not the API name.</dd>
-  <dt><code>search_symbols</code></dt>
-  <dd>Full-text search over indexed names, qualnames, and summaries.</dd>
-  <dt><code>describe_symbol</code></dt>
-  <dd>Full detail for one qualname: signature, docstring, examples, tests, caller/callee counts, and optional source.</dd>
-  <dt><code>relations</code></dt>
-  <dd>Graph walks from a symbol: callers, callees, subclasses, implementations, examples, tests, references, and impact.</dd>
+  <dt><code>packages</code></dt>
+  <dd>L0 directory of indexed packages and summaries — choose sources yourself.</dd>
   <dt><code>outline</code></dt>
-  <dd>Package and module map for a source, useful when the agent needs the shape of a codebase first.</dd>
-  <dt><code>refresh</code></dt>
-  <dd>Force a fresh incremental re-index of a source.</dd>
+  <dd>Module / symbol map for one source before you dive deeper.</dd>
+  <dt><code>open</code></dt>
+  <dd>Inject one symbol page (signature, docstring, examples, tests, optional source).</dd>
+  <dt><code>search</code> / <code>suggest</code></dt>
+  <dd>Index helpers — prefer after packages/outline, with an explicit <code>source=</code> when possible.</dd>
+  <dt><code>compose</code></dt>
+  <dd>Budgeted multi-page pack for a task (packages + suggest + open pages).</dd>
+  <dt><code>info</code></dt>
+  <dd>Ops / health view of sources and registry — not the main discovery path.</dd>
 </dl>
 
 </section>
@@ -134,15 +136,15 @@ Names that do not resolve come back as structured errors.
 </div>
 
 ```text
-molmcp_find_capability("radial distribution function", source="pkg:molpy")
+# catalog plane — which connections do I need?
+catalog.route("compute an RDF in molpy")
+→ connect molcrafts (knowledge) …
 
-→ molpy.compute.rdf.RDF                    class   src/molpy/compute/rdf.py:14
-    summary    Compute g(r) between two atom selections.
-    signature  RDF(bins=100, r_max=None)
-    examples   examples/rdf_basic.py                         (exemplifies)
-    tests      tests/test_compute/test_rdf.py::test_rdf      (tests)
-    callers    molpy.compute.__init__ · molpy.analysis.rdf_report   (calls)
-    provenance resolved · fts_rank 0.91 · callers 2 · tests 1
+# molcrafts plane — inject real API pages
+molcrafts.packages()                    # pick source "molpy"
+molcrafts.search("RDF", source="molpy")
+molcrafts.open("molpy.compute.rdf.RDF")
+→ signature, docstring, examples, tests, snapshot
 ```
 
 </section>
@@ -193,20 +195,22 @@ source spec ─▶ snapshot ─▶ extract symbols ─▶ resolve names ─▶ g
 
 <span class="molcrafts-manual-eyebrow">Run it</span>
 
-## One command, discovery online
+## One process per plane
 
-`python -m molmcp` indexes the MolCrafts packages `molpy, molpack, molrs, molq,
-molexp, molnex` from a local install when available and from GitHub otherwise.
-It serves the six discovery tools over MCP stdio, plus each present package's
-Provider.
+Install once, then serve **only** the planes your client should see. Use
+`molmcp planes` / `molmcp route "…"` to discover the catalog.
 
 </div>
 
 ```bash
 pip install molcrafts-molmcp
-python -m molmcp
-# then, from another terminal:
-claude mcp add molcrafts -- python -m molmcp
+molmcp planes
+molmcp serve catalog          # list_planes / route
+molmcp serve molcrafts        # knowledge pages (needs molcrafts.json sources)
+molmcp serve molvis           # live viewer session
+# Claude Code — one MCP entry per plane you connect:
+#   claude mcp add catalog -- molmcp serve catalog
+#   claude mcp add molcrafts -- molmcp serve molcrafts
 ```
 
 </section>
@@ -229,37 +233,37 @@ claude mcp add molcrafts -- python -m molmcp
   <a href="get-started/installation/">
     <span>01</span>
     <strong>Installation</strong>
-    <em>Install molmcp and confirm the discovery tools come online.</em>
+    <em>Install molmcp and list connectable planes.</em>
   </a>
   <a href="get-started/quickstart/">
     <span>02</span>
     <strong>Quickstart</strong>
-    <em>Run the server, wire it into Claude Code, and call the six tools.</em>
-  </a>
-  <a href="concepts/discovery/">
-    <span>03</span>
-    <strong>Discovery engine</strong>
-    <em>How the code graph is built, stored, queried, and refreshed.</em>
+    <em>Serve catalog + molcrafts, wire multi-link MCP clients.</em>
   </a>
   <a href="concepts/architecture/">
-    <span>04</span>
+    <span>03</span>
     <strong>Architecture</strong>
-    <em>How discovery, providers, and middleware compose into one server.</em>
+    <em>One plane per connection — catalog, knowledge, providers.</em>
+  </a>
+  <a href="concepts/discovery/">
+    <span>04</span>
+    <strong>Discovery engine</strong>
+    <em>How the code graph is built, stored, and queried.</em>
+  </a>
+  <a href="guides/molvis-workbench/">
+    <span>05</span>
+    <strong>MolVis workbench</strong>
+    <em>open → exec → poll_events loop for a live stage.</em>
   </a>
   <a href="concepts/provider-design/">
-    <span>05</span>
-    <strong>Provider design</strong>
-    <em>The four-condition rule that gates every tool beyond the graph.</em>
-  </a>
-  <a href="guides/write-a-provider/">
     <span>06</span>
-    <strong>Write a Provider</strong>
-    <em>Add a stateful tool the discovery graph cannot answer on its own.</em>
+    <strong>Provider design</strong>
+    <em>Four-condition rule for every tool beyond knowledge pages.</em>
   </a>
   <a href="reference/cli/">
     <span>07</span>
     <strong>Reference</strong>
-    <em>The CLI and the full API surface.</em>
+    <em>CLI and plane API surface.</em>
   </a>
 </nav>
 

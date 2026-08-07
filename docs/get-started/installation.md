@@ -1,6 +1,7 @@
 # Installation
 
-molmcp is published on PyPI as **`molcrafts-molmcp`** and requires Python ≥ 3.12. The import name is `molmcp`.
+molmcp is published on PyPI as **`molcrafts-molmcp`** and requires Python ≥ 3.12.
+The import name is `molmcp`.
 
 ## With pip
 
@@ -16,51 +17,61 @@ uv add molcrafts-molmcp
 
 ## What gets installed
 
-The base install pulls in molmcp itself plus its server-framework dependency. Nothing else — no NumPy, no MolCrafts packages, no domain dependencies. molmcp stays infrastructure-only on purpose.
+The base install is infrastructure only: the multi-plane MCP runtime, knowledge
+index, and CLI. Domain packages (molpy, molvis, molq, …) stay optional — install
+them when you need a provider plane or richer local discovery.
 
 ## Optional extras
 
 | Extra | Purpose | Command |
 |-------|---------|---------|
-| `dev` | pytest + pytest-asyncio + ruff for the test suite and linting | `pip install "molcrafts-molmcp[dev]"` |
+| `dev` | pytest + ruff for the test suite and linting | `pip install "molcrafts-molmcp[dev]"` |
 | `docs` | local preview of this documentation site | `pip install "molcrafts-molmcp[docs]"` |
+
+Docs pin: `zensical>=0.0.53` and `molcrafts-zensical-theme>=0.2.5`.
 
 ## Verify the install
 
 ```bash
 python -c "import molmcp; print(molmcp.__version__)"
-```
-
-```bash
+molmcp planes
 molmcp --help
 ```
 
-You should see the CLI usage. If `molmcp` isn't on your PATH, `python -m molmcp` is equivalent.
+`molmcp planes` lists connectable product domains. Each plane is a **separate**
+MCP process (`molmcp serve <plane>`).
 
 ## Editable install (contributors)
 
 ```bash
 git clone https://github.com/MolCrafts/molmcp.git
 cd molmcp
-pip install -e ".[dev]"
-pytest
+uv sync --extra dev
+uv run pytest -v
 ```
 
-All collected tests should pass.
+## Knowledge sources (`molcrafts.json`)
 
-## Adopting molmcp in a MolCrafts package
+The **molcrafts** plane indexes packages from a config file (schema_version
+`"2"`). Provider planes do not require it.
 
-If you're maintaining a MolCrafts package and want it to expose tools through molmcp, declare molmcp as an *optional* dependency rather than a hard one — users who don't run an MCP client shouldn't pay for it:
-
-```toml
-# in your MolCrafts package's pyproject.toml
-[project.optional-dependencies]
-mcp = ["molcrafts-molmcp >= 0.2, < 0.3"]
+```json
+{
+  "schema_version": "2",
+  "sources": {
+    "workspace": ".",
+    "molpy": "pkg:molpy"
+  },
+  "watch": true,
+  "server": { "transport": "stdio" }
+}
 ```
 
-Then ship a Provider class and an entry point. See [Writing a Provider](../guides/write-a-provider.md).
+Optional env allowlist: `MOLMCP_SOURCES=molpy,molrs` restricts which knowledge
+sources appear in `packages` / `outline` / `open`.
 
 ## Next steps
 
-- **[Quickstart](quickstart.md)** — expose your first MolCrafts package in 60 seconds
-- **[Architecture](../concepts/architecture.md)** — how the layers fit together
+- **[Quickstart](quickstart.md)** — serve catalog + molcrafts and wire a client
+- **[Architecture](../concepts/architecture.md)** — one plane per connection
+- **[Deploy](deploy.md)** — multi-link stdio layout for Claude Code

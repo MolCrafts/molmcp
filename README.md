@@ -1,126 +1,105 @@
 # MolMCP
 
-MolMCP is the local-first LLM context plane for the MolCrafts ecosystem. It
-combines a strict capability registry with graph-indexed source discovery, then
-exposes a small MCP surface for finding the right package, inspecting exact
-evidence, and handing trusted executable capabilities to Molexp.
+Multi-plane MCP for the MolCrafts ecosystem.
 
-MolMCP is a context plane plus first-party providers. Molexp owns workspace
-scaffold and FAIR layout; molq owns job lifecycle via the in-tree
-`MolqProvider` (`molq_list_jobs`, opt-in `molq_submit_job`). Discovery remains
-the path for open-ended science APIs.
+**Protocol:** MCP **2026-07-28** via **FastMCP 4.0.0b1** (+ MCP Python SDK v2).
+Handshake-era clients still work — FastMCP 4 negotiates per connection.
 
-## Core MCP surface
+Optional science packages (`molvis`, `molq`, `molexp`, …): if not installed,
+that plane is **omitted from catalogs and client configs** (silent). Explicit
+`molmcp serve <plane>` still errors with an install hint. This is runtime
+behavior — not a test skip.
 
-The default server injects **knowledge pages** into agent context (OKF-style).
-Codegraph is only an index; do not treat ranking scores as truth.
+**One product domain per MCP connection** (separate process / server name).
+There is no mega-server under `molmcp`. **Client default: all planes on.**
+Turn planes off with `--disable` (and back on with `--enable`).
 
-| Tool | Purpose |
-|---|---|
-| `molcrafts_packages` | **L0 directory page** — every package + summary (read and choose). |
-| `molcrafts_outline` | **L1 module page** — `source` (+ optional `path`) module tree + summaries. |
-| `molcrafts_open` | **L2 symbol page** — signature, doc, examples, tests (inject before coding). |
-| `molcrafts_compose` | Bind packages + opens into a budgeted context pack. |
-| `molcrafts_search` | Index helper (prefer with `source=` after packages/outline). |
-| `molcrafts_suggest` | Optional shortcut: which package pages to read for a task. |
-| `molcrafts_info` | Ops/health inventory. |
+| Plane | Command | Role |
+|-------|---------|------|
+| `catalog` | `molmcp serve catalog` | Bootstrap: `list_planes`, `route(task)` |
+| `molcrafts` | `molmcp serve molcrafts` | Knowledge pages (packages → outline → open) |
+| `molvis` | `molmcp serve molvis` | Live viewer session (`open` / `exec` / `poll_events`) |
+| `molq` | `molmcp serve molq` | Job store + opt-in submit/cancel |
+| `molexp` | `molmcp serve molexp` | Workspace layout + scaffold |
 
-Aliases (one minor): `describe`/`usage` → `open`, `guide` → `suggest`, `explore` → `compose`.
+Science APIs are **never** MCP tools. Discover them on the `molcrafts` plane,
+then call them from agent Python or inside `molvis` `exec`.
 
-Miss responses carry `ok: false` and stable `code`s (`SYMBOL_NOT_FOUND`, …).
-Source hits are evidence only; only `executable=true` may be bound for Molexp.
+## Client config (default: everything)
 
-## Install and run
+```bash
+# Print Grok config.toml fragments — every plane enabled=true
+molmcp client grok
+
+# Drop what you do not want
+molmcp client grok --disable molq --disable molexp
+
+# Re-enable after a disable
+molmcp client grok --disable molq --enable molq
+
+# Claude-style JSON (enabled planes only)
+molmcp client claude --disable molq
+```
+
+Paste into `~/.grok/config.toml` (or pipe to a file). Tool ids look like
+`molvis__open`, not `molmcp__molvis_open`.
+
+## CLI
 
 ```bash
 uv sync --extra dev
-uv run molmcp serve
+uv run molmcp planes              # list planes
+uv run molmcp client grok         # all planes on
+uv run molmcp client grok --disable molq
+uv run molmcp route "draw dopamine"
+uv run molmcp serve catalog       # one plane per process
+uv run molmcp serve molvis
+uv run molmcp search "Conformer"  # offline index search
+uv run molmcp index
 ```
 
-With no configuration file, MolMCP indexes the current workspace. A project can
-define `molcrafts.json`:
+## Config (`molcrafts.json`, schema_version `"2"`)
+
+Used by the **molcrafts** knowledge plane (and optional HTTP auth). Provider
+planes do not need a config file.
 
 ```json
 {
-  "schema_version": "1",
+  "schema_version": "2",
   "sources": {
     "workspace": ".",
-    "molpack": "pkg:molpack",
-    "molvis": "github:MolCrafts/molvis@main"
+    "molpy": "pkg:molpy"
   },
-  "registries": [
-    {"kind": "installed"},
-    {
-      "kind": "url",
-      "location": "https://registry.example/{namespace}/manifest.json",
-      "namespace": "@molpack",
-      "expected_digest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-      "headers": {"Authorization": "Bearer ${MOLMCP_REGISTRY_TOKEN}"}
-    }
-  ],
-  "providers": ["molexp", "molq"],
   "watch": true,
-  "server": {"transport": "stdio"}
+  "server": { "transport": "stdio" }
 }
 ```
 
-Useful CLI commands:
+Schema v1 and the old `providers: [...]` mega-server field are **not** supported.
+
+## Install
 
 ```bash
-uv run molmcp info
-uv run molmcp search "build a solvated molecular box"
-uv run molmcp explore "pack water around a polymer"
-uv run molmcp index
-uv run molmcp registry validate ./molcrafts.registry.json
-uv run molmcp registry list
-```
-
-Streamable HTTP is opt-in. A non-loopback bind is rejected unless
-`server.auth_token_env` names a populated bearer-token environment variable.
-Registry credentials must also be environment references; they are never
-returned by MCP tools.
-
-## Registry and providers
-
-Packages publish strict `molcrafts.registry.json` manifests through:
-
-```toml
-[project.entry-points."molmcp.capabilities"]
-molpack = "molpack.molmcp:manifest_path"
-```
-
-Package-owned MCP extensions use a separate entry-point group:
-
-```toml
-[project.entry-points."molmcp.providers"]
-molq = "molq.molmcp:MolqProvider"
-```
-
-Provider names are authority boundaries and automatic namespaces. A provider
-named `molq` contributes tools as `molq_<tool>`; duplicate, invalid, or reserved
-names fail closed. Package-specific adapters should depend only on public
-upstream APIs and migrate to the package that owns them.
-
-## Discovery
-
-The MCP-free discovery engine indexes Python, Rust, TypeScript/JavaScript,
-Markdown, JSON, and TOML. Each immutable source snapshot has an isolated SQLite
-graph. Retrieval uses field-weighted lexical search plus deterministic
-reciprocal-rank fusion; graph relationships add evidence after retrieval and
-heuristic call edges never influence relevance.
-
-Cache identity includes schema, analyzer, resolver, engine, overlay, and catalog
-state. Writes use a process lock, temporary database, fsync, and atomic replace.
-
-## Development
-
-```bash
-uv run ruff check src tests
-uv run ruff format --check src tests
+uv sync --extra dev
 uv run pytest -v
 ```
 
-The active design and acceptance contract is
-[`.Codex/specs/molmcp-vnext.md`](.Codex/specs/molmcp-vnext.md).
+## Design rules
 
-License: BSD-3-Clause.
+1. **Multi-link on-demand** — one process = one plane = one MCP server name.
+2. **Bare tool names** — plane id is the server name; tools are `open`, not `molvis_open`.
+3. **No science tool mirror** — no `show_smiles` / `draw_dopamine`; discovery + Python.
+4. **Providers** register via `molmcp.providers` entry points and are served with
+   `molmcp serve <name>`.
+
+## Documentation
+
+Full manual: [docs.molcrafts.org/molmcp](https://docs.molcrafts.org/molmcp/)
+(sources in [`docs/`](docs/)):
+
+- [Architecture](https://docs.molcrafts.org/molmcp/concepts/architecture/)
+- [Quickstart](https://docs.molcrafts.org/molmcp/get-started/quickstart/)
+- [MolVis workbench](https://docs.molcrafts.org/molmcp/guides/molvis-workbench/)
+- [CLI reference](https://docs.molcrafts.org/molmcp/reference/cli/)
+
+Local sources: `docs/concepts/architecture.md`, `docs/guides/molvis-workbench.md`.

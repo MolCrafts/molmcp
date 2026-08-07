@@ -30,12 +30,14 @@ mol_project:
 
 ## What this repo is
 
-molmcp is the MCP (Model Context Protocol) foundation for the MolCrafts
-ecosystem: a FastMCP server that exposes molecular-simulation packages
-(molpy, molpack, molq, molexp, lammps) as agent tools, plus a
-graph-indexed code-discovery engine (`molmcp.discovery`) that lets agents
-resolve capabilities from real code instead of guessing. Pure Python
-(>= 3.12), `src/` layout, managed with uv.
+molmcp is multi-plane MCP for MolCrafts: **one product domain per MCP
+connection** (`molmcp serve <plane>`). Planes include `catalog`,
+`molcrafts` (knowledge/discovery), `molvis`, `molq`, `molexp`. Science
+APIs are discovered via the knowledge plane and never mirrored as MCP
+tools. Pure Python (>= 3.12), `src/` layout, managed with uv.
+
+**Protocol:** MCP **2026-07-28** via FastMCP **4.0.0b1** + MCP Python SDK
+v2 (`mcp>=2`). Do not pin FastMCP back to 3.x without an explicit decision.
 
 ## Where things live
 
@@ -70,17 +72,16 @@ For non-trivial work, prefer:
 
 Layered; dependencies point inward only:
 
-1. `cli.py` / `__main__.py` → `server.py` → providers + middleware.
-2. Providers (`providers/`, `discovery/provider.py`) are the only modules
-   that import MCP machinery; everything below them is MCP-free.
-3. `discovery/` is itself layered:
-   `provider.py` → `engine.py` → `extract.py` / `resolve.py` /
-   `query.py` → `store/`, `source/`, `cache/`.
-   `schema.py` is the language-agnostic contract: every analyzer in
-   `analyzers/` emits this schema and nothing else.
-4. Domain content enters via overlays (`discovery/overlay/`), never by
-   editing the core schema — the format is core, the content ships with
-   a domain overlay package.
+1. `cli.py` / `__main__.py` → `server.create_plane(plane)` → one plane
+   only (`planes.py` catalog + molcrafts knowledge + one provider).
+2. Multi-link on-demand: clients connect separate MCP servers
+   (`catalog`, `molcrafts`, `molvis`, …). No mega-mount.
+3. Providers (`providers/`) import MCP machinery; science packages stay
+   lazy optional. Bare tool names; server name is the plane id.
+4. `discovery/` is itself layered:
+   `engine.py` → `extract.py` / `resolve.py` / `query.py` →
+   `store/`, `source/`, `cache/`.
+   `schema.py` is the language-agnostic contract.
 
 <!-- Free-form additions below this line are preserved across re-runs.
      If a section grows past a screen, promote to .claude/notes/<topic>.md. -->

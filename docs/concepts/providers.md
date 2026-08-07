@@ -48,31 +48,18 @@ The MolCrafts package declares its Provider in `pyproject.toml`:
 molpack = "molpack_mcp:MolpackProvider"
 ```
 
-When the host runs `python -m molmcp` (without `--no-discover`), molmcp enumerates the `molmcp.providers` group via `importlib.metadata.entry_points()` and instantiates each registered class with no arguments.
+When you run `molmcp serve <name>` (without `--no-discover`), molmcp loads the
+matching `molmcp.providers` entry point and serves **only that provider** as
+the plane. Multi-provider mega-servers are removed — one process, one product.
 
 ## Namespacing
 
-Each Provider's tools are *not* automatically prefixed with `name`. If two MolCrafts packages register tools with the same simple name, they collide. To avoid that, mount a sub-server inside `register`:
+The MCP **server name is the plane / provider `name`**. Tools register with
+bare names (`list_jobs`, `open`, …). Clients see `molq__list_jobs`. Different
+products never share a tool namespace because they never share a process.
 
-```python
-class MolpackProvider:
-    name = "molpack"
-
-    def register(self, parent_mcp):
-        sub = FastMCP("molpack-sub")
-
-        @sub.tool(annotations=ToolAnnotations(destructiveHint=True))
-        def pack_box(spec: dict, workdir: str) -> dict:
-            """Pack a simulation box from a MolCrafts pack spec."""
-            from molpack import pack
-            return pack(spec, workdir).to_dict()
-
-        parent_mcp.mount(sub, namespace=self.name)
-```
-
-The tool now appears as `molpack_pack_box`. Without `mount`, it's just `pack_box` — fine if you only have one Provider, fragile across the ecosystem. molmcp's recommended convention: every MolCrafts Provider mounts under its package name.
-
-molmcp's *Provider*-level dedup is name-based: a Provider whose `name` matches an already-registered Provider is logged and skipped. So if `molpack_mcp` is already loaded and another package also names itself `molpack`, the second is dropped.
+`provider.name` must match the plane id you serve (`molmcp serve molq` loads
+the provider whose `name == "molq"`).
 
 ## Annotation requirement
 

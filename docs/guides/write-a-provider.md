@@ -154,24 +154,24 @@ claude mcp add molcrafts -- python -m molmcp
 
 ## Patterns worth knowing
 
-### Mounting tools under your package name as a prefix
+### Bare tool names only (no mount prefix)
 
-If your Provider registers more than one tool and you want them all prefixed (so they don't collide with other MolCrafts Providers in the same server), mount a sub-server:
+Each provider is its **own** MCP plane (`molmcp serve molpack`). Register
+**bare** tool names — never prefix with the plane id, and never
+`parent.mount(sub, namespace=...)`.
 
 ```python
-def register(self, parent_mcp):
-    sub = FastMCP("molpack")
-
-    @sub.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def register(self, mcp):
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
     def list_pack_targets(workdir: str) -> list[dict]: ...
 
-    @sub.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
     def get_pack_target(workdir: str, name: str) -> dict: ...
-
-    parent_mcp.mount(sub, namespace=self.name)
 ```
 
-Now both tools appear as `molpack_list_pack_targets` and `molpack_get_pack_target`. This is the recommended pattern when multiple MolCrafts Providers will be loaded together.
+Client ids become `molpack__list_pack_targets`. Startup **rejects** tools
+named `molpack_list_pack_targets` (would become `molpack__molpack_…` or
+legacy `molpack_molpack_…`).
 
 ### Marking destructive tools
 
