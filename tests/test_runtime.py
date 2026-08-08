@@ -3,13 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
-from molmcp import CollectionIndex, Registry, create_plane, runtime
-from molmcp.config import AppConfig, RegistrySourceConfig, load_config
+from molmcp import CollectionIndex, create_plane, runtime
+from molmcp.config import AppConfig, load_config
 from molmcp.discovery.config import DEFAULT_EXCLUDES
 from molmcp.environment import DiscoveredSource, EnvironmentReport
-from molmcp.registry import RegistryConflictError
 
 
 def _discovery_report() -> EnvironmentReport:
@@ -61,119 +58,12 @@ def _concept(identifier: str) -> dict:
     }
 
 
-def test_file_registry_cannot_escape_configured_namespace(tmp_path, monkeypatch):
-    manifest = tmp_path / "molcrafts.registry.json"
-    manifest.write_text(
-        json.dumps({"schema_version": "1", "items": [_concept("@molexp/run")]}),
-        encoding="utf-8",
-    )
-    config = AppConfig.from_dict(
-        {
-            "schema_version": "2",
-            "registries": [
-                {
-                    "kind": "file",
-                    "location": str(manifest),
-                    "namespace": "@molpack",
-                }
-            ],
-        },
-        workspace_root=tmp_path,
-    )
-    monkeypatch.setattr(runtime, "load_installed_manifests", lambda **kwargs: [])
-    with pytest.raises(RegistryConflictError, match="foreign registry id"):
-        runtime.build_registry(config)
-
-
-def test_registry_expected_digest_mismatch_fails_closed(tmp_path, monkeypatch):
-    manifest = tmp_path / "molcrafts.registry.json"
-    manifest.write_text(
-        json.dumps({"schema_version": "1", "items": [_concept("@molpack/pack")]}),
-        encoding="utf-8",
-    )
-    config = AppConfig.from_dict(
-        {
-            "schema_version": "2",
-            "registries": [
-                {
-                    "kind": "file",
-                    "location": str(manifest),
-                    "namespace": "@molpack",
-                    "expected_digest": "0" * 64,
-                }
-            ],
-        },
-        workspace_root=tmp_path,
-    )
-    monkeypatch.setattr(runtime, "load_installed_manifests", lambda **kwargs: [])
-    with pytest.raises(ValueError, match="does not match expected_digest"):
-        runtime.build_registry(config)
-
-
-def test_url_registry_is_https_non_redirecting_and_secret_safe(monkeypatch):
-    raw = json.dumps({"schema_version": "1", "items": []}).encode()
-    captured: dict[str, object] = {}
-
-    class Headers:
-        @staticmethod
-        def get_content_type():
-            return "application/json"
-
-    class Response:
-        headers = Headers()
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return None
-
-        def read(self, size):
-            captured["read_size"] = size
-            return raw
-
-    class Opener:
-        def open(self, request, timeout):
-            captured["url"] = request.full_url
-            captured["authorization"] = request.get_header("Authorization")
-            captured["timeout"] = timeout
-            return Response()
-
-    monkeypatch.setenv("REGISTRY_TOKEN", "super-secret")
-    monkeypatch.setattr(runtime.urllib.request, "build_opener", lambda *args: Opener())
-    source = RegistrySourceConfig(
-        kind="url",
-        location="https://registry.example/{namespace}/manifest.json",
-        namespace="@molpack",
-        headers={"Authorization": "Bearer ${REGISTRY_TOKEN}"},
-    )
-    loaded = runtime._load_url_manifest(source)
-    assert loaded.source == "https://registry.example/molpack/manifest.json"
-    assert captured["authorization"] == "Bearer super-secret"
-    assert "super-secret" not in repr(loaded)
-
-
-@pytest.mark.parametrize(
-    "location", ["http://example.test/x", "file:///tmp/x", "https://u:p@host/x"]
-)
-def test_direct_remote_loader_rejects_unsafe_urls(location):
-    with pytest.raises(ValueError, match="HTTPS URL"):
-        runtime._load_url_manifest(RegistrySourceConfig(kind="url", location=location))
-
-
-def test_remote_redirects_are_rejected():
-    with pytest.raises(ValueError, match="redirects are not allowed"):
-        runtime._RejectRedirects().redirect_request(
-            None, None, 302, "Found", {}, "https://other.example/manifest.json"
-        )
-
-
 def test_custom_excludes_extend_safety_defaults(tmp_path):
     config = AppConfig.from_dict(
         {"schema_version": "2", "excludes": ["generated"]},
         workspace_root=tmp_path,
     )
-    collection = runtime.build_collection(config, Registry())
+    collection = runtime.build_collection(config)
     excludes = collection.sources[0].engine.config.excludes
     assert set(DEFAULT_EXCLUDES).issubset(excludes)
     assert "generated" in excludes
@@ -190,7 +80,7 @@ def test_explicit_config_is_not_ignored_with_injected_collection(tmp_path, monke
     )
     server = create_plane(
         "molcrafts",
-        collection=CollectionIndex([], Registry()),
+        collection=CollectionIndex([]),
         config=config,
         discover_entry_points=False,
     )
@@ -210,7 +100,7 @@ async def test_environment_token_verifier_accepts_only_current_secret(
     )
     server = create_plane(
         "molcrafts",
-        collection=CollectionIndex([], Registry()),
+        collection=CollectionIndex([]),
         config=config,
         discover_entry_points=False,
     )
@@ -220,13 +110,13 @@ async def test_environment_token_verifier_accepts_only_current_secret(
 
 def test_build_collection_metadata_carries_discovery(tmp_path, monkeypatch):
     config = _load_discovered_config(tmp_path, monkeypatch)
-    collection = runtime.build_collection(config, Registry())
+    collection = runtime.build_collection(config)
     assert collection.metadata["discovery"] == _discovery_report().to_dict()
 
 
 def test_info_configuration_surfaces_discovery(tmp_path, monkeypatch):
     config = _load_discovered_config(tmp_path, monkeypatch)
-    collection = runtime.build_collection(config, Registry())
+    collection = runtime.build_collection(config)
     discovery = collection.info()["configuration"]["discovery"]
     report = _discovery_report()
     assert discovery["site_paths"] == [str(path) for path in report.site_paths]

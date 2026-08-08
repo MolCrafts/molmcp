@@ -13,30 +13,20 @@ from .provider import (
     discover_providers,
     provider_available,
 )
-from .registry import (
-    CAPABILITY_ENTRY_POINT_GROUP,
-    CatalogItemV1,
-    ExecutableCapabilityV1,
-    Registry,
-)
 from .server import create_plane, create_server
 
 __version__ = "0.5.0"
 
 __all__ = [
-    "CAPABILITY_ENTRY_POINT_GROUP",
     "AppConfig",
-    "CatalogItemV1",
     "CollectionIndex",
     "ConfigurationError",
     "ContextPack",
-    "ExecutableCapabilityV1",
     "MolCraftsContextProvider",
     "PROVIDER_ENTRY_POINT_GROUP",
     "PlaneInfo",
     "PlaneToggle",
     "Provider",
-    "Registry",
     "SearchHit",
     "SourceBinding",
     "__version__",

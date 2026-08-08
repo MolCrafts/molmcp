@@ -14,8 +14,7 @@ from . import settings
 from .client_config import render_client
 from .config import AppConfig, ConfigurationError, load_config
 from .planes import known_plane_ids, list_plane_infos, route_task
-from .registry import ManifestError, load_manifest
-from .runtime import build_collection, build_registry
+from .runtime import build_collection
 from .server import create_plane
 
 
@@ -181,14 +180,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Drop cached snapshots for sources that are no longer configured.",
     )
 
-    registry = commands.add_parser("registry", help="Inspect capability manifests.")
-    registry_commands = registry.add_subparsers(dest="registry_command", required=True)
-    validate = registry_commands.add_parser("validate", help="Validate one manifest.")
-    validate.add_argument("manifest", type=Path)
-    listing = registry_commands.add_parser(
-        "list", help="List configured registry items."
-    )
-    _config_argument(listing)
     return parser
 
 
@@ -354,8 +345,7 @@ def _client(args: argparse.Namespace) -> int:
 
 def _collection(args: argparse.Namespace):
     config = _load(args)
-    registry = build_registry(config)
-    return config, build_collection(config, registry)
+    return config, build_collection(config)
 
 
 def _info(args: argparse.Namespace) -> int:
@@ -550,22 +540,6 @@ def _cache(args: argparse.Namespace) -> int:
     return 0
 
 
-def _registry(args: argparse.Namespace) -> int:
-    if args.registry_command == "validate":
-        manifest = load_manifest(args.manifest)
-        _emit(manifest.to_dict())
-        return 0
-    config = _load(args)
-    registry = build_registry(config)
-    _emit(
-        {
-            "info": registry.info(),
-            "items": [item.to_dict() for item in registry.list_items()],
-        }
-    )
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if not arguments:
@@ -583,13 +557,11 @@ def main(argv: list[str] | None = None) -> int:
         "index": _index,
         "config": _config,
         "cache": _cache,
-        "registry": _registry,
     }
     try:
         return handlers[args.command](args)
     except (
         ConfigurationError,
-        ManifestError,
         FileNotFoundError,
         ValueError,
         settings.SettingsError,

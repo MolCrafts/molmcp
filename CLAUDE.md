@@ -64,8 +64,10 @@ edited via `molmcp config get|set|add|remove` (see `src/molmcp/settings.py`).
 
 **No environment variables.** `tests/test_no_env_switches.py` fails the
 build if a module reads one. Three exemptions are listed there with their
-reason, and all three are secrets: the bearer-token and registry-credential
-indirections, and `GITHUB_TOKEN`. Configuration that lives only in one shell
+reason, and both are secrets: the bearer token an HTTP-transport server
+compares against, and `GITHUB_TOKEN` for `github:` sources. Each names a
+variable in config rather than storing its value — a settings file that can
+be committed is the wrong place for a credential. Configuration that lives only in one shell
 cannot be reported by `molmcp config list`, and two plane servers launched
 by different clients would silently disagree about it.
 

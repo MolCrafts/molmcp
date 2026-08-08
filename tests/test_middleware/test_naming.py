@@ -70,10 +70,10 @@ def test_validate_detects_double_substring():
 def test_builtin_planes_pass_naming():
     create_plane("catalog")
     # molcrafts with empty collection
-    from molmcp import CollectionIndex, Registry
+    from molmcp import CollectionIndex
 
     create_plane(
         "molcrafts",
-        collection=CollectionIndex([], Registry()),
+        collection=CollectionIndex([]),
         discover_entry_points=False,
     )

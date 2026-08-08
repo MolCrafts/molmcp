@@ -29,7 +29,7 @@ from .provider import (
     Provider,
     discover_providers,
 )
-from .runtime import build_collection, build_registry
+from .runtime import build_collection
 
 logger = logging.getLogger(__name__)
 
@@ -245,8 +245,7 @@ def _resolve_collection(
         app_config = _resolve_config(config) if config is not None else None
         return app_config, collection
     app_config = _resolve_config(config)
-    registry = build_registry(app_config)
-    return app_config, build_collection(app_config, registry)
+    return app_config, build_collection(app_config)
 
 
 def _resolve_provider(

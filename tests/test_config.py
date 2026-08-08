@@ -52,7 +52,6 @@ def test_loads_and_resolves_relative_paths(tmp_path):
             {
                 "schema_version": "2",
                 "sources": {"local": "./repo", "molpy": "pkg:molpy"},
-                "registries": [{"kind": "file", "location": "registry.json"}],
                 "cache_dir": ".cache/molmcp",
             }
         ),
@@ -61,7 +60,6 @@ def test_loads_and_resolves_relative_paths(tmp_path):
     config = load_config(path)
     assert config.sources["local"] == str((tmp_path / "repo").resolve())
     assert config.sources["molpy"] == "pkg:molpy"
-    assert config.registries[0].location == str((tmp_path / "registry.json").resolve())
     assert config.cache_dir == (tmp_path / ".cache/molmcp").resolve()
 
 
@@ -104,120 +102,6 @@ def test_non_loopback_http_with_auth_is_valid(tmp_path):
         workspace_root=tmp_path,
     )
     assert config.server.auth_token_env == "MOLMCP_TOKEN"
-
-
-@pytest.mark.parametrize(
-    "registry",
-    [
-        {"kind": "url", "location": "http://example.test/registry.json"},
-        {"kind": "url", "location": "file:///tmp/registry.json"},
-        {
-            "kind": "url",
-            "location": "https://user:secret@example.test/registry.json",
-        },
-        {
-            "kind": "url",
-            "location": "https://example.test/registry.json#fragment",
-        },
-        {
-            "kind": "url",
-            "location": "https://example.test/registry.json?token=secret",
-        },
-        {
-            "kind": "url",
-            "location": "https://example.test/{other}/registry.json",
-        },
-    ],
-)
-def test_remote_registry_requires_safe_https_url(tmp_path, registry):
-    with pytest.raises(ConfigurationError, match="HTTPS URL|template"):
-        AppConfig.from_dict(
-            {"schema_version": "2", "registries": [registry]},
-            workspace_root=tmp_path,
-        )
-
-
-def test_registry_headers_must_be_environment_references(tmp_path):
-    with pytest.raises(ConfigurationError, match="environment variable"):
-        AppConfig.from_dict(
-            {
-                "schema_version": "2",
-                "registries": [
-                    {
-                        "kind": "url",
-                        "location": "https://example.test/registry.json",
-                        "headers": {"Authorization": "Bearer literal-secret"},
-                    }
-                ],
-            },
-            workspace_root=tmp_path,
-        )
-
-
-def test_registry_namespace_and_secret_reference_are_strict(tmp_path):
-    config = AppConfig.from_dict(
-        {
-            "schema_version": "2",
-            "registries": [
-                {
-                    "kind": "url",
-                    "location": "https://example.test/{namespace}/registry.json",
-                    "namespace": "@molpack",
-                    "headers": {"Authorization": "Bearer ${MOLMCP_REGISTRY_TOKEN}"},
-                }
-            ],
-        },
-        workspace_root=tmp_path,
-    )
-    assert config.registries[0].namespace == "@molpack"
-    assert config.registries[0].search_only is True
-
-    with pytest.raises(ConfigurationError, match="valid '@namespace'"):
-        AppConfig.from_dict(
-            {
-                "schema_version": "2",
-                "registries": [
-                    {
-                        "kind": "file",
-                        "location": "registry.json",
-                        "namespace": "@Bad Namespace",
-                    }
-                ],
-            },
-            workspace_root=tmp_path,
-        )
-
-
-def test_remote_execution_requires_expected_digest(tmp_path):
-    with pytest.raises(ConfigurationError, match="requires expected_digest"):
-        AppConfig.from_dict(
-            {
-                "schema_version": "2",
-                "registries": [
-                    {
-                        "kind": "url",
-                        "location": "https://example.test/registry.json",
-                        "search_only": False,
-                    }
-                ],
-            },
-            workspace_root=tmp_path,
-        )
-
-    config = AppConfig.from_dict(
-        {
-            "schema_version": "2",
-            "registries": [
-                {
-                    "kind": "url",
-                    "location": "https://example.test/registry.json",
-                    "expected_digest": "a" * 64,
-                }
-            ],
-        },
-        workspace_root=tmp_path,
-    )
-    assert config.registries[0].search_only is False
 
 
 def test_duplicate_config_keys_fail_closed(tmp_path):

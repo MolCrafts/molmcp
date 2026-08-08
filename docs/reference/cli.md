@@ -1,7 +1,7 @@
 # CLI reference
 
 ```
-molmcp [-h] {serve,planes,route,client,config,cache,info,search,explore,index,registry} ...
+molmcp [-h] {serve,planes,route,client,config,cache,info,search,explore,index} ...
 python -m molmcp …
 ```
 
@@ -74,9 +74,11 @@ Layers merge user → project → local. Unknown keys are an error rather than a
 silent no-op. See the [installation guide](../get-started/installation.md#settings)
 for every key.
 
-There are **no environment variables**. The three the code still reads are
-secrets, not configuration: the bearer-token and registry-credential
-indirections, and `GITHUB_TOKEN`.
+There are **no environment variables**. The two the code still reads are
+secrets, not configuration: the bearer token an HTTP-transport server checks
+against, and `GITHUB_TOKEN` for `github:` sources. Both name a variable in
+config rather than storing its value, which is the point — a settings file
+is the wrong place for a credential.
 
 ## `molmcp client [host]`
 
@@ -119,7 +121,6 @@ configured source — see `molmcp config`):
 | `molmcp search <query>` | Full collection search (`--kind`, `--namespace`, `--source`, `--limit`) |
 | `molmcp explore <task>` | Bounded task context pack (`--budget-chars`, …) |
 | `molmcp index` | Index configured sources (`--force`, optional source list) |
-| `molmcp registry` | Inspect capability manifests |
 
 ```bash
 molmcp search "Conformer" --source molpy

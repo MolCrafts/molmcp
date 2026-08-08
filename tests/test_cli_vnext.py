@@ -70,30 +70,17 @@ def test_search_emits_json(monkeypatch, tmp_path, capsys):
         def search(self, *args, **kwargs):
             return [Hit()]
 
-    monkeypatch.setattr(cli, "build_registry", lambda config: object())
-    monkeypatch.setattr(cli, "build_collection", lambda config, registry: Collection())
+    monkeypatch.setattr(cli, "build_collection", lambda config: Collection())
     assert cli.main(["search", "pack", "--config", str(_config(tmp_path))]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["results"][0]["ref"] == "@molpack/pack"
-
-
-def test_registry_validate(tmp_path, capsys):
-    manifest = tmp_path / "molcrafts.registry.json"
-    manifest.write_text(
-        json.dumps({"schema_version": "1", "items": []}), encoding="utf-8"
-    )
-    assert cli.main(["registry", "validate", str(manifest)]) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["digest"]
-    assert payload["items"] == []
 
 
 def test_unknown_index_source_is_user_error(monkeypatch, tmp_path, capsys):
     class Collection:
         sources = ()
 
-    monkeypatch.setattr(cli, "build_registry", lambda config: object())
-    monkeypatch.setattr(cli, "build_collection", lambda config, registry: Collection())
+    monkeypatch.setattr(cli, "build_collection", lambda config: Collection())
     code = cli.main(["index", "missing", "--config", str(_config(tmp_path))])
     assert code == 2
     assert "unknown configured sources" in capsys.readouterr().err
@@ -122,10 +109,7 @@ def test_non_loopback_override_requires_auth(monkeypatch, tmp_path, capsys):
 
 
 def _patch_collection(monkeypatch):
-    monkeypatch.setattr(cli, "build_registry", lambda config: object())
-    monkeypatch.setattr(
-        cli, "build_collection", lambda config, registry: _FakeCollection()
-    )
+    monkeypatch.setattr(cli, "build_collection", lambda config: _FakeCollection())
 
 
 def test_route_cli(capsys):

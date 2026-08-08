@@ -9,20 +9,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from .settings import Settings, load_settings
 
 CONFIG_SCHEMA_VERSION = "2"
 DEFAULT_CONFIG_NAME = "molcrafts.json"
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_SECRET_HEADER_RE = re.compile(
-    r"^(?:[A-Za-z][A-Za-z0-9._~-]* )?\$\{([A-Za-z_][A-Za-z0-9_]*)\}$"
-)
-_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
-_NAMESPACE_RE = re.compile(r"^@[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$")
 _SOURCE_NAME_RE = re.compile(r"^[a-z][a-z0-9._-]{0,63}$")
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ConfigurationError(ValueError):
@@ -39,112 +32,6 @@ def _require_string(value: object, where: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigurationError(f"{where} must be a non-empty string")
     return value.strip()
-
-
-@dataclass(frozen=True, slots=True)
-class RegistrySourceConfig:
-    """One installed, file-backed, or remote registry source."""
-
-    kind: str
-    location: str | None = None
-    namespace: str | None = None
-    headers: dict[str, str] = field(default_factory=dict)
-    expected_digest: str | None = None
-    search_only: bool = False
-
-    @classmethod
-    def from_dict(cls, data: object, index: int) -> RegistrySourceConfig:
-        where = f"registries[{index}]"
-        if not isinstance(data, dict):
-            raise ConfigurationError(f"{where} must be an object")
-        _reject_unknown(
-            data,
-            {
-                "kind",
-                "location",
-                "namespace",
-                "headers",
-                "expected_digest",
-                "search_only",
-            },
-            where,
-        )
-        kind = _require_string(data.get("kind"), f"{where}.kind")
-        if kind not in {"installed", "file", "url"}:
-            raise ConfigurationError(
-                f"{where}.kind must be one of installed, file, url"
-            )
-        location_raw = data.get("location")
-        location = (
-            _require_string(location_raw, f"{where}.location")
-            if location_raw is not None
-            else None
-        )
-        if kind in {"file", "url"} and location is None:
-            raise ConfigurationError(f"{where}.location is required for {kind}")
-        if kind == "installed" and location is not None:
-            raise ConfigurationError(f"{where}.location is forbidden for installed")
-        namespace_raw = data.get("namespace")
-        namespace = (
-            _require_string(namespace_raw, f"{where}.namespace")
-            if namespace_raw is not None
-            else None
-        )
-        if namespace is not None and _NAMESPACE_RE.fullmatch(namespace) is None:
-            raise ConfigurationError(
-                f"{where}.namespace must be a valid '@namespace' reference"
-            )
-        headers_raw = data.get("headers", {})
-        if not isinstance(headers_raw, dict) or not all(
-            isinstance(key, str) and isinstance(value, str)
-            for key, value in headers_raw.items()
-        ):
-            raise ConfigurationError(f"{where}.headers must map strings to strings")
-        if headers_raw and kind != "url":
-            raise ConfigurationError(f"{where}.headers are only valid for url sources")
-        for name, value in headers_raw.items():
-            if _HEADER_NAME_RE.fullmatch(name) is None:
-                raise ConfigurationError(f"{where}.headers contains invalid name")
-            if _SECRET_HEADER_RE.fullmatch(value) is None:
-                raise ConfigurationError(
-                    f"{where}.headers.{name} must reference one environment variable"
-                )
-        if kind == "url" and location is not None:
-            _validate_registry_url(location, where)
-        digest_raw = data.get("expected_digest")
-        expected_digest = (
-            _require_string(digest_raw, f"{where}.expected_digest")
-            if digest_raw is not None
-            else None
-        )
-        if (
-            expected_digest is not None
-            and _SHA256_RE.fullmatch(expected_digest) is None
-        ):
-            raise ConfigurationError(
-                f"{where}.expected_digest must be a lowercase SHA-256 digest"
-            )
-        if expected_digest is not None and kind == "installed":
-            raise ConfigurationError(
-                f"{where}.expected_digest is not valid for installed sources"
-            )
-        search_only_raw = data.get(
-            "search_only", kind == "url" and expected_digest is None
-        )
-        if not isinstance(search_only_raw, bool):
-            raise ConfigurationError(f"{where}.search_only must be a boolean")
-        if kind == "url" and not search_only_raw and expected_digest is None:
-            raise ConfigurationError(
-                f"{where} requires expected_digest unless search_only is true"
-            )
-        return cls(
-            kind=kind,
-            location=location,
-            namespace=namespace,
-            headers=dict(headers_raw),
-            expected_digest=expected_digest,
-            search_only=search_only_raw,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,7 +100,6 @@ class AppConfig:
 
     workspace_root: Path
     sources: dict[str, str]
-    registries: tuple[RegistrySourceConfig, ...] = ()
     cache_dir: Path | None = None
     watch: bool = True
     excludes: tuple[str, ...] = ()
@@ -280,7 +166,6 @@ class AppConfig:
             {
                 "schema_version",
                 "sources",
-                "registries",
                 "cache_dir",
                 "watch",
                 "excludes",
@@ -310,14 +195,6 @@ class AppConfig:
             spec = _require_string(raw_spec, f"sources.{name}")
             sources[name] = _resolve_source_spec(spec, root)
 
-        registries_raw = data.get("registries", [])
-        if not isinstance(registries_raw, list):
-            raise ConfigurationError("registries must be an array")
-        registries = tuple(
-            _resolve_registry_source(RegistrySourceConfig.from_dict(item, index), root)
-            for index, item in enumerate(registries_raw)
-        )
-
         cache_raw = data.get("cache_dir")
         cache_dir = (
             _resolve_path(_require_string(cache_raw, "cache_dir"), root)
@@ -335,7 +212,6 @@ class AppConfig:
         return cls(
             workspace_root=root,
             sources=sources,
-            registries=registries,
             cache_dir=cache_dir,
             watch=watch,
             excludes=tuple(excludes_raw),
@@ -362,21 +238,6 @@ def _dedupe_source_name(name: str, taken: dict[str, str]) -> str:
     while f"{name}-{suffix}" in taken:
         suffix += 1
     return f"{name}-{suffix}"
-
-
-def _resolve_registry_source(
-    source: RegistrySourceConfig, root: Path
-) -> RegistrySourceConfig:
-    if source.kind != "file" or source.location is None:
-        return source
-    return RegistrySourceConfig(
-        kind=source.kind,
-        location=str(_resolve_path(source.location, root)),
-        namespace=source.namespace,
-        headers=source.headers,
-        expected_digest=source.expected_digest,
-        search_only=source.search_only,
-    )
 
 
 def load_config(
@@ -424,27 +285,6 @@ def load_config(
     except json.JSONDecodeError as exc:
         raise ConfigurationError(f"invalid JSON in {config_path}: {exc}") from exc
     return AppConfig.from_dict(data, workspace_root=config_path.parent)
-
-
-def _validate_registry_url(location: str, where: str) -> None:
-    parts = urlsplit(location)
-    if (
-        parts.scheme != "https"
-        or not parts.hostname
-        or parts.username is not None
-        or parts.password is not None
-        or parts.query
-        or parts.fragment
-    ):
-        raise ConfigurationError(
-            f"{where}.location must be an HTTPS URL without credentials, query, "
-            "or fragment"
-        )
-    remaining = location.replace("{namespace}", "")
-    if "{" in remaining or "}" in remaining:
-        raise ConfigurationError(
-            f"{where}.location contains an unsupported URL template variable"
-        )
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

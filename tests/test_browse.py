@@ -12,7 +12,6 @@ from molmcp.collection.browse import (
 )
 from molmcp.discovery import DiscoveryConfig
 from molmcp.discovery.engine import DiscoveryEngine
-from molmcp.registry import Registry
 
 
 def _fixture_collection(tmp_path):
@@ -26,7 +25,7 @@ def _fixture_collection(tmp_path):
                 namespace="fixture",
             )
         ],
-        Registry(),
+        None,
     )
 
 

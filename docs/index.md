@@ -112,7 +112,7 @@ meant to be **injected into context** — not skimmed as a search hit list.
   <dt><code>compose</code></dt>
   <dd>Budgeted multi-page pack for a task (packages + suggest + open pages).</dd>
   <dt><code>info</code></dt>
-  <dd>Ops / health view of sources and registry — not the main discovery path.</dd>
+  <dd>Ops / health view of the configured sources — not the main discovery path.</dd>
 </dl>
 
 </section>

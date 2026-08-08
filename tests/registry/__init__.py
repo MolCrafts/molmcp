@@ -1,1 +1,0 @@
-"""Registry contract tests."""

@@ -14,7 +14,6 @@ import pytest
 from molmcp import CollectionIndex, SourceBinding, create_plane
 from molmcp.discovery import DiscoveryConfig
 from molmcp.discovery.engine import DiscoveryEngine
-from molmcp.registry import Registry
 
 
 @pytest.fixture
@@ -30,7 +29,7 @@ def server(tmp_path):
                 namespace="fixture",
             )
         ],
-        Registry(),
+        None,
     )
     return create_plane(
         "molcrafts",

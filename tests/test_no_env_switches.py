@@ -24,7 +24,6 @@ _ALLOWED: dict[str, str] = {
     # A bearer token must not sit in a settings file; the config names the
     # variable that holds it, which is the point of the mechanism.
     "server.py": "bearer token indirection (server.auth_token_env)",
-    "runtime.py": "registry credential headers reference ${VAR}",
     # Same reasoning: a GitHub PAT belongs in the environment, not on disk.
     "discovery/config.py": "GITHUB_TOKEN fallback for the GitHub source",
     # Passes an environment through to a child process; reads nothing.
