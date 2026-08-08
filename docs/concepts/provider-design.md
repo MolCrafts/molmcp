@@ -43,7 +43,7 @@ first-party providers (`src/molmcp/providers/<name>/`), and only when
    upstream object graph.
 3. **Path safety** — workdirs constrained by middleware / allowlist;
    no `shell=True`.
-4. **Annotations** — `readOnlyHint=False`, `destructiveHint=True`; no
+4. **Annotations** — `MUTATION` (`read_only_hint=False`, `destructive_hint=True`); no
    long blocking wait (agent polls with a read tool).
 5. **Documented blast radius** — this page updated with the tool.
 
@@ -56,6 +56,35 @@ agents stay out of MCP.
 |------|-----------|
 | **First-party** (molq, molexp, …) | `src/molmcp/providers/<name>/` + entry point `molmcp.providers.<name>`. Upstream package is a **lazy optional** import. Zero FastMCP in the science package. |
 | **Third-party** | Sibling package or package `mcp` extra — see [Write a Provider](../guides/write-a-provider.md). |
+
+## The shape every provider has
+
+A provider subclasses `ProviderBase` and declares each tool as a **method**
+carrying `@tool(...)`. There is no `register()` to write: the base collects
+the declarations, checks the upstream package once, and registers them
+bare. Bound methods reach FastMCP directly, so `self` stays out of the tool
+schema and the docstring an agent reads is the one on the method.
+
+This replaced three hand-written `register()` methods of 349, 402 and 424
+lines — most of a class each — that had drifted into three availability
+probes, three differently-worded install hints, and three annotation sets
+that disagreed with one another.
+
+**Reaching upstream happens at declared seams.** Every place a provider
+touches its science package is a constructor-injectable factory, defaulting
+to the real thing:
+
+| Plane | Seams |
+|-------|-------|
+| molvis | `stage_factory` |
+| molq | `store_factory`, `submitor_factory`, `destinations_factory` |
+| molexp | workspace factory and ingest fn (in `adopt/`) |
+
+That is not a testing convenience bolted on afterwards — it is what makes
+the plane servable by an embedder with its own backend, and `probe()`
+reports available when every seam is injected. It is also why these planes
+are covered without their science packages installed, which is the only way
+CI can test molmcp rather than testing molq.
 
 ## First-party providers
 

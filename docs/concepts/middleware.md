@@ -62,7 +62,12 @@ The middleware operates on text content only — binary blocks (images, audio) a
 
 **Not a request-time middleware.** It runs once, synchronously, at the end of `create_server(...)`, after every Provider has registered its tools.
 
-**What it does:** walks every registered tool and checks that `ToolAnnotations.readOnlyHint` or `ToolAnnotations.destructiveHint` is set. If any tool is missing both, raises `MissingAnnotationsError` and the server build fails.
+**What it does:** walks every registered tool and checks that
+`read_only_hint` or `destructive_hint` is set. If any tool is missing both,
+raises `MissingAnnotationsError` and the server build fails. Providers on
+`ProviderBase` satisfy this by construction — a `@tool` declaration cannot
+omit its annotations — so the check now mostly guards tools registered by
+hand.
 
 **Why so strict:** MCP clients use these hints to decide *auto-approve vs. prompt user*. A read-only tool can be auto-approved; a destructive one must prompt. A tool with no hint forces the client into a defensive choice — usually "prompt every time," which destroys the agent UX. Forcing every MolCrafts Provider to declare intent at build time is the only mechanism that scales across the whole ecosystem.
 

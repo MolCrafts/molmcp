@@ -12,7 +12,7 @@ from fastmcp import FastMCP
 
 class Provider(Protocol):
     name: str
-    def register(self, mcp: FastMCP) -> None: ...
+    # Tools are methods carrying @tool(...); ProviderBase registers them.
 ```
 
 That's the whole interface. Two requirements:
@@ -63,15 +63,18 @@ the provider whose `name == "molq"`).
 
 ## Annotation requirement
 
-Every tool a Provider registers **must** declare either `readOnlyHint` or `destructiveHint` via `ToolAnnotations`:
+Every tool **must** declare its annotations, and they come from the shared
+vocabulary rather than a literal — `molmcp.providers.annotations` holds
+`READ_ONLY`, `READ_REMOTE`, `IDEMPOTENT_WRITE`, `APPEND_WRITE`,
+`LOCAL_MUTATION` and `MUTATION`:
 
 ```python
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@tool(READ_ONLY)
 def get_atom_count(filename: str) -> int:
     """Count atoms in a structure file."""
     ...
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
+@tool(MUTATION)
 def write_pdb(structure: dict, path: str) -> None:
     """Write structure to a PDB file (overwrites existing)."""
     ...

@@ -69,7 +69,8 @@ Used by `molmcp planes` / `molmcp route` and by the catalog plane tools.
 ```python
 class Provider(Protocol):
     name: str
-    def register(self, mcp: FastMCP) -> None: ...
+    # Subclass ProviderBase and declare tools with @tool(...);
+    # register() is inherited.
 ```
 
 Each provider is its **own** plane (`molmcp serve <name>`). Register via the
@@ -121,8 +122,8 @@ Schema v1 mega-server configs are not supported.
 ## Middleware & safety
 
 Path-safety and response-limit middleware still apply on plane servers.
-Annotation validation requires tools to declare `readOnlyHint` or
-`destructiveHint`. Details: [Middleware](../concepts/middleware.md),
+Annotation validation requires tools to declare `read_only_hint` or
+`destructive_hint`. Details: [Middleware](../concepts/middleware.md),
 [Security](../guides/security.md).
 
 ## Read next

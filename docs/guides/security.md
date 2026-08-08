@@ -36,7 +36,14 @@ Configurable via `response_limit_bytes`. Disable per-server if you absolutely ne
 
 ### Auto-approve confusion
 
-Every tool a MolCrafts Provider registers must declare `readOnlyHint` or `destructiveHint`. molmcp checks at server build time and refuses to start otherwise. This forces Provider authors to *think* about whether a tool mutates state, and gives MCP clients the signal they need to auto-approve safe calls without prompting on every invocation.
+Every tool must declare annotations, and molmcp refuses to build a server
+whose tools do not. They are picked from a shared vocabulary
+(`molmcp.providers.annotations`) rather than written inline, which is how
+the values drifted apart before: one plane's read-only tools omitted
+`open_world_hint` entirely, and a client reads an absent hint as *unknown*
+rather than *local*. Naming the six cases forces the author to pick one,
+and gives clients the signal they need to auto-approve safe calls instead
+of prompting on every invocation.
 
 ## What molmcp does *not* block (and how to handle it)
 
@@ -67,7 +74,7 @@ What it **doesn't** check: that argv values themselves don't contain shell metac
 ### Path validation outside `_PATH_KEYS`
 
 ```python
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@tool(READ_ONLY)
 def load_data(target: str) -> dict:
     # PathSafetyMiddleware does NOT inspect "target" — it's not a recognized
     # path key. Validate manually:
@@ -90,7 +97,7 @@ Wrap untrusted content with `fence_untrusted`:
 ```python
 from molmcp import fence_untrusted
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@tool(READ_ONLY)
 def read_pdb_header(path: str) -> str:
     """Read the header section of a PDB file."""
     text = Path(path).read_text()
