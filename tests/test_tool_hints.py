@@ -32,7 +32,8 @@ _MOUNT_ERA = re.compile(
     r"list_destinations|list_queue|submit_job|cancel_job|list_projects|"
     r"list_experiments|list_runs|workspace_layout|check_layout|"
     r"materialize_workspace|add_project|add_experiment|create_run|"
-    r"validate_workflow)\b"
+    r"validate_workflow|plan_adoption|run_adoption|adoption_status|"
+    r"ingest_metrics)\b"
 )
 
 #: Tools that no longer exist at all.

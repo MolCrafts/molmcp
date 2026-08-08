@@ -114,7 +114,13 @@ Layered; dependencies point inward only:
 - **molq** (`providers/molq/`): read-only `list_jobs` / `get_job` /
   `job_logs` / `list_destinations` / `list_queue`; opt-in mutations
   `submit_job` / `cancel_job`. Lazy-import `molq`.
-- **molexp** (`providers/molexp/`): workspace navigation, layout, scaffold.
+- **molexp** (`providers/molexp/`): workspace navigation, layout, scaffold,
+  and adoption (`plan_adoption` / `run_adoption` / `adoption_status` /
+  `ingest_metrics`). The adoption core in `providers/molexp/adopt/` is pure
+  stdlib and reaches molexp through two injected seams (workspace factory,
+  ingest fn), so it is tested without the science package — same shape as the
+  molvis stage factory. **Deleting an adopted source is not a tool**; every
+  other step is provable and resumable, that one is neither.
 - Third-party packages use sibling `*_mcp` packages on the same entry-point group.
 - Spec: `docs/concepts/provider-design.md`; ledger: `.claude/notes/notes.md`.
 

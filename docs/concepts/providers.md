@@ -103,7 +103,7 @@ read, or an external DSL:
 | Provider class | Name | Reason it exists |
 |----------------|------|-----|
 | `MolqProvider` | `molq` | Reads `~/.molq/jobs.db` runtime state. |
-| `MolexpProvider` | `molexp` | Reads a workspace catalog rooted at `workspace.json`; also serves the frozen layout contract + a read-only linter. |
+| `MolexpProvider` | `molexp` | Reads a workspace catalog rooted at `workspace.json`; serves the frozen layout contract + a read-only linter; and adopts a legacy data directory into that layout with a resumable, hash-verified ledger — local filesystem state no index can describe. |
 | `LammpsProvider` | `lammps` | Doc navigator over docs.lammps.org — LAMMPS is a C++ binary with a DSL that source discovery cannot reach. Pure functions; no upstream dep. |
 | `MolpyProvider` | `molpy` | Runtime catalog of `molpy.compute` / `molpy.io` classes plus a structure-file reader executor — walked from the live module at call-time, not hardcoded. |
 | `MolpackProvider` | `molpack` | Runtime restraint catalog + `.inp` script inspector over `molpack.load_script`, plus a table mirroring molpack's Rust-side I/O formats. |

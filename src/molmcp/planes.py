@@ -78,11 +78,14 @@ _ROUTE_HINTS: tuple[tuple[tuple[str, ...], str, str], ...] = (
             "molexp",
             "project",
             "run scaffold",
+            "adopt",
+            "metrics",
             "实验",
             "工作区",
+            "整理数据",
         ),
         "molexp",
-        "Experiment workspace layout and idempotent scaffold.",
+        "Experiment workspace layout, scaffold, and legacy-directory adoption.",
     ),
     (
         (
@@ -185,8 +188,10 @@ _PROVIDER_META: dict[str, tuple[str, str, tuple[str, ...]]] = {
         ("list_jobs", "get_job", "job_logs", "list_destinations", "list_queue"),
     ),
     "molexp": (
-        "molexp workspace navigation and idempotent scaffold (not run driver).",
-        "User works with experiment workspaces, projects, or FAIR layout.",
+        "molexp workspace navigation, idempotent scaffold, and adoption of a "
+        "legacy data directory (not a run driver).",
+        "User works with experiment workspaces, projects, FAIR layout, or has "
+        "a folder of results to lift into one.",
         (
             "list_projects",
             "list_experiments",
@@ -198,6 +203,10 @@ _PROVIDER_META: dict[str, tuple[str, str, tuple[str, ...]]] = {
             "add_experiment",
             "create_run",
             "validate_workflow",
+            "plan_adoption",
+            "run_adoption",
+            "adoption_status",
+            "ingest_metrics",
         ),
     ),
 }

@@ -24,6 +24,7 @@ nav = [
         { "Expose a package" = "guides/expose-a-package.md" },
         { "Write a Provider" = "guides/write-a-provider.md" },
         { "MolVis workbench" = "guides/molvis-workbench.md" },
+        { "Adopt a data directory" = "guides/adopt-a-data-directory.md" },
         { "Security" = "guides/security.md" },
     ] },
     { "Reference" = [

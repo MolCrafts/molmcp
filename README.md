@@ -20,7 +20,7 @@ Turn planes off with `--disable` (and back on with `--enable`).
 | `molcrafts` | `molmcp serve molcrafts` | Knowledge pages (packages → outline → open) |
 | `molvis` | `molmcp serve molvis` | Live viewer session (`open` / `exec` / `poll_events`) |
 | `molq` | `molmcp serve molq` | Job store + opt-in submit/cancel |
-| `molexp` | `molmcp serve molexp` | Workspace layout + scaffold |
+| `molexp` | `molmcp serve molexp` | Workspace layout + scaffold + data-directory adoption |
 
 Science APIs are **never** MCP tools. Discover them on the `molcrafts` plane,
 then call them from agent Python or inside `molvis` `exec`.
