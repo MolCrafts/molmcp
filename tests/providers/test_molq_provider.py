@@ -787,26 +787,133 @@ class TestInjectionMakesThePlaneServable:
     and then had register() refuse it.
     """
 
-    def test_a_fully_injected_provider_is_available(self):
-        provider = MolqProvider(
+    def _fully_injected(self) -> MolqProvider:
+        from molmcp.providers.molq.provider import Destinations
+
+        return MolqProvider(
             store_factory=lambda db_path: FakeStore(),
             submitor_factory=lambda **kwargs: FakeSubmitor(),
+            destinations_factory=lambda: Destinations(profiles=[], ssh_hosts=list),
         )
 
-        assert provider.probe() is True
+    def test_a_fully_injected_provider_is_available(self):
+        assert self._fully_injected().probe() is True
 
     def test_a_fully_injected_provider_registers(self):
         from fastmcp import FastMCP
 
+        self._fully_injected().register(FastMCP("molq"))  # must not raise
+
+    def test_a_partly_injected_provider_still_needs_the_package(self):
+        """Two seams of three is not a backend: list_destinations would
+        still import molq on first use, failing later and less clearly."""
         provider = MolqProvider(
             store_factory=lambda db_path: FakeStore(),
             submitor_factory=lambda **kwargs: FakeSubmitor(),
         )
 
-        provider.register(FastMCP("molq"))  # must not raise
-
-    def test_a_half_injected_provider_still_needs_the_package(self):
-        """One seam is not a backend; the other half would still import molq."""
-        provider = MolqProvider(store_factory=lambda db_path: FakeStore())
-
         assert provider.probe() is MolqProvider().probe()
+
+
+class FakeProfile:
+    def __init__(self, name: str, cluster: str, scheduler: str) -> None:
+        self.name = name
+        self.cluster_name = cluster
+        self.scheduler = scheduler
+
+
+class FakeHost:
+    def __init__(self, alias: str, target: str) -> None:
+        self.alias = alias
+        self.target = target
+
+
+def _destinations(profiles=(), hosts=(), raises: Exception | None = None):
+    """Build the one seam `list_destinations` reaches molq through."""
+    from molmcp.providers.molq.provider import Destinations
+
+    def ssh_hosts():
+        if raises is not None:
+            raise raises
+        return list(hosts)
+
+    return lambda: Destinations(profiles=list(profiles), ssh_hosts=ssh_hosts)
+
+
+def _provider_with(destinations) -> MolqProvider:
+    return MolqProvider(
+        store_factory=lambda db_path: FakeStore(),
+        submitor_factory=lambda **kwargs: FakeSubmitor(),
+        destinations_factory=destinations,
+    )
+
+
+class TestListDestinations:
+    """The last tool with no fake coverage.
+
+    Its two molq touchpoints — load_config and list_ssh_hosts — sit behind
+    one seam, so the row shaping and the ssh-failure fallback, which are
+    molmcp's own, are reachable without the package.
+    """
+
+    def test_a_profile_becomes_a_row(self):
+        provider = _provider_with(
+            _destinations(profiles=[FakeProfile("prod", "devbox", "slurm")])
+        )
+
+        rows = provider.list_destinations(include_ssh=False)
+
+        assert rows == [
+            {
+                "name": "devbox",
+                "profile": "prod",
+                "source": "profile:prod",
+                "scheduler": "slurm",
+                "target": "(profile)",
+            }
+        ]
+
+    def test_ssh_hosts_are_appended_after_profiles(self):
+        provider = _provider_with(
+            _destinations(
+                profiles=[FakeProfile("prod", "devbox", "slurm")],
+                hosts=[FakeHost("gpu01", "user@gpu01")],
+            )
+        )
+
+        rows = provider.list_destinations()
+
+        assert [r["source"] for r in rows] == ["profile:prod", "ssh_config"]
+        assert rows[1]["name"] == "gpu01"
+        assert rows[1]["target"] == "user@gpu01"
+        assert rows[1]["scheduler"] == "?"
+
+    def test_excluding_ssh_never_reads_the_ssh_config(self):
+        called = {"n": 0}
+
+        def counting_hosts():
+            called["n"] += 1
+            return []
+
+        from molmcp.providers.molq.provider import Destinations
+
+        provider = _provider_with(
+            lambda: Destinations(profiles=[], ssh_hosts=counting_hosts)
+        )
+
+        provider.list_destinations(include_ssh=False)
+
+        assert called["n"] == 0
+
+    def test_an_unreadable_ssh_config_becomes_a_row_not_an_exception(self):
+        """A broken ~/.ssh/config must not take the whole listing down."""
+        provider = _provider_with(_destinations(raises=OSError("permission denied")))
+
+        rows = provider.list_destinations()
+
+        assert len(rows) == 1
+        assert rows[0]["source"] == "ssh_config_error"
+        assert "permission denied" in rows[0]["target"]
+
+    def test_no_profiles_and_no_hosts_is_an_empty_listing(self):
+        assert _provider_with(_destinations()).list_destinations() == []

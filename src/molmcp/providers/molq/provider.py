@@ -20,18 +20,18 @@ DB resolution (in order):
 2. The ``molq.database`` setting.
 3. molq's canonical default via :func:`molq.store.default_jobs_db_path`.
 
-Every upstream object this plane needs comes from one of two factories —
-:func:`_molq_store` and :func:`_molq_submitor` — both injectable through
-the constructor and both importing ``molq`` only when actually called. So
-the heavy import happens on the first tool call, never at module import or
-provider construction, and a caller with its own store/submitor (tests, an
-embedder) never needs molq installed at all.
+Every upstream object this plane needs comes from one of three factories —
+:func:`_molq_store`, :func:`_molq_submitor` and :func:`_molq_destinations`
+— all injectable through the constructor and all importing ``molq`` only
+when actually called. So the heavy import happens on the first tool call,
+never at module import or provider construction, and a caller supplying all
+three (tests, an embedder) never needs molq installed at all.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import asdict, is_dataclass
+from collections.abc import Callable, Iterable
+from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
@@ -198,6 +198,29 @@ def _molq_submitor(
     return Submitor(target=target, store=store, jobs_dir=jobs_dir)
 
 
+@dataclass(frozen=True, slots=True)
+class Destinations:
+    """What ``list_destinations`` needs from molq, and nothing more.
+
+    ``ssh_hosts`` stays a callable rather than a materialised list so it is
+    only read when the caller asks for it, and so a broken
+    ``~/.ssh/config`` fails at the point the tool already handles.
+    """
+
+    profiles: Iterable[Any]
+    ssh_hosts: Callable[[], Iterable[Any]]
+
+
+def _molq_destinations() -> Destinations:
+    """The real destinations, from molq config and the SSH config."""
+    from molq import list_ssh_hosts, load_config
+
+    return Destinations(
+        profiles=list(load_config().profiles.values()),
+        ssh_hosts=list_ssh_hosts,
+    )
+
+
 class MolqProvider(ProviderBase):
     """Provider for molq job dashboard, logs, destinations, and opt-in mutate.
 
@@ -213,9 +236,13 @@ class MolqProvider(ProviderBase):
         submitor_factory: Callable building a submitor from keyword
             ``scheduler`` / ``cluster`` / ``profile`` / ``store`` /
             ``jobs_dir``. Defaults to a real ``molq.Submitor``.
+        destinations_factory: Callable returning the profiles and SSH hosts
+            ``list_destinations`` reports. Defaults to reading molq config.
 
-    Injecting both factories removes the molq dependency from this plane
-    entirely, which is what lets the tools be tested without a scheduler.
+    Injecting all three factories removes the molq dependency from this
+    plane entirely, which is what lets the tools be tested without a
+    scheduler. They are the only three places this provider reaches
+    upstream.
     """
 
     name = "molq"
@@ -230,17 +257,19 @@ class MolqProvider(ProviderBase):
         jobs_dir: str | Path | None = None,
         store_factory: StoreFactory | None = None,
         submitor_factory: SubmitorFactory | None = None,
+        destinations_factory: Callable[[], Destinations] | None = None,
     ) -> None:
         self._db_path_arg = db_path
         self._allow_submit = allow_submit
         self._jobs_dir = Path(jobs_dir).expanduser() if jobs_dir is not None else None
         self._store_factory = store_factory
         self._submitor_factory = submitor_factory
+        self._destinations_factory = destinations_factory
 
     # -- upstream plumbing ----------------------------------------------
 
     def probe(self) -> bool:
-        """True when both backends are injected, or ``molq`` is importable.
+        """True when every backend is injected, or ``molq`` is importable.
 
         An injected backend *is* the plane. This mirrors the molvis stage
         factory: a provider handed its own store and submitor never reaches
@@ -248,11 +277,16 @@ class MolqProvider(ProviderBase):
         package is absent would make the seam useless for exactly the
         embedders and tests it exists for.
 
-        Both seams are required. One alone still leaves the other half
+        Every seam is required. A partial injection still leaves some tool
         importing molq on first use, which would fail later and less
         clearly than failing here.
         """
-        if self._store_factory is not None and self._submitor_factory is not None:
+        seams = (
+            self._store_factory,
+            self._submitor_factory,
+            self._destinations_factory,
+        )
+        if all(seam is not None for seam in seams):
             return True
         return super().probe()
 
@@ -472,11 +506,10 @@ class MolqProvider(ProviderBase):
         Returns:
             Rows with ``name``, ``source``, ``scheduler``, ``target``.
         """
-        from molq import load_config
+        destinations = (self._destinations_factory or _molq_destinations)()
 
         rows: list[dict[str, Any]] = []
-        cfg = load_config()
-        for profile in cfg.profiles.values():
+        for profile in destinations.profiles:
             rows.append(
                 {
                     "name": profile.cluster_name,
@@ -488,9 +521,7 @@ class MolqProvider(ProviderBase):
             )
         if include_ssh:
             try:
-                from molq import list_ssh_hosts
-
-                for host in list_ssh_hosts():
+                for host in destinations.ssh_hosts():
                     rows.append(
                         {
                             "name": host.alias,
