@@ -152,9 +152,22 @@ class ProviderBase:
 
         Raises:
             RuntimeError: the upstream package is missing.
+            ValueError: two methods claim the same wire name. Overriding by
+                *attribute* is intended — a subclass redefining a tool
+                replaces it — but two distinct methods claiming one name is
+                one tool shadowing another, and which survives would depend
+                on MRO order.
         """
         self.require_upstream()
+        claimed: dict[str, str] = {}
         for spec in self.tool_specs():
+            previous = claimed.get(spec.name)
+            if previous is not None:
+                raise ValueError(
+                    f"{type(self).__name__} declares the tool name "
+                    f"{spec.name!r} twice: {previous}() and {spec.attribute}()"
+                )
+            claimed[spec.name] = spec.attribute
             mcp.tool(name=spec.name, annotations=spec.annotations)(
                 getattr(self, spec.attribute)
             )

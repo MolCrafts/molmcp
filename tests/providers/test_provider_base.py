@@ -187,3 +187,96 @@ class TestAnnotationVocabulary:
         """A client cannot tell 'local' from 'unset' if the hint is absent."""
         for constant in (READ_ONLY, MUTATION, IDEMPOTENT_WRITE):
             assert constant.open_world_hint is not None
+
+
+class TestDuplicateWireNames:
+    """Two methods claiming one wire name is a bug, not a silent overwrite.
+
+    Overriding by *attribute* is intended — a subclass redefining a tool
+    replaces it. Two distinct methods declaring the same `name=` is not
+    overriding; it is one tool quietly shadowing another, and which one
+    survives depends on MRO order.
+    """
+
+    def test_a_clashing_wire_name_is_refused_at_registration(self):
+        class Clashing(ProviderBase):
+            name = "clash"
+
+            @tool(READ_ONLY, name="thing")
+            def first(self) -> dict[str, int]:
+                """One."""
+                return {"n": 1}
+
+            @tool(READ_ONLY, name="thing")
+            def second(self) -> dict[str, int]:
+                """Two."""
+                return {"n": 2}
+
+        with pytest.raises(ValueError) as excinfo:
+            Clashing().register(FastMCP("clash"))
+
+        message = str(excinfo.value)
+        assert "thing" in message
+        assert "first" in message and "second" in message
+
+    def test_overriding_a_method_replaces_rather_than_duplicates(self):
+        class Overridden(_Fake):
+            @tool(MUTATION)
+            def peek(self, item: str = "x") -> dict[str, str]:
+                """Replaced."""
+                return {"item": item}
+
+        tools = _tools(Overridden())
+
+        assert "Replaced" in (tools["peek"].description or "")
+        assert tools["peek"].annotations.destructive_hint is True
+
+
+class TestDestructivenessAndReachAreIndependent:
+    """Four hints, four axes — the vocabulary must not fuse two of them.
+
+    The first cut bundled "destructive" with "open world", so a tool that
+    rewrites local files had to claim it reaches external entities. molexp's
+    `run_adoption` is the case that exposed it: move mode unlinks sources
+    (destructive), it resumes rather than duplicates (idempotent), and it
+    never leaves the filesystem (closed). No constant could say that.
+    """
+
+    def test_a_local_mutation_does_not_claim_to_reach_outside(self):
+        from molmcp.providers.annotations import LOCAL_MUTATION
+
+        assert LOCAL_MUTATION.destructive_hint is True
+        assert LOCAL_MUTATION.open_world_hint is False
+
+    def test_a_local_mutation_can_still_be_resumable(self):
+        from molmcp.providers.annotations import LOCAL_MUTATION
+
+        assert LOCAL_MUTATION.idempotent_hint is True
+
+    def test_an_append_is_additive_not_destructive(self):
+        """The spec defines destructive as the opposite of additive."""
+        from molmcp.providers.annotations import APPEND_WRITE
+
+        assert APPEND_WRITE.destructive_hint is False
+
+    def test_an_append_warns_against_blind_retry(self):
+        from molmcp.providers.annotations import APPEND_WRITE
+
+        assert APPEND_WRITE.idempotent_hint is False
+        assert APPEND_WRITE.open_world_hint is False
+
+    def test_a_remote_mutation_still_says_it_reaches_outside(self):
+        assert MUTATION.destructive_hint is True
+        assert MUTATION.open_world_hint is True
+
+    def test_every_constant_states_all_four_hints(self):
+        """An unset hint reads as the spec default, which is rarely right."""
+        from molmcp.providers import annotations as vocab
+
+        named = [getattr(vocab, name) for name in vocab.__all__]
+        assert named
+        for constant in named:
+            assert constant.read_only_hint is not None
+            assert constant.destructive_hint is not None
+            assert constant.idempotent_hint is not None
+            assert constant.open_world_hint is not None

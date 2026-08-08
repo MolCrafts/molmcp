@@ -24,10 +24,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from fastmcp import FastMCP
-
-#: Settings key holding the default workspace path.
-_WORKSPACE_SETTING = "molexp.workspace"
+from ..annotations import (
+    APPEND_WRITE,
+    IDEMPOTENT_WRITE,
+    LOCAL_MUTATION,
+    READ_ONLY,
+)
+from ..base import ProviderBase, tool
 
 
 def _configured_workspace() -> str:
@@ -84,22 +87,17 @@ def _resolve_workspace(workspace: str | None = None):
     )
 
 
-class MolexpProvider:
+class MolexpProvider(ProviderBase):
     """Provider for molexp domain tools (scaffold + navigation)."""
 
     name = "molexp"
+    upstream = "molexp"
+    import_name = "molexp"
 
     def __init__(self, workspace: str | Path | None = None) -> None:
         self._workspace = Path(workspace).expanduser().resolve() if workspace else None
 
-    @staticmethod
-    def probe() -> bool:
-        """True when the optional ``molexp`` package is importable."""
-        try:
-            import molexp  # noqa: F401
-        except ImportError:
-            return False
-        return True
+    # -- workspace resolution -------------------------------------------
 
     def _get_workspace(self, workspace: str | None = None):
         if workspace:
@@ -125,427 +123,412 @@ class MolexpProvider:
                 runs.extend(Path(run.resolve()) for run in experiment.list_runs())
         return runs
 
-    def register(self, mcp: FastMCP) -> None:
-        if not self.probe():
-            raise RuntimeError(
-                "MolexpProvider requires molexp to be installed in this environment"
-            )
-
-        from mcp.types import ToolAnnotations
-
-        read_only = ToolAnnotations(read_only_hint=True, destructive_hint=False)
-        # Idempotent scaffold (create-or-get) — not a free-form write surface.
-        scaffold = ToolAnnotations(
-            read_only_hint=False,
-            destructive_hint=False,
-            idempotent_hint=True,
-        )
-        # Adoption re-run resumes rather than duplicates, but ``move`` unlinks
-        # source files, so the destructive hint stays on.
-        adoption = ToolAnnotations(
-            read_only_hint=False,
-            destructive_hint=True,
-            idempotent_hint=True,
-        )
-        # metrics.jsonl is append-only: a second ingest doubles the curves.
-        ingest_annotation = ToolAnnotations(
-            read_only_hint=False,
-            destructive_hint=False,
-            idempotent_hint=False,
-        )
-
-        @mcp.tool(annotations=read_only)
-        def list_projects(workspace: str | None = None) -> list[dict[str, Any]]:
-            """Enumerate projects in the workspace."""
-            ws = self._get_workspace(workspace)
-            rows: list[dict[str, Any]] = []
-            for p in ws.list_projects():
-                rows.append(
-                    {
-                        "project_id": p.id,
-                        "name": p.name,
-                        "path": str(p.resolve()),
-                    }
-                )
-            return rows
-
-        @mcp.tool(annotations=read_only)
-        def list_experiments(
-            project_id: str,
-            workspace: str | None = None,
-        ) -> list[dict[str, Any]]:
-            """List experiments under a project (read-only)."""
-            from .scaffold import list_experiments as _list_experiments
-
-            ws = self._get_workspace(workspace)
-            return _list_experiments(ws.resolve(), project_id)
-
-        @mcp.tool(annotations=read_only)
-        def list_runs(
-            scope_kind: Literal["workspace", "project", "experiment"] = "workspace",
-            scope_id: str = "",
-            status: str | None = None,
-            limit: int = 500,
-            workspace: str | None = None,
-        ) -> list[dict[str, Any]]:
-            """Query runs by scope.
-
-            Args:
-                scope_kind: ``workspace``, ``project``, or ``experiment``.
-                scope_id: Project id (when ``scope_kind='project'``),
-                    experiment id (when ``'experiment'``), or empty string
-                    (when ``'workspace'``).
-                status: Optional status filter.
-                limit: Maximum rows to return. Default 500.
-            """
-            if scope_kind not in _ALLOWED_SCOPES:
-                raise ValueError(f"scope_kind must be one of {sorted(_ALLOWED_SCOPES)}")
-            ws = self._get_workspace(workspace)
-            rows: list[dict[str, Any]] = []
-            projects = ws.list_projects()
-            if scope_kind == "project":
-                projects = [ws.get_project(scope_id)]
-            for project in projects:
-                experiments = project.list_experiments()
-                if scope_kind == "experiment":
-                    experiments = [
-                        e for e in experiments if e.id == scope_id or e.name == scope_id
-                    ]
-                for exp in experiments:
-                    for run in exp.list_runs():
-                        if status is not None and run.status != status:
-                            continue
-                        rows.append(
-                            {
-                                "run_id": run.id,
-                                "project_id": project.id,
-                                "experiment_id": exp.id,
-                                "status": run.status,
-                                "params": dict(run.parameters),
-                            }
-                        )
-                        if len(rows) >= limit:
-                            return rows
-            return rows
-
-        @mcp.tool(annotations=read_only)
-        def workspace_layout() -> dict[str, Any]:
-            """Canonical molexp workspace on-disk layout contract (OKF)."""
-            from .layout import layout_spec
-
-            return layout_spec()
-
-        @mcp.tool(annotations=read_only)
-        def check_layout(path: str) -> dict[str, Any]:
-            """Read-only lint of ``path`` against the layout contract."""
-            from .layout import validate_workspace
-
-            root = Path(path).expanduser().resolve()
-            findings = validate_workspace(root)
-            is_ws = (root / "workspace.json").is_file() or (
-                root / "meta.yaml"
-            ).is_file()
+    @staticmethod
+    def _scaffold_result(fn, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Run a scaffold helper; return structured errors instead of tracebacks."""
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — surface to the agent cleanly
             return {
-                "path": str(root),
-                "is_workspace": is_ws,
-                "ok": len(findings.items) == 0 and is_ws,
-                "violations": findings.items,
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
             }
 
-        def _scaffold_result(fn, *args: Any, **kwargs: Any) -> dict[str, Any]:
-            """Run a scaffold helper; return structured errors instead of tracebacks."""
-            try:
-                return fn(*args, **kwargs)
-            except Exception as exc:  # noqa: BLE001 — surface to the agent cleanly
-                return {
-                    "ok": False,
-                    "error": f"{type(exc).__name__}: {exc}",
+    # -- navigation ------------------------------------------------------
+
+    @tool(READ_ONLY)
+    def list_projects(self, workspace: str | None = None) -> list[dict[str, Any]]:
+        """Enumerate projects in the workspace."""
+        ws = self._get_workspace(workspace)
+        rows: list[dict[str, Any]] = []
+        for p in ws.list_projects():
+            rows.append(
+                {
+                    "project_id": p.id,
+                    "name": p.name,
+                    "path": str(p.resolve()),
                 }
-
-        @mcp.tool(annotations=scaffold)
-        def materialize_workspace(
-            path: str,
-            name: str = "workspace",
-        ) -> dict[str, Any]:
-            """Create or open a top-level molexp Workspace at ``path`` (idempotent).
-
-            Do **not** use this to create a project under the session workspace —
-            use ``add_project`` instead. Nesting is rejected.
-            """
-            from .scaffold import materialize_workspace as _materialize_workspace
-
-            return _scaffold_result(_materialize_workspace, path, name=name)
-
-        @mcp.tool(annotations=scaffold)
-        def add_project(
-            name: str,
-            workspace: str | None = None,
-        ) -> dict[str, Any]:
-            """Create-or-get a project under the workspace (idempotent on slug).
-
-            Prefer this (or omit workspace to use MOLEXP_WORKSPACE) when the user
-            asks to create a project.
-            """
-            from .scaffold import add_project as _add_project
-
-            ws = self._get_workspace(workspace)
-            return _scaffold_result(_add_project, ws.resolve(), name)
-
-        @mcp.tool(annotations=scaffold)
-        def add_experiment(
-            project_id: str,
-            name: str,
-            workspace: str | None = None,
-        ) -> dict[str, Any]:
-            """Create-or-get an experiment under a project (idempotent on slug)."""
-            from .scaffold import add_experiment as _add_experiment
-
-            ws = self._get_workspace(workspace)
-            return _scaffold_result(_add_experiment, ws.resolve(), project_id, name)
-
-        @mcp.tool(annotations=scaffold)
-        def create_run(
-            project_id: str,
-            experiment_id: str,
-            params: dict[str, Any] | None = None,
-            workspace: str | None = None,
-        ) -> dict[str, Any]:
-            """Scaffold a pending run with params — does not drive the workflow."""
-            from .scaffold import create_run as _create_run
-
-            ws = self._get_workspace(workspace)
-            return _scaffold_result(
-                _create_run, ws.resolve(), project_id, experiment_id, params=params
             )
+        return rows
 
-        # ------------------------------------------------------------------
-        # Adoption: legacy data directory → four-tier workspace
-        # ------------------------------------------------------------------
+    @tool(READ_ONLY)
+    def list_experiments(
+        self,
+        project_id: str,
+        workspace: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List experiments under a project (read-only)."""
+        from .scaffold import list_experiments as _list_experiments
 
-        @mcp.tool(annotations=read_only)
-        def plan_adoption(
-            source: str,
-            target: str | None = None,
-            max_depth: int = 6,
-        ) -> dict[str, Any]:
-            """Survey a legacy data directory and propose an adoption mapping.
+        ws = self._get_workspace(workspace)
+        return _list_experiments(ws.resolve(), project_id)
 
-            Read-only: nothing is created, copied, or written. Returns the
-            survey (what is there, plus oddities like broken symlinks) and a
-            ``Project → Experiment → Run`` proposal the operator can edit and
-            hand straight back to ``run_adoption(plan=…)``.
+    @tool(READ_ONLY)
+    def list_runs(
+        self,
+        scope_kind: Literal["workspace", "project", "experiment"] = "workspace",
+        scope_id: str = "",
+        status: str | None = None,
+        limit: int = 500,
+        workspace: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Query runs by scope.
 
-            Args:
-                source: The existing data directory.
-                target: Where the workspace will live. Defaults to a sibling
-                    ``<source>.molexp/``.
-                max_depth: Levels below *source* to walk. Default 6.
-
-            Returns:
-                ``{ok, survey, plan}``. A non-empty ``plan.conflicts`` must be
-                resolved by editing the plan before it can run.
-            """
-            from .adopt import build_plan, survey_source
-
-            root = Path(source).expanduser().resolve()
-            try:
-                found = survey_source(root, max_depth=max_depth)
-            except NotADirectoryError as exc:
-                return {"ok": False, "error": str(exc)}
-            proposal = build_plan(found, target=target)
-            return {
-                "ok": not proposal.conflicts,
-                "survey": found.to_dict(),
-                "plan": proposal.to_dict(),
-            }
-
-        @mcp.tool(annotations=adoption)
-        def run_adoption(
-            source: str,
-            target: str | None = None,
-            mode: Literal["copy", "move"] = "copy",
-            plan: dict[str, Any] | None = None,
-            ingest: list[str] | None = None,
-            csv_step_column: str | None = None,
-            csv_series_columns: list[str] | None = None,
-            workspace_name: str | None = None,
-        ) -> dict[str, Any]:
-            """Execute an adoption: materialize, transfer, ingest, verify.
-
-            Every file is SHA-256 hashed on write and re-read before its
-            ledger entry flips. An existing destination with different bytes
-            is refused, never overwritten. Re-running with the same arguments
-            resumes from ``<target>/.molexp-migration.json``.
-
-            Deleting the source is **not** offered here — audit the ledger and
-            remove the original yourself.
-
-            Args:
-                source: The existing data directory.
-                target: Workspace root. Defaults to ``<source>.molexp/``.
-                mode: ``copy`` leaves the source intact; ``move`` unlinks each
-                    source file only after its copy verified.
-                plan: An edited plan from ``plan_adoption``. Omit to use the
-                    freshly derived proposal.
-                ingest: Log formats to convert into each run's metrics buffer
-                    (``lammps_log``, ``tensorboard``, ``csv``). Omit to ingest
-                    nothing — the buffer is append-only, so this is never
-                    implied.
-                csv_step_column: Step column for CSV ingestion.
-                csv_series_columns: Series columns for CSV ingestion.
-                workspace_name: Name for the workspace. Defaults to the target
-                    directory name.
-            """
-            from .adopt import (
-                AdoptionBlocked,
-                AdoptionPlan,
-                build_plan,
-                survey_source,
-            )
-            from .adopt import run_adoption as _run_adoption
-
-            root = Path(source).expanduser().resolve()
-            try:
-                if plan is not None:
-                    approved = AdoptionPlan.from_dict(plan)
-                else:
-                    approved = build_plan(survey_source(root), target=target)
-                outcome = _run_adoption(
-                    approved,
-                    mode=mode,
-                    ingest_formats=frozenset(ingest) if ingest else None,
-                    csv_mapping=_csv_mapping(csv_step_column, csv_series_columns),
-                    workspace_name=workspace_name,
-                )
-            except (AdoptionBlocked, NotADirectoryError, KeyError) as exc:
-                return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-            return outcome.to_dict()
-
-        @mcp.tool(annotations=read_only)
-        def adoption_status(target: str, verify: bool = False) -> dict[str, Any]:
-            """Read an adoption ledger: what is done, what is outstanding.
-
-            Args:
-                target: The workspace root holding
-                    ``.molexp-migration.json``.
-                verify: Re-hash every transferred file and report divergence.
-                    Off by default — it re-reads the whole workspace. Turn it
-                    on for the deliberate audit before deleting a source.
-            """
-            from .adopt import read_ledger, verify_tree
-
-            root = Path(target).expanduser().resolve()
-            try:
-                ledger = read_ledger(root)
-            except (OSError, ValueError) as exc:
-                return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-            if ledger is None:
-                return {
-                    "ok": False,
-                    "error": f"no adoption ledger under {root}",
-                    "target": str(root),
-                }
-            outstanding = [
-                entry.source
-                for entry in ledger.entries
-                if entry.kind == "file" and not entry.done
-            ]
-            payload: dict[str, Any] = {
-                "ok": True,
-                "source": ledger.source,
-                "target": ledger.target,
-                "mode": ledger.mode,
-                "complete": ledger.complete,
-                "counts": ledger.counts(),
-                "runs": [
-                    {
-                        "source": entry.source,
-                        "run_id": entry.run_id,
-                        "run_dir": entry.target,
-                    }
-                    for entry in ledger.of_kind("run")
-                ],
-                "outstanding": outstanding[:50],
-                "outstanding_total": len(outstanding),
-            }
-            if verify:
-                pairs = [
-                    (Path(entry.target), entry.sha256 or "")
-                    for entry in ledger.entries
-                    if entry.kind == "file" and entry.done
+        Args:
+            scope_kind: ``workspace``, ``project``, or ``experiment``.
+            scope_id: Project id (when ``scope_kind='project'``),
+                experiment id (when ``'experiment'``), or empty string
+                (when ``'workspace'``).
+            status: Optional status filter.
+            limit: Maximum rows to return. Default 500.
+        """
+        if scope_kind not in _ALLOWED_SCOPES:
+            raise ValueError(f"scope_kind must be one of {sorted(_ALLOWED_SCOPES)}")
+        ws = self._get_workspace(workspace)
+        rows: list[dict[str, Any]] = []
+        projects = ws.list_projects()
+        if scope_kind == "project":
+            projects = [ws.get_project(scope_id)]
+        for project in projects:
+            experiments = project.list_experiments()
+            if scope_kind == "experiment":
+                experiments = [
+                    e for e in experiments if e.id == scope_id or e.name == scope_id
                 ]
-                problems = verify_tree(pairs)
-                payload["verified_files"] = len(pairs)
-                payload["problems"] = problems
-                payload["ok"] = not problems
-            return payload
+            for exp in experiments:
+                for run in exp.list_runs():
+                    if status is not None and run.status != status:
+                        continue
+                    rows.append(
+                        {
+                            "run_id": run.id,
+                            "project_id": project.id,
+                            "experiment_id": exp.id,
+                            "status": run.status,
+                            "params": dict(run.parameters),
+                        }
+                    )
+                    if len(rows) >= limit:
+                        return rows
+        return rows
 
-        @mcp.tool(annotations=ingest_annotation)
-        def ingest_metrics(
-            path: str,
-            formats: list[str] | None = None,
-            csv_step_column: str | None = None,
-            csv_series_columns: list[str] | None = None,
-        ) -> dict[str, Any]:
-            """Convert a run's foreign logs into its host metrics buffer.
+    # -- layout ----------------------------------------------------------
 
-            Additive and **not idempotent**: ``metrics/metrics.jsonl`` is
-            append-only, so ingesting the same run twice doubles its curves.
-            Undo by deleting ``<run>/metrics/``. Source logs are never
-            deleted, rewritten, moved, or truncated.
+    @tool(READ_ONLY)
+    def workspace_layout(self) -> dict[str, Any]:
+        """Canonical molexp workspace on-disk layout contract (OKF)."""
+        from .layout import layout_spec
 
-            Args:
-                path: A run directory, or a workspace root to ingest every run
-                    under it.
-                formats: ``lammps_log`` / ``tensorboard`` / ``csv``. Omit to
-                    ingest every format that has a converter (CSV only when a
-                    column mapping is given).
-                csv_step_column: Step column name for CSV artifacts.
-                csv_series_columns: Series column names for CSV artifacts.
-            """
-            from .adopt import INGEST_FORMATS, molexp_ingest
+        return layout_spec()
 
-            selected = frozenset(formats) if formats else None
-            if selected is not None:
-                unknown = sorted(selected - INGEST_FORMATS)
-                if unknown:
-                    return {
-                        "ok": False,
-                        "error": (
-                            f"unknown format(s) {unknown}; "
-                            f"expected {sorted(INGEST_FORMATS)}"
-                        ),
-                    }
-            root = Path(path).expanduser().resolve()
-            if not root.is_dir():
-                return {"ok": False, "error": f"not a directory: {root}"}
-            mapping = _csv_mapping(csv_step_column, csv_series_columns)
-            targets = self._ingest_targets(root)
-            results: dict[str, Any] = {}
-            problems: list[str] = []
-            for run_dir in targets:
-                try:
-                    outcome = molexp_ingest(run_dir, selected, mapping)
-                except Exception as exc:  # noqa: BLE001 — report, never crash
-                    problems.append(f"{run_dir}: {type(exc).__name__}: {exc}")
-                    continue
-                results[str(run_dir)] = outcome.to_dict()
+    @tool(READ_ONLY)
+    def check_layout(self, path: str) -> dict[str, Any]:
+        """Read-only lint of ``path`` against the layout contract."""
+        from .layout import validate_workspace
+
+        root = Path(path).expanduser().resolve()
+        findings = validate_workspace(root)
+        is_ws = (root / "workspace.json").is_file() or (root / "meta.yaml").is_file()
+        return {
+            "path": str(root),
+            "is_workspace": is_ws,
+            "ok": len(findings.items) == 0 and is_ws,
+            "violations": findings.items,
+        }
+
+    # -- scaffold (create-or-get) ----------------------------------------
+
+    @tool(IDEMPOTENT_WRITE)
+    def materialize_workspace(
+        self,
+        path: str,
+        name: str = "workspace",
+    ) -> dict[str, Any]:
+        """Create or open a top-level molexp Workspace at ``path`` (idempotent).
+
+        Do **not** use this to create a project under the session workspace —
+        use ``add_project`` instead. Nesting is rejected.
+        """
+        from .scaffold import materialize_workspace as _materialize_workspace
+
+        return self._scaffold_result(_materialize_workspace, path, name=name)
+
+    @tool(IDEMPOTENT_WRITE)
+    def add_project(
+        self,
+        name: str,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Create-or-get a project under the workspace (idempotent on slug).
+
+        Prefer this (or omit workspace to use MOLEXP_WORKSPACE) when the user
+        asks to create a project.
+        """
+        from .scaffold import add_project as _add_project
+
+        ws = self._get_workspace(workspace)
+        return self._scaffold_result(_add_project, ws.resolve(), name)
+
+    @tool(IDEMPOTENT_WRITE)
+    def add_experiment(
+        self,
+        project_id: str,
+        name: str,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Create-or-get an experiment under a project (idempotent on slug)."""
+        from .scaffold import add_experiment as _add_experiment
+
+        ws = self._get_workspace(workspace)
+        return self._scaffold_result(_add_experiment, ws.resolve(), project_id, name)
+
+    @tool(IDEMPOTENT_WRITE)
+    def create_run(
+        self,
+        project_id: str,
+        experiment_id: str,
+        params: dict[str, Any] | None = None,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Scaffold a pending run with params — does not drive the workflow."""
+        from .scaffold import create_run as _create_run
+
+        ws = self._get_workspace(workspace)
+        return self._scaffold_result(
+            _create_run, ws.resolve(), project_id, experiment_id, params=params
+        )
+
+    # -- adoption: legacy data directory → four-tier workspace -----------
+
+    @tool(READ_ONLY)
+    def plan_adoption(
+        self,
+        source: str,
+        target: str | None = None,
+        max_depth: int = 6,
+    ) -> dict[str, Any]:
+        """Survey a legacy data directory and propose an adoption mapping.
+
+        Read-only: nothing is created, copied, or written. Returns the
+        survey (what is there, plus oddities like broken symlinks) and a
+        ``Project → Experiment → Run`` proposal the operator can edit and
+        hand straight back to ``run_adoption(plan=…)``.
+
+        Args:
+            source: The existing data directory.
+            target: Where the workspace will live. Defaults to a sibling
+                ``<source>.molexp/``.
+            max_depth: Levels below *source* to walk. Default 6.
+
+        Returns:
+            ``{ok, survey, plan}``. A non-empty ``plan.conflicts`` must be
+            resolved by editing the plan before it can run.
+        """
+        from .adopt import build_plan, survey_source
+
+        root = Path(source).expanduser().resolve()
+        try:
+            found = survey_source(root, max_depth=max_depth)
+        except NotADirectoryError as exc:
+            return {"ok": False, "error": str(exc)}
+        proposal = build_plan(found, target=target)
+        return {
+            "ok": not proposal.conflicts,
+            "survey": found.to_dict(),
+            "plan": proposal.to_dict(),
+        }
+
+    @tool(LOCAL_MUTATION)
+    def run_adoption(
+        self,
+        source: str,
+        target: str | None = None,
+        mode: Literal["copy", "move"] = "copy",
+        plan: dict[str, Any] | None = None,
+        ingest: list[str] | None = None,
+        csv_step_column: str | None = None,
+        csv_series_columns: list[str] | None = None,
+        workspace_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Execute an adoption: materialize, transfer, ingest, verify.
+
+        Every file is SHA-256 hashed on write and re-read before its
+        ledger entry flips. An existing destination with different bytes
+        is refused, never overwritten. Re-running with the same arguments
+        resumes from ``<target>/.molexp-migration.json``.
+
+        Deleting the source is **not** offered here — audit the ledger and
+        remove the original yourself.
+
+        Args:
+            source: The existing data directory.
+            target: Workspace root. Defaults to ``<source>.molexp/``.
+            mode: ``copy`` leaves the source intact; ``move`` unlinks each
+                source file only after its copy verified.
+            plan: An edited plan from ``plan_adoption``. Omit to use the
+                freshly derived proposal.
+            ingest: Log formats to convert into each run's metrics buffer
+                (``lammps_log``, ``tensorboard``, ``csv``). Omit to ingest
+                nothing — the buffer is append-only, so this is never
+                implied.
+            csv_step_column: Step column for CSV ingestion.
+            csv_series_columns: Series columns for CSV ingestion.
+            workspace_name: Name for the workspace. Defaults to the target
+                directory name.
+        """
+        from .adopt import (
+            AdoptionBlocked,
+            AdoptionPlan,
+            build_plan,
+            survey_source,
+        )
+        from .adopt import run_adoption as _run_adoption
+
+        root = Path(source).expanduser().resolve()
+        try:
+            if plan is not None:
+                approved = AdoptionPlan.from_dict(plan)
+            else:
+                approved = build_plan(survey_source(root), target=target)
+            outcome = _run_adoption(
+                approved,
+                mode=mode,
+                ingest_formats=frozenset(ingest) if ingest else None,
+                csv_mapping=_csv_mapping(csv_step_column, csv_series_columns),
+                workspace_name=workspace_name,
+            )
+        except (AdoptionBlocked, NotADirectoryError, KeyError) as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return outcome.to_dict()
+
+    @tool(READ_ONLY)
+    def adoption_status(self, target: str, verify: bool = False) -> dict[str, Any]:
+        """Read an adoption ledger: what is done, what is outstanding.
+
+        Args:
+            target: The workspace root holding
+                ``.molexp-migration.json``.
+            verify: Re-hash every transferred file and report divergence.
+                Off by default — it re-reads the whole workspace. Turn it
+                on for the deliberate audit before deleting a source.
+        """
+        from .adopt import read_ledger, verify_tree
+
+        root = Path(target).expanduser().resolve()
+        try:
+            ledger = read_ledger(root)
+        except (OSError, ValueError) as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        if ledger is None:
             return {
-                "ok": not problems,
-                "path": str(root),
-                "runs": len(targets),
-                "results": results,
-                "problems": problems,
+                "ok": False,
+                "error": f"no adoption ledger under {root}",
+                "target": str(root),
             }
+        outstanding = [
+            entry.source
+            for entry in ledger.entries
+            if entry.kind == "file" and not entry.done
+        ]
+        payload: dict[str, Any] = {
+            "ok": True,
+            "source": ledger.source,
+            "target": ledger.target,
+            "mode": ledger.mode,
+            "complete": ledger.complete,
+            "counts": ledger.counts(),
+            "runs": [
+                {
+                    "source": entry.source,
+                    "run_id": entry.run_id,
+                    "run_dir": entry.target,
+                }
+                for entry in ledger.of_kind("run")
+            ],
+            "outstanding": outstanding[:50],
+            "outstanding_total": len(outstanding),
+        }
+        if verify:
+            pairs = [
+                (Path(entry.target), entry.sha256 or "")
+                for entry in ledger.entries
+                if entry.kind == "file" and entry.done
+            ]
+            problems = verify_tree(pairs)
+            payload["verified_files"] = len(pairs)
+            payload["problems"] = problems
+            payload["ok"] = not problems
+        return payload
 
-        @mcp.tool(annotations=read_only)
-        def validate_workflow(source: str) -> dict[str, Any]:
-            """Compile-only validation of workflow source (no task bodies run).
+    @tool(APPEND_WRITE)
+    def ingest_metrics(
+        self,
+        path: str,
+        formats: list[str] | None = None,
+        csv_step_column: str | None = None,
+        csv_series_columns: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Convert a run's foreign logs into its host metrics buffer.
 
-            Provide a Python snippet that builds a ``WorkflowCompiler`` as
-            ``wf`` (or any ``WorkflowCompiler`` instance) with ``@wf.task``
-            registrations. Returns ok/compiled without running science.
-            """
-            from .scaffold import validate_workflow_source
+        Additive and **not idempotent**: ``metrics/metrics.jsonl`` is
+        append-only, so ingesting the same run twice doubles its curves.
+        Undo by deleting ``<run>/metrics/``. Source logs are never
+        deleted, rewritten, moved, or truncated.
 
-            return validate_workflow_source(source)
+        Args:
+            path: A run directory, or a workspace root to ingest every run
+                under it.
+            formats: ``lammps_log`` / ``tensorboard`` / ``csv``. Omit to
+                ingest every format that has a converter (CSV only when a
+                column mapping is given).
+            csv_step_column: Step column name for CSV artifacts.
+            csv_series_columns: Series column names for CSV artifacts.
+        """
+        from .adopt import INGEST_FORMATS, molexp_ingest
+
+        selected = frozenset(formats) if formats else None
+        if selected is not None:
+            unknown = sorted(selected - INGEST_FORMATS)
+            if unknown:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"unknown format(s) {unknown}; "
+                        f"expected {sorted(INGEST_FORMATS)}"
+                    ),
+                }
+        root = Path(path).expanduser().resolve()
+        if not root.is_dir():
+            return {"ok": False, "error": f"not a directory: {root}"}
+        mapping = _csv_mapping(csv_step_column, csv_series_columns)
+        targets = self._ingest_targets(root)
+        results: dict[str, Any] = {}
+        problems: list[str] = []
+        for run_dir in targets:
+            try:
+                outcome = molexp_ingest(run_dir, selected, mapping)
+            except Exception as exc:  # noqa: BLE001 — report, never crash
+                problems.append(f"{run_dir}: {type(exc).__name__}: {exc}")
+                continue
+            results[str(run_dir)] = outcome.to_dict()
+        return {
+            "ok": not problems,
+            "path": str(root),
+            "runs": len(targets),
+            "results": results,
+            "problems": problems,
+        }
+
+    # -- workflow ---------------------------------------------------------
+
+    @tool(READ_ONLY)
+    def validate_workflow(self, source: str) -> dict[str, Any]:
+        """Compile-only validation of workflow source (no task bodies run).
+
+        Provide a Python snippet that builds a ``WorkflowCompiler`` as
+        ``wf`` (or any ``WorkflowCompiler`` instance) with ``@wf.task``
+        registrations. Returns ok/compiled without running science.
+        """
+        from .scaffold import validate_workflow_source
+
+        return validate_workflow_source(source)
