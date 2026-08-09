@@ -15,7 +15,7 @@ import os
 import re
 import sqlite3
 import tempfile
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Iterable, Iterator
 
@@ -184,7 +184,10 @@ class GraphStore:
                 tmp_path.unlink(missing_ok=True)
 
     def _create_at(self, path: Path, graph: CodeGraph, meta: dict) -> None:
-        with sqlite3.connect(path, check_same_thread=False) as conn:
+        # closing() as well as the transaction context: Connection.__exit__
+        # commits but does not close, and the caller immediately os.replace()s
+        # this file — which fails on Windows while any handle is still open.
+        with closing(sqlite3.connect(path, check_same_thread=False)) as conn, conn:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA busy_timeout=5000")
             conn.executescript(_SCHEMA_SQL)

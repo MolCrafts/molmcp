@@ -14,6 +14,7 @@ import json
 import logging
 import sqlite3
 import time
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -77,6 +78,7 @@ class DiscoveryEngine:
         )
         self.extractor = Extractor(self.extract_cache)
         self._extract_pruned = False
+        self._issued_stores: weakref.WeakSet[GraphStore] = weakref.WeakSet()
         if overlays is None:
             from .overlay import load_overlays
 
@@ -183,6 +185,11 @@ class DiscoveryEngine:
         store = GraphStore(
             self.cache.graph_db_path(result.snapshot.snapshot_id, self.build_id)
         )
+        # Held weakly: a query the caller has dropped should not keep its read
+        # connection alive, but one still in use must be closed by close().
+        # Until this existed every query() leaked a handle until GC — invisible
+        # on POSIX, and on Windows it stops the cache directory being removed.
+        self._issued_stores.add(store)
         return DiscoveryQuery(
             store, snapshot=result.snapshot, freshness=result.freshness
         )
@@ -198,6 +205,9 @@ class DiscoveryEngine:
             store.close()
 
     def close(self) -> None:
+        for store in list(self._issued_stores):
+            store.close()
+        self._issued_stores.clear()
         self.extract_cache.close()
 
     # -- internals ---------------------------------------------------
