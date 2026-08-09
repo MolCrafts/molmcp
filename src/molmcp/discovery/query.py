@@ -6,9 +6,14 @@ This is what the MCP tools and the CLI both call.
 
 from __future__ import annotations
 
-from .schema import Edge, EdgeKind, Node, NodeKind
+from .ranking import RankCandidate, rank_matches
+from .schema import Edge, EdgeKind, Node, NodeKind, Provenance
 from .source import Snapshot
 from .store import GraphStore
+
+#: Recall multiplier before re-ranking: refinement can only reorder what
+#: it was given, so the lexical stage hands over more than the caller wants.
+_OVERSAMPLE = 3
 
 _KIND_ORDER: dict[str, int] = {
     NodeKind.PACKAGE: 0,
@@ -69,7 +74,43 @@ class DiscoveryQuery:
     def search(
         self, query: str, kind: str | None = None, limit: int = 30
     ) -> list[Node]:
-        return self.store.search(query, kind, limit)
+        """Recall by field-weighted bm25, then refine by graph signals.
+
+        The store answers *what matched*; this decides *what to read first*.
+        Lexical position still leads, and export status, resolved-caller
+        count, and example/test coverage refine it — a documented exported
+        entry point with tests beats an equally-worded private helper.
+
+        Recall is oversampled so refinement has material to work with, and
+        every signal is one batched read: two queries per candidate would
+        cost more than the ordering is worth.
+        """
+        candidates = self.store.search(query, kind, max(limit * _OVERSAMPLE, limit))
+        if len(candidates) <= 1:
+            return candidates[:limit]
+        node_ids = [node.id for node in candidates]
+        callers = self.store.incoming_edge_counts(
+            node_ids, EdgeKind.CALLS, provenance=Provenance.RESOLVED
+        )
+        # Example and test edges are heuristic by construction (the resolver
+        # links them by name), so filtering them by provenance would score
+        # every symbol at zero. Caller counts are the ones that must stay
+        # resolved-only: a guessed edge cannot be allowed to buy a rank.
+        examples = self.store.incoming_edge_counts(node_ids, EdgeKind.EXEMPLIFIES)
+        tests = self.store.incoming_edge_counts(node_ids, EdgeKind.TESTS)
+        ranked = rank_matches(
+            [
+                RankCandidate(
+                    node=node,
+                    fts_rank=position,
+                    caller_count=callers.get(node.id, 0),
+                    example_count=examples.get(node.id, 0),
+                    test_count=tests.get(node.id, 0),
+                )
+                for position, node in enumerate(candidates)
+            ]
+        )
+        return [candidate.node for candidate in ranked[:limit]]
 
     def get_node(self, qualname: str) -> Node | None:
         """Best node for a qualname (a qualname may map to several)."""
@@ -107,8 +148,15 @@ class DiscoveryQuery:
         return self._incoming_pairs(qualname, EdgeKind.CALLS, limit)
 
     def caller_counts(self, node_ids: list[str]) -> dict[str, int]:
-        """Batched incoming ``CALLS``-edge counts keyed by node id."""
-        return self.store.incoming_edge_counts(node_ids, EdgeKind.CALLS)
+        """Batched RESOLVED incoming ``CALLS``-edge counts keyed by node id.
+
+        Only resolved edges count: this is a relevance signal, and a guessed
+        (heuristic) caller must never buy a symbol rank. Full caller lists
+        for display go through :meth:`callers_pairs`, which keeps every edge.
+        """
+        return self.store.incoming_edge_counts(
+            node_ids, EdgeKind.CALLS, provenance=Provenance.RESOLVED
+        )
 
     def callees(self, qualname: str, limit: int = 40) -> list[Node]:
         return _nodes(self.callees_pairs(qualname, limit))
@@ -213,6 +261,33 @@ class DiscoveryQuery:
 
     # -- structural --------------------------------------------------
 
+    def package_card(self) -> dict:
+        """The one summary line and module count a package listing needs.
+
+        Two indexed reads on ``nodes.kind``. Building the whole module tree
+        to pick a docstring out of it — which is what the packages page used
+        to do — walks every module's children for an answer that is right
+        here.
+        """
+        packages = self.store.nodes_by_kind(NodeKind.PACKAGE)
+        modules = self.store.nodes_by_kind(NodeKind.MODULE)
+        for candidates, origin in (
+            (packages, "package_docstring"),
+            (modules, "module_docstring"),
+        ):
+            for node in sorted(candidates, key=lambda n: (len(n.qualname), n.qualname)):
+                if node.summary and node.summary.strip():
+                    return {
+                        "summary": node.summary.strip(),
+                        "summary_source": origin,
+                        "module_count": len(packages) + len(modules),
+                    }
+        return {
+            "summary": None,
+            "summary_source": "missing",
+            "module_count": len(packages) + len(modules),
+        }
+
     def outline(self, path: str | None = None) -> dict:
         """A packages/modules -> symbols -> members structural map."""
         modules = [
@@ -282,13 +357,14 @@ class DiscoveryQuery:
     def _load_pairs(
         self, pairs: list[tuple[str, Edge]], limit: int | None
     ) -> list[tuple[Node, Edge]]:
+        found = self.store.get_nodes(node_id for node_id, _ in pairs)
         out: list[tuple[Node, Edge]] = []
         seen: set[str] = set()
         for node_id, edge in pairs:
             if node_id in seen:
                 continue
             seen.add(node_id)
-            node = self.store.get_node(node_id)
+            node = found.get(node_id)
             if node is None:
                 continue
             out.append((node, edge))
@@ -297,13 +373,14 @@ class DiscoveryQuery:
         return out
 
     def _load(self, ids: list[str], limit: int | None) -> list[Node]:
+        found = self.store.get_nodes(ids)
         out: list[Node] = []
         seen: set[str] = set()
         for node_id in ids:
             if node_id in seen:
                 continue
             seen.add(node_id)
-            node = self.store.get_node(node_id)
+            node = found.get(node_id)
             if node is None:
                 continue
             out.append(node)

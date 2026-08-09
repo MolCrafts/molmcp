@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from molmcp.discovery.ranking import (
     KIND_PRIOR,
     W_CALLERS,
@@ -146,3 +148,43 @@ def test_kind_prior_function_outranks_constant_all_else_equal():
     const = RankCandidate(node=_node("SCALE", NodeKind.CONSTANT), fts_rank=0)
     ranked = rank_matches([const, fn])
     assert ranked[0] is fn
+
+
+class TestNavigationalKindsAreNotAnswers:
+    """A module is a container you browse, not a capability entry point.
+
+    KIND_PRIOR had no entry for one, so it took the 0.5 default — and every
+    module is importable, so it also collected the full export bonus. On the
+    golden fixture that put `readers.top` above `read_gromacs_top` for "read
+    a gromacs topology file": the top answer was the file to look in, not
+    the function to call.
+    """
+
+    def _score(self, kind: str, fts_rank: int = 0, exported: bool = True) -> float:
+        node = _node("thing", kind)
+        node.is_exported = exported
+        return rank_signals(RankCandidate(node=node, fts_rank=fts_rank))["score"]
+
+    @pytest.mark.parametrize(
+        "kind", [NodeKind.MODULE, NodeKind.PACKAGE, NodeKind.NAMESPACE]
+    )
+    def test_a_navigational_kind_scores_below_a_callable(self, kind):
+        assert self._score(kind) < self._score(NodeKind.FUNCTION)
+
+    @pytest.mark.parametrize(
+        "kind", [NodeKind.MODULE, NodeKind.PACKAGE, NodeKind.NAMESPACE]
+    )
+    def test_being_importable_earns_a_module_nothing(self, kind):
+        """Every module is exported; the flag carries no information here."""
+        assert self._score(kind, exported=True) == self._score(kind, exported=False)
+
+    def test_a_symbol_still_earns_its_export_bonus(self):
+        assert self._score(NodeKind.FUNCTION, exported=True) > self._score(
+            NodeKind.FUNCTION, exported=False
+        )
+
+    def test_a_module_at_rank_zero_loses_to_a_function_two_places_back(self):
+        """The exact shape the golden fixture hit."""
+        assert self._score(NodeKind.MODULE, fts_rank=0) < self._score(
+            NodeKind.FUNCTION, fts_rank=2
+        )

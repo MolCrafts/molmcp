@@ -1,275 +1,146 @@
 # CLI reference
 
 ```
-molmcp [OPTIONS]
-molmcp serve [OPTIONS]
-python -m molmcp [OPTIONS]
-molmcp discovery <SUBCOMMAND> [OPTIONS]
+molmcp [-h] {serve,planes,route,client,config,cache,info,search,explore,index} ...
+python -m molmcp …
 ```
 
-The `molmcp` script is installed by `pip install molcrafts-molmcp` via `[project.scripts]`; `python -m molmcp` works whenever the package is importable.
+The `molmcp` script is installed by `pip install molcrafts-molmcp`.
+`python -m molmcp` is equivalent when the package is importable.
 
-`molmcp` (or `molmcp serve` / `python -m molmcp`) starts the MCP server. `molmcp discovery` drives the discovery engine directly, without an MCP client — see [`molmcp discovery`](#molmcp-discovery) below.
+**Default with no arguments:** `molmcp planes` (list connectable planes).
+There is **no** bare `molmcp` that starts a mega-server.
 
-## `molmcp serve`
+## `molmcp serve <plane>`
 
-The default invocation needs no flags:
+Start **one** MCP plane (one process, one server name = plane id).
 
 ```bash
-python -m molmcp
+molmcp serve catalog
+molmcp serve molcrafts
+molmcp serve molvis
+molmcp serve molq
 ```
 
-molmcp auto-detects whichever of `{molpy, molpack, molrs, molq, molexp}` are
-importable, registers graph-based discovery over them, and loads any
-auto-discovered providers. The flags below are for *narrowing*, *extending*,
-or otherwise deviating from that default.
+| Argument / flag | Meaning |
+|-----------------|---------|
+| `plane` | Required. `catalog` \| `molcrafts` \| a provider name (`molvis`, `molq`, …). Run `molmcp planes`. |
+| `--config PATH` | Explicit `molcrafts.json`. Not searched for in the working directory — scope comes from settings; see [`molmcp config`](#molmcp-config). |
+| `--env LOCATOR` | Python env to discover packages from (venv root, interpreter, or site-packages). Overrides the `pythonEnv` setting. |
+| `--transport {stdio,streamable-http}` | Override transport (default stdio / config). |
+| `--host` / `--port` | HTTP bind (streamable-http only). Non-loopback needs `server.auth_token_env`. |
+| `--no-discover` | Do not load `molmcp.providers` entry points (provider plane needs inject). |
 
-## Options
+Tool ids on the client are `<plane>__<tool>` (e.g. `molcrafts__packages`,
+`molvis__open`).
 
-### `--name NAME`
+## `molmcp planes`
 
-Server name advertised to MCP clients. Default: `molmcp`.
-
-This becomes the prefix in client-side tool naming (e.g., Claude Code's `mcp__<name>__<tool>`). Override only when running multiple molmcp servers side-by-side and you need distinct prefixes:
+List connectable product domains (on-demand multi-link catalog).
 
 ```bash
-python -m molmcp --name molcrafts-dev
+molmcp planes
+molmcp planes --json
 ```
 
-### `--source SPEC`
+## `molmcp route <task>`
 
-A discovery source the engine should index. Repeatable. A spec is one of:
-
-- `path/to/repo` — a local directory.
-- `pkg:<name>` — an installed Python package, resolved by import name.
-- `github:owner/repo[@ref]` — a GitHub repository, downloaded at a
-  resolved commit SHA (`GITHUB_TOKEN` is used when set).
-
-If `--source` is omitted, molmcp defaults to whichever of
-`{molpy, molpack, molrs, molq, molexp}` are importable in the active
-environment, each as a `pkg:` spec.
-
-Pass `--source` explicitly when you want to:
-
-- *Narrow* to a single package:
-  ```bash
-  python -m molmcp --source pkg:molpy
-  ```
-- *Extend* the set (a local checkout, another package, a GitHub repo):
-  ```bash
-  python -m molmcp --source pkg:molpy --source /path/to/a/repo --source github:MolCrafts/molpack
-  ```
-
-### `--no-discover`
-
-Skip auto-discovery of Providers via the `molmcp.providers` entry point group. Use when you want only the discovery tools and no third-party providers loaded:
+Suggest which plane(s) to connect for a free-text task.
 
 ```bash
-python -m molmcp --no-discover
+molmcp route "draw dopamine"
+molmcp route "list slurm jobs"
 ```
 
-The first-party `MolqProvider` / `MolexpProvider` are entry-point-discovered too, so `--no-discover` skips them as well; pass them explicitly via `create_server(providers=[...])` from a custom host script if you need them under a locked-down setup.
+## `molmcp config`
 
-### `--no-validate-annotations`
-
-Skip the startup-time check that every registered tool has `readOnlyHint` or `destructiveHint`. Use only when prototyping a new Provider; never in production.
-
-### `--transport {stdio,streamable-http,sse}`, `-t`
-
-Transport protocol. Default: `stdio`.
-
-- `stdio` — default. The server reads MCP messages from stdin and writes to stdout. Right for local clients (Claude Code, Claude Desktop) that spawn the server as a subprocess.
-- `streamable-http` — HTTP with streaming. Right for sharing a server across processes or machines.
-- `sse` — Server-Sent Events. Legacy; prefer `streamable-http` for new deployments.
-
-### `--host ADDRESS`
-
-Bind address for HTTP and SSE transports. Default: `127.0.0.1`. Ignored for `stdio`.
-
-### `--port PORT`, `-p`
-
-Port for HTTP and SSE transports. Default: `8787`. Ignored for `stdio`.
-
-### `--help`, `-h`
-
-Show usage and exit.
-
-## Common invocations
-
-### Default — every installed MolCrafts package
+Read and edit settings. Verb shape follows `claude config`.
 
 ```bash
-python -m molmcp
+molmcp config list                              # resolved settings + which files contributed
+molmcp config get sources.molpy
+molmcp config set sources.molpy pkg:molpy
+molmcp config add excludes vendor               # list-valued keys
+molmcp config remove sources.molpy
 ```
 
-### Narrow to a single package
+| Flag | Meaning |
+|------|---------|
+| *(none)* | Write `~/.molmcp/settings.json` — the default, because a plane server inherits its working directory from the client that launched it |
+| `--project` | Write `./.molmcp/settings.json` (checked in) |
+| `--local` | Write `./.molmcp/settings.local.json` (untracked) |
+
+Layers merge user → project → local. Unknown keys are an error rather than a
+silent no-op. See the [installation guide](../get-started/installation.md#settings)
+for every key.
+
+There are **no environment variables**. The two the code still reads are
+secrets, not configuration: the bearer token an HTTP-transport server checks
+against, and `GITHUB_TOKEN` for `github:` sources. Both name a variable in
+config rather than storing its value, which is the point — a settings file
+is the wrong place for a credential.
+
+## `molmcp client [host]`
+
+Emit the standard `mcpServers` JSON. Every host reads this shape; the optional
+host (`claude`, `cursor`, `grok`) only selects the default output path.
 
 ```bash
-python -m molmcp --source pkg:molpy
+molmcp client                          # stdout, all planes
+molmcp client --disable molq
+molmcp client claude -o ~/.claude.json
 ```
 
-### HTTP transport on port 9000
+A disabled plane is absent from the map. The command written is the resolved
+absolute path to `molmcp`, since desktop hosts do not inherit a shell PATH.
+
+## `molmcp cache`
+
+Report the shared code index, and reclaim it.
 
 ```bash
-python -m molmcp --transport streamable-http --host 0.0.0.0 --port 9000
+molmcp cache                # size, live bytes, entry count
+molmcp cache --prune        # drop payloads past retention and over the ceiling
+molmcp cache --gc           # drop snapshots for sources no longer configured
+molmcp cache --vacuum       # hand freed pages back to the filesystem
 ```
 
-### Locked-down: discovery only, no provider discovery
+`used_bytes` is live content; `size_bytes` is the file. They diverge after a
+prune because SQLite reuses freed pages rather than shrinking, and only
+`--vacuum` closes the gap — with no plane server running, since it needs
+exclusive access. A blocked vacuum reports `skipped` and changes nothing.
+
+## Offline knowledge helpers
+
+These drive the collection index without an MCP client (they need at least one
+configured source — see `molmcp config`):
+
+| Command | Role |
+|---------|------|
+| `molmcp info` | Registry + index coverage |
+| `molmcp search <query>` | Full collection search (`--kind`, `--namespace`, `--source`, `--limit`) |
+| `molmcp explore <task>` | Bounded task context pack (`--budget-chars`, …) |
+| `molmcp index` | Index configured sources (`--force`, optional source list) |
 
 ```bash
-python -m molmcp --no-discover
+molmcp search "Conformer" --source molpy
+molmcp index --force
 ```
 
-## `molmcp discovery`
-
-Inspect and drive the discovery engine without an MCP client. Every
-subcommand except `clean` takes a source spec (a local path,
-`pkg:<name>`, or `github:owner/repo[@ref]`).
-
-### `index SOURCE`
-
-Index a source and print a summary — snapshot id, file/node/edge counts,
-and the cache location.
+## Client wiring (multi-link)
 
 ```bash
-molmcp discovery index pkg:molpy
+claude mcp add catalog -- molmcp serve catalog
+claude mcp add molcrafts -- molmcp serve molcrafts
+claude mcp add molvis -- molmcp serve molvis
 ```
 
-### `verify SOURCE`
+Or generate the whole map at once with `molmcp client`.
 
-Index a source and run a self-check — file/node/edge counts, node- and
-edge-kind breakdown, whether the FTS5 index is available, and a sample
-search against a known symbol. Prints a health report and **exits
-non-zero** if discovery is not working, so it is usable in CI or a
-setup script.
-
-```bash
-molmcp discovery verify pkg:molpy
-```
-
-```
-verifying discovery for: pkg:molpy
-  snapshot:      local:hash:sha256-…
-  origin:        local (freshness: fresh)
-  files:         …
-  nodes:         …  [field …, method …, function …, class …, module …]
-  edges:         …  [contains …, calls …, imports …]
-  unresolved:    …
-  FTS5 index:    available
-  sample search: 'RDF' -> ok
-  result:        OK — discovery is working
-```
-
-### `query SOURCE TEXT [--kind KIND] [--limit N]`
-
-Search indexed symbols in a source.
-
-```bash
-molmcp discovery query pkg:molpy "radial distribution function"
-molmcp discovery query pkg:molpy reader --kind class --limit 10
-```
-
-`--kind` filters by node kind (e.g. `class`, `function`, `method`,
-`test`); `--limit` caps the result count (default `20`).
-
-### `outline SOURCE [--path PATH]`
-
-Print a source's structure — packages/modules mapped to their symbols.
-`--path` narrows to a file or subtree.
-
-```bash
-molmcp discovery outline pkg:molpy
-molmcp discovery outline pkg:molpy --path molpy/compute
-```
-
-### `dump SOURCE [--output FILE]`
-
-Dump a source's full code graph as JSON (nodes, edges, files,
-unresolved references). Writes to `--output` if given, otherwise stdout.
-
-```bash
-molmcp discovery dump pkg:molpy --output graph.json
-```
-
-### `lint [SOURCE] [--pkg NAME[,NAME...]] [--json] [--strict]`
-
-Report a source's discoverability health — the upstream-facing
-feedback channel for coding discipline. molmcp does not enforce
-docstring or testing conventions in source repos; this command only
-measures them, in three dimensions:
-
-- **undocumented exports** — exported symbols with no docstring or
-  summary; these are invisible to full-text capability search
-- **untested public symbols** — public classes/functions with no
-  linked test (direct `tests` edge)
-- **high-unresolved modules** — modules where more than half of the
-  references failed to resolve (ignoring modules with fewer than 5
-  references)
-
-Give either a `SOURCE` spec or `--pkg` (repeatable or
-comma-separated, mapped through the same package resolver as
-`serve`); omitting both is a usage error — there is no implicit
-default because linting every default source would trigger several
-GitHub fetches.
-
-```bash
-molmcp discovery lint pkg:molpy
-molmcp discovery lint --pkg molpy,molexp --json
-molmcp discovery lint pkg:molpy --strict   # CI gate in the upstream repo
-```
-
-Output is a human-readable table by default; `--json` emits a
-machine-readable report (`reports[]` with `source`, `summary`, and the
-three finding arrays, plus a top-level `total_findings`).
-
-**Exit codes:** advisory by default — always `0`, even with findings,
-so it never breaks a pipeline that did not opt in. With `--strict`,
-exits `1` when any finding exists, letting an upstream repo promote
-the report to a CI gate. Source-resolution failures exit `1` as in
-every other subcommand.
-
-### `clean [--all]`
-
-Prune old cached snapshots. With `--all`, remove the entire discovery
-cache instead of pruning.
-
-```bash
-molmcp discovery clean
-molmcp discovery clean --all
-```
-
-## Wiring into Claude Code
-
-```bash
-claude mcp add <name> -- python -m molmcp [molmcp options...]
-```
-
-Example:
-
-```bash
-claude mcp add molcrafts -- python -m molmcp
-```
-
-Note the `--` separator: everything after it is the molmcp invocation Claude Code will spawn each session. The `<name>` you give to `claude mcp add` is the prefix the agent sees on tools (`mcp__<name>__<tool>`); molmcp itself does not need `--name` unless you're running multiple servers.
-
-## Wiring into Claude Desktop
-
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
-
-```json
-{
-  "mcpServers": {
-    "molcrafts": {
-      "command": "python",
-      "args": ["-m", "molmcp"]
-    }
-  }
-}
-```
-
-Restart Claude Desktop for the server to appear in the tools picker.
+See [Deploy](../get-started/deploy.md) for the full layout.
 
 ## Read next
 
-- **[API reference](api.md)** — programmatic `create_server` API
-- **[Quickstart](../get-started/quickstart.md)** — walkthrough using these flags
+- [Architecture](../concepts/architecture.md)
+- [API reference](api.md)
+- [Quickstart](../get-started/quickstart.md)

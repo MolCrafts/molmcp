@@ -1,190 +1,127 @@
-<h1 align="center">molmcp</h1>
+# MolMCP
 
-<p align="center">
-  <strong>The MCP foundation for the MolCrafts ecosystem</strong>
-</p>
+Multi-plane MCP for the MolCrafts ecosystem.
 
-<p align="center">
-  <a href="https://pypi.org/project/molcrafts-molmcp/"><img alt="PyPI" src="https://img.shields.io/pypi/v/molcrafts-molmcp?logo=python&logoColor=white&label=PyPI"></a>
-  <a href="https://pypi.org/project/molcrafts-molmcp/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/molcrafts-molmcp.svg"></a>
-  <a href="https://github.com/MolCrafts/molmcp/blob/master/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-BSD--3--Clause-blue"></a>
-  <a href="https://github.com/MolCrafts/molmcp/actions"><img alt="CI" src="https://github.com/MolCrafts/molmcp/actions/workflows/ci.yml/badge.svg"></a>
-</p>
+**Protocol:** MCP **2026-07-28** via **FastMCP 4.0.0b1** (+ MCP Python SDK v2).
+Handshake-era clients still work — FastMCP 4 negotiates per connection.
 
-<p align="center">
-  <a href="https://molcrafts.github.io/molmcp/"><strong>Documentation</strong></a>
-  &middot;
-  <a href="https://molcrafts.github.io/molmcp/get-started/quickstart/"><strong>Quickstart</strong></a>
-  &middot;
-  <a href="https://github.com/MolCrafts/molmcp/issues"><strong>Issues</strong></a>
-</p>
+Optional science packages (`molvis`, `molq`, `molexp`, …): if not installed,
+that plane is **omitted from catalogs and client configs** (silent). Explicit
+`molmcp serve <plane>` still errors with an install hint. This is runtime
+behavior — not a test skip.
 
----
+**One product domain per MCP connection** (separate process / server name).
+There is no mega-server under `molmcp`. **Client default: all planes on.**
+Turn planes off with `--disable` (and back on with `--enable`).
 
-## Why molmcp
+| Plane | Command | Role |
+|-------|---------|------|
+| `catalog` | `molmcp serve catalog` | Bootstrap: `list_planes`, `route(task)` |
+| `molcrafts` | `molmcp serve molcrafts` | Knowledge pages (packages → outline → open) |
+| `molvis` | `molmcp serve molvis` | Live viewer session (`open` / `exec` / `poll_events`) |
+| `molq` | `molmcp serve molq` | Job store + opt-in submit/cancel |
+| `molexp` | `molmcp serve molexp` | Workspace layout + scaffold + data-directory adoption |
 
-The MolCrafts ecosystem ships many packages — `molpy`, `molcfg`, `molexp`, `molpack`, `mollog`, `molq`, `molrec`, `molvis` — and each of them benefits from being callable by an LLM agent. The hard part is **discovery**: an agent needs to find out what a codebase actually provides instead of guessing function, class, or tool names.
+Science APIs are **never** MCP tools. Discover them on the `molcrafts` plane,
+then call them from agent Python or inside `molvis` `exec`.
 
-molmcp solves this with a **graph-based codebase capability discovery engine**. It statically indexes a repository into a code graph — symbols, signatures, docstrings, relationships, examples, and tests — and exposes that graph to agents over the Model Context Protocol.
+## Client config (default: everything)
 
-It does two things:
+One standard `mcpServers` JSON, which every host reads — Claude Code and
+Cursor natively, Grok alongside its own `config.toml`.
 
-1. Runs a **discovery engine** that indexes any codebase (a local path, an installed package, or — soon — a GitHub repository) into a snapshot-cached code graph, and answers structured queries against it.
-2. Defines a **Provider** plugin contract for the narrow class of capabilities discovery cannot answer — stateful queries against local runtime state (a jobs DB, a workspace catalog) — under a single coordinated MCP server with shared security defaults.
+```bash
+molmcp client                            # all planes, to stdout
+molmcp client --disable molq --disable molexp
+molmcp client --disable molq --enable molq   # re-enable after a disable
+molmcp client claude -o ~/.claude.json
+```
 
-molmcp core imports nothing from the MolCrafts packages. That's the point — it's pure infrastructure, and any codebase can be indexed without molmcp depending on it.
+An optional host (`claude`, `cursor`, `grok`) picks the default output path;
+the JSON itself is identical for all of them. A disabled plane is simply
+absent from the map. Tool ids look like `molvis__open`, not
+`molmcp__molvis_open`.
 
-## Discovery, not guessing
+> In Grok, `~/.grok/config.toml` outranks the JSON sources. If an old molmcp
+> entry lives there it still wins — `grok inspect` shows each server's origin.
 
-The discovery engine is built so an agent **resolves capabilities from indexed code structure** rather than guessing names:
+## Configuration
 
-- It parses source with a per-language analyzer (Python today on the stdlib `ast` module; TypeScript, Rust, and C++ slot in behind the same `LanguageAnalyzer` interface) into a shared graph of nodes and edges.
-- A two-phase pipeline — extraction then resolution — links calls, base classes, imports, tests, and docstring examples into a connected graph.
-- The graph is stored as one SQLite database per **source snapshot**, keyed on a content hash (local) or commit SHA (GitHub) — never a branch name — so cached results are always tied to exact source.
-- Every tool response carries a `snapshot` block, so an agent always knows which revision it is looking at.
+Settings live in `~/.molmcp/settings.json`, edited through the CLI. There are
+no environment variables.
 
-## Discovery tools
+```bash
+molmcp config list                                # resolved settings + layers
+molmcp config set sources.molpy pkg:molpy         # index a package
+molmcp config set indexWorkspace true --project   # index this repo too
+molmcp config add excludes vendor
+molmcp config remove sources.molpy
+```
 
-When discovery sources are configured, molmcp exposes six composable, graph-backed tools (all read-only):
+A project may carry `.molmcp/settings.json` (checked in) and
+`.molmcp/settings.local.json` (untracked); both layer over the user file.
+Writes go to the user file unless `--project` / `--local` is passed, because a
+plane server inherits its working directory from whichever client launched it.
 
-| Tool | Purpose |
-|---|---|
-| `molmcp_find_capability` | Primary tool — describe a task, get ranked symbol matches with signatures, examples, tests, and callers. |
-| `molmcp_search_symbols` | Search indexed symbols by name, qualname, or summary. |
-| `molmcp_describe_symbol` | Full detail for one symbol, optionally with source code. |
-| `molmcp_relations` | Walk the graph from a symbol: callers, callees, implementers, subclasses, references, examples, tests, impact. |
-| `molmcp_outline` | Map a source's packages/modules to their symbols — the "where do I look" tool. |
-| `molmcp_refresh` | Force a fresh re-index of a source. |
+**What gets indexed.** Auto-discovery finds installed MolCrafts distributions.
+The working directory is *not* a source unless `indexWorkspace` says so — it
+used to be, which meant an unconfigured install indexed whatever it happened
+to be started next to.
 
-## Provider plugin contract
+| Key | Meaning |
+|-----|---------|
+| `sources` | Extra sources to index, `name → spec` (`pkg:`, `local:`, `github:`, path) |
+| `indexWorkspace` | Index the working directory as well (default `false`) |
+| `knowledgeScope` | Narrow which indexed sources the knowledge tools surface |
+| `excludes` | Extra ignore globs for the file walk |
+| `cacheDir`, `maxCacheBytes`, `maxCacheAgeDays` | Where the index lives and how big it may get |
+| `pythonEnv` | Environment to auto-discover from (a venv root, python, or site-packages) |
+| `discoverInclude`, `discoverExclude` | Force a distribution in or out of auto-discovery |
+| `molexp.workspace`, `molq.database` | Provider-specific paths |
 
-Discovery answers most questions. For the rest — queries that depend on local runtime state no static analysis can recover — molmcp defines a **Provider** plugin contract. A Provider earns a tool slot only when **all four** conditions hold: stable signature, read-only/idempotent, every-session frequency, single-shot answer. See [`docs/concepts/provider-design.md`](docs/concepts/provider-design.md).
+`molcrafts.json` is no longer picked up from the working directory; pass
+`--config PATH` if you keep one.
+
+## CLI
+
+```bash
+uv run molmcp planes              # list planes
+uv run molmcp client              # client config, all planes on
+uv run molmcp config list         # resolved settings
+uv run molmcp route "draw dopamine"
+uv run molmcp serve catalog       # one plane per process
+uv run molmcp serve molvis
+uv run molmcp search "Conformer"  # offline index search
+uv run molmcp index
+uv run molmcp cache               # index size; --prune / --gc / --vacuum to reclaim
+```
 
 ## Install
 
 ```bash
-pip install molcrafts-molmcp
+uv sync --extra dev
+uv run pytest -v
 ```
 
-Requires Python ≥ 3.12. The PyPI distribution is `molcrafts-molmcp`; the import name is `molmcp`. The discovery engine adds no required runtime dependency — it uses the standard library.
+## Design rules
 
-## 60-second quickstart
+1. **Multi-link on-demand** — one process = one plane = one MCP server name.
+2. **Bare tool names** — the plane id is the server name, so a tool registers
+   as `open` and the client shows `molvis__open`.
+3. **No science tool mirror** — no `show_smiles` / `draw_dopamine`; discovery + Python.
+4. **Providers** register via `molmcp.providers` entry points and are served with
+   `molmcp serve <name>`.
+5. **No environment switches** — configuration is settings and CLI flags, so
+   `molmcp config list` is the whole truth.
 
-Start an MCP server that indexes the installed MolCrafts packages:
+## Documentation
 
-```bash
-python -m molmcp
-```
+Full manual: [docs.molcrafts.org/molmcp](https://docs.molcrafts.org/molmcp/)
+(sources in [`docs/`](docs/)):
 
-molmcp registers discovery over the MolCrafts packages — `molpy`, `molpack`, `molrs`, `molq`, `molexp`, and `molnex` — reading each from a local install when importable and from GitHub (`github:MolCrafts/<repo>`) otherwise. Point it anywhere with `--source`:
+- [Architecture](https://docs.molcrafts.org/molmcp/concepts/architecture/)
+- [Quickstart](https://docs.molcrafts.org/molmcp/get-started/quickstart/)
+- [MolVis workbench](https://docs.molcrafts.org/molmcp/guides/molvis-workbench/)
+- [CLI reference](https://docs.molcrafts.org/molmcp/reference/cli/)
 
-```bash
-python -m molmcp --source pkg:molpy --source /path/to/a/repo
-```
-
-Wire it into Claude Code:
-
-```bash
-claude mcp add molcrafts -- python -m molmcp
-```
-
-Inspect the engine — or verify it works — without an MCP client:
-
-```bash
-molmcp discovery verify pkg:molpy   # self-check: counts, FTS, sample query
-molmcp discovery index pkg:molpy
-molmcp discovery outline pkg:molpy
-molmcp discovery query pkg:molpy "radial distribution function"
-```
-
-`molmcp discovery verify` prints a health report and exits non-zero on
-failure, so it doubles as a CI/setup check. See the
-[discovery engine guide](https://molcrafts.github.io/molmcp/concepts/discovery/)
-for the full verification walkthrough.
-
-## Source specs
-
-A discovery source is one of:
-
-- `path/to/repo` — a local directory.
-- `pkg:<name>` — an installed Python package (resolved by import name).
-- `github:owner/repo[@ref]` — a GitHub repository (downloaded at a
-  resolved commit; `GITHUB_TOKEN` is used when set).
-
-## Architecture
-
-```
-                ┌────────────────────────────────────┐
-                │  MCP clients                       │
-                │  (Claude Code, Claude Desktop, …)  │
-                └──────────────┬─────────────────────┘
-                               │   stdio / http / sse
-                               ▼
-                ┌────────────────────────────────────┐
-                │  molmcp                            │
-                │  • DiscoveryProvider (molmcp_* )   │
-                │  • Discovery engine core           │
-                │      source → snapshot → extract   │
-                │      → resolve → SQLite graph      │
-                │  • Provider contract + discovery   │
-                │  • PathSafety / ResponseLimit      │
-                │  • Annotations validator           │
-                └──────────────┬─────────────────────┘
-                               │
-            ┌──────────────────┼──────────────────────┐
-            ▼                  ▼                      ▼
-      MolqProvider      MolexpProvider     third-party providers
-      (jobs.db)         (workspace.json     (entry-point group
-                         catalog)            molmcp.providers)
-```
-
-The discovery engine core (`molmcp.discovery`) is MCP-free — it can be imported, scripted, and tested without FastMCP. Only `molmcp.discovery.provider` touches MCP.
-
-## Adding domain tools
-
-Before adding a Provider tool, check it against the four-condition rule in [`docs/concepts/provider-design.md`](docs/concepts/provider-design.md). If a tool earns a slot:
-
-```python
-from fastmcp import FastMCP
-from mcp.types import ToolAnnotations
-
-class MolpackProvider:
-    name = "molpack"
-
-    def register(self, mcp: FastMCP) -> None:
-        @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-        def list_pack_targets(workdir: str) -> list[dict]:
-            """Return the in-progress pack targets cached under workdir."""
-            from molpack import workspace
-            return [t.to_dict() for t in workspace.scan(workdir).targets]
-```
-
-Declare the entry point in the package's `pyproject.toml`:
-
-```toml
-[project.entry-points."molmcp.providers"]
-molpack = "molpack_mcp:MolpackProvider"
-```
-
-`python -m molmcp` discovers it automatically.
-
-## Status
-
-Alpha. The discovery engine and Provider contract may shift before 1.0. Pin to `molcrafts-molmcp >= 0.2, < 0.3`.
-
-## Contributing
-
-```bash
-git clone https://github.com/MolCrafts/molmcp.git
-cd molmcp
-pip install -e ".[dev]"
-pytest
-```
-
-## License
-
-BSD-3-Clause. See [LICENSE](LICENSE).
-
-## Acknowledgements
-
-molmcp is part of the [MolCrafts](https://github.com/MolCrafts) project. It implements the [Model Context Protocol](https://modelcontextprotocol.io/) using the [fastmcp](https://github.com/jlowin/fastmcp) server library.
+Local sources: `docs/concepts/architecture.md`, `docs/guides/molvis-workbench.md`.

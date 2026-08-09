@@ -1,10 +1,11 @@
 """SnapshotCache — on-disk layout for indexed snapshots.
 
-<cache_dir>/snapshots/<slug>/manifest.json
-                            /graph.db
+<cache_dir>/snapshots/<slug>/profiles/<build-id>/manifest.json
+                                                /graph.db
                             /raw/         (GitHub sources)
                             /evidence/<query_hash>.json
 <cache_dir>/refs/<spec-slug>.json
+<cache_dir>/code-index.db  (shared, per-file extraction)
 """
 
 from __future__ import annotations
@@ -17,6 +18,17 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import DiscoveryConfig
+
+#: Filename of the shared code index.
+EXTRACT_DB_NAME = "code-index.db"
+
+#: Earlier names, deleted on sight so a rename never strands gigabytes.
+LEGACY_EXTRACT_DB_NAMES = ("extract.db", "extraction-cache.db")
+
+#: Grace period before a snapshot directory with no manifest is treated as
+#: an orphan: ``_persist`` writes graph.db first, so a fresh one may simply
+#: still be in flight.
+_ORPHAN_GRACE_SECONDS = 3600.0
 
 
 @dataclass(slots=True)
@@ -50,17 +62,48 @@ class SnapshotCache:
     def snapshot_dir(self, snapshot_id: str) -> Path:
         return self.snapshots_root / slugify(snapshot_id)
 
-    def graph_db_path(self, snapshot_id: str) -> Path:
-        return self.snapshot_dir(snapshot_id) / "graph.db"
+    def profile_dir(self, snapshot_id: str, build_id: str | None = None) -> Path:
+        if build_id is None:
+            return self.snapshot_dir(snapshot_id)
+        return self.snapshot_dir(snapshot_id) / "profiles" / slugify(build_id)
 
-    def manifest_path(self, snapshot_id: str) -> Path:
-        return self.snapshot_dir(snapshot_id) / "manifest.json"
+    def graph_db_path(self, snapshot_id: str, build_id: str | None = None) -> Path:
+        return self.profile_dir(snapshot_id, build_id) / "graph.db"
+
+    def manifest_path(self, snapshot_id: str, build_id: str | None = None) -> Path:
+        return self.profile_dir(snapshot_id, build_id) / "manifest.json"
 
     def raw_dir(self, snapshot_id: str) -> Path:
         return self.snapshot_dir(snapshot_id) / "raw"
 
     def extract_db_path(self) -> Path:
-        return self.root / "extract.db"
+        """The shared per-file extraction cache.
+
+        Named for what it holds, so an operator who finds it taking up
+        gigabytes can tell what it is: an index over code, derived from
+        sources on disk and rebuilt on demand. ``extract.db`` said none of
+        that.
+        """
+        return self.root / EXTRACT_DB_NAME
+
+    def discard_legacy_caches(self) -> list[str]:
+        """Remove caches left behind by an earlier on-disk name.
+
+        A rename that strands the old file is not an improvement — the one
+        this replaces routinely reached several gigabytes.
+        """
+        removed: list[str] = []
+        for name in LEGACY_EXTRACT_DB_NAMES:
+            for path in (
+                self.root / name,
+                self.root / f"{name}-wal",
+                self.root / f"{name}-shm",
+                self.root / f"{name}-journal",
+            ):
+                if path.is_file():
+                    path.unlink(missing_ok=True)
+                    removed.append(path.name)
+        return removed
 
     def evidence_dir(self, snapshot_id: str) -> Path:
         return self.snapshot_dir(snapshot_id) / "evidence"
@@ -68,27 +111,31 @@ class SnapshotCache:
     def ref_path(self, spec: str) -> Path:
         return self.refs_root / f"{slugify(spec)}.json"
 
-    def ensure_dir(self, snapshot_id: str) -> Path:
-        d = self.snapshot_dir(snapshot_id)
+    def ensure_dir(self, snapshot_id: str, build_id: str | None = None) -> Path:
+        d = self.profile_dir(snapshot_id, build_id)
         d.mkdir(parents=True, exist_ok=True)
         return d
 
-    def has(self, snapshot_id: str) -> bool:
+    def has(self, snapshot_id: str, build_id: str | None = None) -> bool:
         """True when both a manifest and a graph.db are present."""
         return (
-            self.manifest_path(snapshot_id).is_file()
-            and self.graph_db_path(snapshot_id).is_file()
+            self.manifest_path(snapshot_id, build_id).is_file()
+            and self.graph_db_path(snapshot_id, build_id).is_file()
         )
 
-    def write_manifest(self, snapshot_id: str, manifest: dict) -> None:
-        self.ensure_dir(snapshot_id)
-        self.manifest_path(snapshot_id).write_text(
+    def write_manifest(
+        self, snapshot_id: str, manifest: dict, build_id: str | None = None
+    ) -> None:
+        self.ensure_dir(snapshot_id, build_id)
+        self.manifest_path(snapshot_id, build_id).write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
 
-    def read_manifest(self, snapshot_id: str) -> dict | None:
-        path = self.manifest_path(snapshot_id)
+    def read_manifest(
+        self, snapshot_id: str, build_id: str | None = None
+    ) -> dict | None:
+        path = self.manifest_path(snapshot_id, build_id)
         if not path.is_file():
             return None
         try:
@@ -121,13 +168,25 @@ class SnapshotCache:
         for directory in self.snapshots_root.iterdir():
             if not directory.is_dir():
                 continue
-            manifest_path = directory / "manifest.json"
-            if not manifest_path.is_file():
+            manifest_paths = [directory / "manifest.json"]
+            profiles = directory / "profiles"
+            if profiles.is_dir():
+                manifest_paths.extend(profiles.glob("*/manifest.json"))
+            manifests: list[dict] = []
+            for manifest_path in manifest_paths:
+                if not manifest_path.is_file():
+                    continue
+                try:
+                    manifests.append(
+                        json.loads(manifest_path.read_text(encoding="utf-8"))
+                    )
+                except (json.JSONDecodeError, OSError):
+                    continue
+            if not manifests:
                 continue
-            try:
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                continue
+            manifest = max(
+                manifests, key=lambda item: float(item.get("indexed_at", 0.0))
+            )
             entries.append(
                 _SnapshotEntry(
                     snapshot_id=manifest.get("snapshot_id", directory.name),
@@ -137,6 +196,74 @@ class SnapshotCache:
                 )
             )
         return entries
+
+    def collect_out_of_scope(self, keep_specs: set[str]) -> dict:
+        """Drop snapshots and refs for specs that are no longer configured.
+
+        ``evict`` bounds each spec's history but never questions the spec
+        itself, so anything indexed once stays cached forever. When the
+        working directory was an implicit source that meant unrelated
+        repositories and temp directories accumulated indefinitely — this
+        is how they are reclaimed once scope is corrected.
+        """
+        removed_snapshots: list[str] = []
+        removed_specs: list[str] = []
+        for entry in self._scan_snapshots():
+            if entry.spec in keep_specs:
+                continue
+            shutil.rmtree(entry.directory, ignore_errors=True)
+            removed_snapshots.append(entry.snapshot_id)
+            if entry.spec not in removed_specs:
+                removed_specs.append(entry.spec)
+
+        removed_orphans = self._collect_orphans()
+
+        removed_refs = 0
+        if self.refs_root.is_dir():
+            for ref_file in self.refs_root.glob("*.json"):
+                try:
+                    spec = json.loads(ref_file.read_text(encoding="utf-8")).get("spec")
+                except (json.JSONDecodeError, OSError):
+                    spec = None
+                if spec is None or spec in keep_specs:
+                    continue
+                ref_file.unlink(missing_ok=True)
+                removed_refs += 1
+
+        return {
+            "removed_snapshots": len(removed_snapshots),
+            "removed_refs": removed_refs,
+            "removed_orphans": removed_orphans,
+            "dropped_specs": sorted(removed_specs),
+        }
+
+    def _collect_orphans(self) -> int:
+        """Drop snapshot directories that carry no readable manifest.
+
+        Without one a snapshot can never be validated, so it is never
+        served — but ``_scan_snapshots`` skips it for exactly that reason,
+        which left it invisible to every cleanup path. One real cache held
+        2305 snapshot directories backing 19 usable graphs.
+        """
+        if not self.snapshots_root.is_dir():
+            return 0
+        cutoff = time.time() - _ORPHAN_GRACE_SECONDS
+        removed = 0
+        for directory in self.snapshots_root.iterdir():
+            if not directory.is_dir():
+                continue
+            if any(directory.rglob("manifest.json")):
+                continue
+            try:
+                # A snapshot mid-write has its graph.db but not yet its
+                # manifest; age keeps this from racing _persist.
+                if directory.stat().st_mtime > cutoff:
+                    continue
+            except OSError:
+                continue
+            shutil.rmtree(directory, ignore_errors=True)
+            removed += 1
+        return removed
 
     def evict(self) -> dict:
         """Prune cached snapshots past the configured limits.

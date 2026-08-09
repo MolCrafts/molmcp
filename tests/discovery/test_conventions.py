@@ -6,12 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from molmcp.collection import CollectionIndex, SourceBinding
+from molmcp.collection.index import MAX_CONVENTION_CHARS
 from molmcp.discovery import DiscoveryConfig, DiscoveryEngine
-from molmcp.discovery.evidence import (
-    _MAX_CONVENTION_CHARS,
-    _MAX_CONVENTIONS,
-    EvidenceBuilder,
-)
 from molmcp.discovery.overlay.catalog import CatalogOverlay, load_catalog
 from molmcp.discovery.overlay.conventions import load_conventions
 from molmcp.discovery.schema import (
@@ -108,12 +105,12 @@ def convention_engine(tmp_path, mixed_catalog):
 # --- schema additions (ac-001) -------------------------------------------
 
 
-def test_schema_version_is_bumped_to_3():
-    assert SCHEMA_VERSION == 3
+def test_schema_version_is_bumped_to_4():
+    assert SCHEMA_VERSION == 4
 
 
-def test_analyzer_version_stays_at_1():
-    assert ANALYZER_VERSION == 1
+def test_analyzer_version_is_bumped_to_2():
+    assert ANALYZER_VERSION == 2
 
 
 def test_convention_node_kind_exists():
@@ -262,7 +259,7 @@ rules = ["{long_rule}"]
 
 
 @pytest.fixture
-def injection_query(tmp_path):
+def injection(tmp_path):
     repo = tmp_path / "inj_repo"
     _write(repo / "pkg" / "__init__.py", '"""pkg."""\n')
     _write(
@@ -284,50 +281,67 @@ def injection_query(tmp_path):
     )
     catalog = tmp_path / "inj_catalog.toml"
     catalog.write_text(
-        _INJ_CATALOG_TEMPLATE.format(long_rule="r" * (_MAX_CONVENTION_CHARS + 300)),
+        _INJ_CATALOG_TEMPLATE.format(long_rule="r" * (MAX_CONVENTION_CHARS + 300)),
         encoding="utf-8",
     )
     engine = DiscoveryEngine(
         DiscoveryConfig(cache_dir=tmp_path / "inj_cache"),
         overlays=[CatalogOverlay(catalog, name="inj")],
     )
-    return engine.query(str(repo))
+    collection = CollectionIndex(
+        [SourceBinding(name="inj", spec=str(repo), engine=engine)], None
+    )
+    return collection, engine.query(str(repo))
 
 
-def test_describe_injects_conventions_for_in_scope_symbol(injection_query):
-    detail = EvidenceBuilder(injection_query).describe("pkg.mod.shallow", False, None)
+def _describe(collection, query, qualname):
+    """Open a symbol through the path an MCP client takes."""
+    node = query.get_node(qualname)
+    assert node is not None, qualname
+    ref = f"inj@{query.snapshot.snapshot_id}:{node.id}"
+    detail = collection.describe(ref)
+    assert detail is not None, ref
+    return detail
+
+
+def test_describe_injects_conventions_for_in_scope_symbol(injection):
+    collection, query = injection
+    detail = _describe(collection, query, "pkg.mod.shallow")
     assert detail["conventions"]
     entry = detail["conventions"][0]
     assert set(entry) == {"id", "title", "scope", "rules", "tags"}
 
 
-def test_describe_out_of_scope_symbol_gets_empty_list(injection_query):
+def test_describe_out_of_scope_symbol_gets_empty_list(injection):
     # "pkgx" must NOT match scope "pkg" (dot-boundary matching).
-    detail = EvidenceBuilder(injection_query).describe("pkgx.outside", False, None)
+    collection, query = injection
+    detail = _describe(collection, query, "pkgx.outside")
     assert detail["conventions"] == []
 
 
-def test_most_specific_scope_first_and_count_capped(injection_query):
-    detail = EvidenceBuilder(injection_query).describe("pkg.sub.mod.deep", False, None)
+def test_most_specific_scope_first_and_count_capped(injection):
+    collection, query = injection
+    detail = _describe(collection, query, "pkg.sub.mod.deep")
     entries = detail["conventions"]
     # four conventions match (c.pkg, c.pkg.sub, two fillers) but the
     # count is capped and the longest-scope match leads.
-    assert len(entries) == _MAX_CONVENTIONS
+    assert len(entries) == 3
     assert entries[0]["id"] == "c.pkg.sub"
 
 
-def test_overlong_rules_text_is_truncated(injection_query):
-    detail = EvidenceBuilder(injection_query).describe("longmod.lf", False, None)
+def test_overlong_rules_text_is_truncated(injection):
+    collection, query = injection
+    detail = _describe(collection, query, "longmod.lf")
     rules = detail["conventions"][0]["rules"]
     assert rules.endswith("... (truncated)")
-    assert len(rules) <= _MAX_CONVENTION_CHARS + len("\n... (truncated)")
+    assert len(rules) <= MAX_CONVENTION_CHARS + len("\n... (truncated)")
 
 
-def test_find_capability_matches_carry_conventions(injection_query):
-    result = EvidenceBuilder(injection_query).find_capability("shallow", 8)
-    assert result["matches"]
-    assert all("conventions" in m for m in result["matches"])
-    shallow = next(
-        m for m in result["matches"] if m["node"]["qualname"] == "pkg.mod.shallow"
-    )
+def test_search_results_can_be_opened_with_their_conventions(injection):
+    collection, query = injection
+    hits = collection.search("shallow", limit=8)
+    assert hits
+    shallow_detail = _describe(collection, query, "pkg.mod.shallow")
+    assert shallow_detail["conventions"]
+    shallow = {"conventions": shallow_detail["conventions"]}
     assert shallow["conventions"]

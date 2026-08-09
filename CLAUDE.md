@@ -30,12 +30,14 @@ mol_project:
 
 ## What this repo is
 
-molmcp is the MCP (Model Context Protocol) foundation for the MolCrafts
-ecosystem: a FastMCP server that exposes molecular-simulation packages
-(molpy, molpack, molq, molexp, lammps) as agent tools, plus a
-graph-indexed code-discovery engine (`molmcp.discovery`) that lets agents
-resolve capabilities from real code instead of guessing. Pure Python
-(>= 3.12), `src/` layout, managed with uv.
+molmcp is multi-plane MCP for MolCrafts: **one product domain per MCP
+connection** (`molmcp serve <plane>`). Planes include `catalog`,
+`molcrafts` (knowledge/discovery), `molvis`, `molq`, `molexp`. Science
+APIs are discovered via the knowledge plane and never mirrored as MCP
+tools. Pure Python (>= 3.12), `src/` layout, managed with uv.
+
+**Protocol:** MCP **2026-07-28** via FastMCP **4.0.0b1** + MCP Python SDK
+v2 (`mcp>=2`). Do not pin FastMCP back to 3.x without an explicit decision.
 
 ## Where things live
 
@@ -54,13 +56,37 @@ For non-trivial work, prefer:
 3. review (`/mol:review`)
 4. capture decisions (`/mol:note`)
 
+## Configuration
+
+Settings live in `~/.molmcp/settings.json`, with optional per-project
+`.molmcp/settings.json` and `.molmcp/settings.local.json` layered over it,
+edited via `molmcp config get|set|add|remove` (see `src/molmcp/settings.py`).
+
+**No environment variables.** `tests/test_no_env_switches.py` fails the
+build if a module reads one. Three exemptions are listed there with their
+reason. Two are secrets — the bearer token an HTTP-transport server compares
+against, and `GITHUB_TOKEN` for `github:` sources; the third builds a child
+process environment and reads nothing. Each names a
+variable in config rather than storing its value — a settings file that can
+be committed is the wrong place for a credential. Configuration that lives only in one shell
+cannot be reported by `molmcp config list`, and two plane servers launched
+by different clients would silently disagree about it.
+
+The working directory is **not** an index source unless `indexWorkspace`
+says so, and `./molcrafts.json` is not auto-loaded (`--config` still works).
+
 ## What must never change casually
 
 - The `molmcp.providers` entry-point group — external packages register
   providers against it.
 - The discovery cache on-disk format (`graph.db` schema, manifests);
   bump `SCHEMA_VERSION` / `ANALYZER_VERSION` in
-  `src/molmcp/discovery/schema.py` on any breaking change.
+  `src/molmcp/discovery/schema.py` on any breaking change. Renaming a cache
+  file means adding the old name to `LEGACY_EXTRACT_DB_NAMES` so nobody is
+  left with a stranded multi-gigabyte orphan.
+- Agent-facing `hint` and error strings name tools **bare**, as registered.
+  `tests/test_tool_hints.py` enforces it: a hint pointing at a name no
+  client resolves turns the error message into the next error.
 - CI parity: `.pre-commit-config.yaml` mirrors `.github/workflows/ci.yml`
   step-for-step; change both in the same commit.
 
@@ -70,17 +96,50 @@ For non-trivial work, prefer:
 
 Layered; dependencies point inward only:
 
-1. `cli.py` / `__main__.py` → `server.py` → providers + middleware.
-2. Providers (`providers/`, `discovery/provider.py`) are the only modules
-   that import MCP machinery; everything below them is MCP-free.
-3. `discovery/` is itself layered:
-   `provider.py` → `engine.py` → `extract.py` / `resolve.py` /
-   `query.py` → `store/`, `source/`, `cache/`.
-   `schema.py` is the language-agnostic contract: every analyzer in
-   `analyzers/` emits this schema and nothing else.
-4. Domain content enters via overlays (`discovery/overlay/`), never by
-   editing the core schema — the format is core, the content ships with
-   a domain overlay package.
+1. `cli.py` / `__main__.py` → `server.create_plane(plane)` → one plane
+   only (`planes.py` catalog + molcrafts knowledge + one provider).
+2. Multi-link on-demand: clients connect separate MCP servers
+   (`catalog`, `molcrafts`, `molvis`, …). No mega-mount.
+3. Providers (`providers/`) import MCP machinery; science packages stay
+   lazy optional. Bare tool names; server name is the plane id.
+4. `discovery/` is itself layered:
+   `engine.py` → `extract.py` / `resolve.py` / `query.py` →
+   `store/`, `source/`, `cache/`.
+   `schema.py` is the language-agnostic contract.
 
 <!-- Free-form additions below this line are preserved across re-runs.
      If a section grows past a screen, promote to .claude/notes/<topic>.md. -->
+
+## First-party providers
+
+- Path: `src/molmcp/providers/<name>/` + `molmcp.providers` entry point.
+- Upstream science packages do not import FastMCP or define MCP tools.
+- **molq** (`providers/molq/`): read-only `list_jobs` / `get_job` /
+  `job_logs` / `list_destinations` / `list_queue`; opt-in mutations
+  `submit_job` / `cancel_job`. Lazy-import `molq`.
+- **molexp** (`providers/molexp/`): workspace navigation, layout, scaffold,
+  and adoption (`plan_adoption` / `run_adoption` / `adoption_status` /
+  `ingest_metrics`). The adoption core in `providers/molexp/adopt/` is pure
+  stdlib and reaches molexp through two injected seams (workspace factory,
+  ingest fn), so it is tested without the science package — same shape as the
+  molvis stage factory. **Deleting an adopted source is not a tool**; every
+  other step is provable and resumable, that one is neither.
+- Third-party packages use sibling `*_mcp` packages on the same entry-point group.
+- Spec: `docs/concepts/provider-design.md`; ledger: `.claude/notes/notes.md`.
+
+## Discovery ranking & the call graph
+
+Capability discovery is a **retrieval** problem, not graph navigation. The
+spine is `search` (field-weighted bm25: a hit in a symbol name outweighs one
+in a docstring) refined by reliable signals (export status, example/test
+coverage, kind prior).
+
+The **call graph is an optional evidence feature, deliberately kept out of the
+ranking path.** `relations` (callers/callees/impact) and `describe_symbol`
+still expose it, every edge labelled by `provenance` (`resolved` vs the
+guessed `heuristic`). But guessed edges never feed relevance: `caller_counts`
+counts RESOLVED edges only, so a name-based guess can never inflate a symbol's
+rank. Without receiver-type inference an ambiguous `x.m()` is left unresolved
+rather than sunk onto an arbitrary same-name method. Real type inference
+(Jedi/PyCG/SCIP-style) is a future track — see
+`.claude/notes/` if/when it lands.

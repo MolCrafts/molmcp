@@ -1,263 +1,534 @@
-"""``molexp`` MCP provider — minimal stateful queries over a molexp workspace.
+"""``molexp`` MCP provider — workspace navigation, scaffold, and adoption.
 
-Scope is deliberately narrow: anything an agent could derive by reading
-``molexp``'s source via :class:`molmcp.IntrospectionProvider` does **not**
-belong here. This provider exists only because the agent cannot read the
-runtime contents of ``workspace.json`` and the catalog DB from source.
-Per ``docs/provider-design.md``, a tool earns a slot only if all four
-conditions hold (stable signature, read-only, every-session frequency,
-single-shot answer).
+**Not a science executor.** Scaffold tools create-or-get workspace tree
+nodes (materialize / add project / add experiment / seed a pending run).
+Layout tools are read-only. Full parameter sweeps, workflow runtime
+driving, harvest, and plotting stay in agent-written Python against
+the molexp / molplot APIs (see molexp ``examples/agent/code_loop_golden_path.py``).
 
-Tools:
+Adoption (``plan_adoption`` / ``run_adoption`` / ``adoption_status`` /
+``ingest_metrics``) lifts a legacy data directory into the four-tier layout
+with per-file SHA-256 proof and a resumable ledger — see ``adopt/``. Deleting
+the original source is deliberately not a tool.
 
-* ``molexp_list_projects`` — top-level navigation.
-* ``molexp_list_runs`` — query runs by scope, joining catalog rows
-  with per-run parameters.
-* ``molexp_workspace_layout`` — the canonical on-disk layout *contract*
-  (tree + naming law + authoritative-vs-derived files) an agent follows
-  when restructuring an arbitrary data directory into molexp shape.
-* ``molexp_check_layout`` — read-only linter: conformance + concrete
-  violations for an existing workspace, or a heuristic
-  project/experiment/run mapping for a directory that is not one yet.
-
-The last two are the **read-only** counterpart to the
-``mol:adopt-workspace`` skill: they serve molexp's directory-structure
-requirements and validate a candidate tree, but never write — per the
-provider-design contract, the actual integrity-checked migration runs
-through that skill or molexp's Python API, not an MCP tool. They earn a
-slot because the layout is a *contract* the discovery engine cannot
-synthesize into an actionable spec/linter, and onboarding/organizing
-data into a FAIR workspace is a recurring operation; the spec is sourced
-from a frozen molexp invariant (see :mod:`.layout`).
-
-Everything else (``list_experiments``, ``get_run``, ``get_metrics``,
-``get_asset_text``) was deliberately dropped — agents that need those
-should introspect ``molexp`` and read run dirs / call APIs directly.
-
-Workspace resolution (in order):
-
-1. The ``workspace`` argument passed to the constructor.
-2. The ``MOLEXP_WORKSPACE`` environment variable.
-3. The current working directory if it contains ``workspace.json``.
-
-Heavy molexp imports stay inside :meth:`register` and tool bodies so the
-provider remains cheap to instantiate (e.g. for ``--print-config``).
+Provider-design contract:
+- Navigation / layout: read-only.
+- Scaffold creates: idempotent create-or-get (not arbitrary mutation).
+- Adoption writes only under the target workspace; ``move`` unlinks a source
+  file only after its copy verified.
+- Never drive run batches or invoke workflow runtime from this package.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
-from . import layout
-
-if TYPE_CHECKING:
-    from fastmcp import FastMCP
-    from molexp.workspace import Workspace
-
-
-_ALLOWED_SCOPES = {"workspace", "project", "experiment"}
-_WORKSPACE_ENV_VAR = "MOLEXP_WORKSPACE"
+from ..annotations import (
+    APPEND_WRITE,
+    IDEMPOTENT_WRITE,
+    LOCAL_MUTATION,
+    READ_ONLY,
+)
+from ..base import ProviderBase, tool
 
 
-def _open_workspace(path: str | Path) -> Workspace:
-    from molexp.workspace import Workspace
+def _configured_workspace() -> str:
+    """Default workspace from settings, or empty when unset."""
+    from molmcp.settings import load_settings
 
-    resolved = Path(path).resolve()
-    return Workspace(root=resolved)
-
-
-def _coerce_status(value: Any) -> str:
-    return str(value) if value is not None else ""
+    return str(load_settings(Path.cwd()).molexp.get("workspace", "")).strip()
 
 
-def _project_for_experiment(
-    workspace: Workspace, experiment_id: str | None
-) -> str | None:
-    """Resolve project_id for an experiment via the workspace catalog."""
-    if not experiment_id:
+_ALLOWED_SCOPES = frozenset({"workspace", "project", "experiment"})
+
+#: Marker files that identify a directory as a molexp workspace root.
+_WORKSPACE_MARKERS = ("workspace.json", "meta.yaml")
+
+
+def _csv_mapping(step_column: str | None, series_columns: list[str] | None):
+    """Build molexp's ``ColumnMapping``, or ``None`` when CSV was not mapped.
+
+    Without a mapping CSV artifacts are skipped with a reason rather than
+    guessed — a table of coordinates and a table of training curves look
+    identical to a heuristic.
+    """
+    if step_column is None and not series_columns:
         return None
-    catalog_data = workspace.catalog._load()  # noqa: SLF001 — read-only join
-    experiments = catalog_data.get("experiments") or {}
-    entry = experiments.get(experiment_id)
-    if isinstance(entry, dict):
-        return entry.get("project_id")
-    return None
+    from molexp.plugins.metrics_ingest import ColumnMapping
 
-
-def _enriched_run_row(workspace: Workspace, entry: dict[str, Any]) -> dict[str, Any]:
-    """Catalog row + on-disk parameters as a single flat dict.
-
-    Run catalog rows store ``experiment_id`` but not ``project_id``;
-    we resolve the latter via the experiments section.
-    """
-    parameters: dict[str, Any] = dict(entry.get("parameters") or {})
-    experiment_id = entry.get("experiment_id")
-    run_id = entry.get("run_id")
-    project_id = entry.get("project_id") or _project_for_experiment(
-        workspace, experiment_id
+    return ColumnMapping(
+        step_column=step_column,
+        series_columns=tuple(series_columns or ()),
     )
-    if not parameters and project_id and experiment_id and run_id:
-        project = workspace.get_project(project_id)
-        if project is not None:
-            experiment = project.get_experiment(experiment_id)
-            if experiment is not None:
-                run = experiment.get_run(run_id)
-                if run is not None:
-                    parameters = dict(getattr(run, "parameters", {}) or {})
-    return {
-        "run_id": run_id,
-        "project_id": project_id,
-        "experiment_id": experiment_id,
-        "status": _coerce_status(entry.get("status")),
-        "parameters": parameters,
-        "created_at": entry.get("created_at"),
-        "finished_at": entry.get("finished_at"),
-        "config_hash": entry.get("config_hash"),
-    }
 
 
-class MolexpProvider:
-    """Provider for molexp domain tools.
+def _open_workspace(path: str | Path):
+    from molexp.workspace import Workspace
 
-    Args:
-        workspace: Workspace handle, path-like, or ``None`` to defer
-            resolution until :meth:`register` runs (uses
-            ``MOLEXP_WORKSPACE`` or CWD).
-    """
+    return Workspace(Path(path).expanduser().resolve())
+
+
+def _resolve_workspace(workspace: str | None = None):
+    from molexp.workspace import Workspace
+
+    if workspace:
+        return Workspace(Path(workspace).expanduser().resolve())
+    configured = _configured_workspace()
+    if configured:
+        return Workspace(Path(configured).expanduser().resolve())
+    cwd = Path.cwd()
+    if (cwd / "workspace.json").is_file() or (cwd / "meta.yaml").is_file():
+        return Workspace(cwd)
+    raise RuntimeError(
+        "MolexpProvider could not resolve a workspace. Pass workspace= path, "
+        "run `molmcp config set molexp.workspace <path>`, or run from a "
+        "directory containing workspace.json."
+    )
+
+
+class MolexpProvider(ProviderBase):
+    """Provider for molexp domain tools (scaffold + navigation)."""
 
     name = "molexp"
+    upstream = "molexp"
+    import_name = "molexp"
 
-    def __init__(
+    def __init__(self, workspace: str | Path | None = None) -> None:
+        self._workspace = Path(workspace).expanduser().resolve() if workspace else None
+
+    # -- workspace resolution -------------------------------------------
+
+    def _get_workspace(self, workspace: str | None = None):
+        if workspace:
+            return _open_workspace(workspace)
+        if self._workspace is not None:
+            return _open_workspace(self._workspace)
+        return _resolve_workspace(None)
+
+    @staticmethod
+    def _ingest_targets(root: Path) -> list[Path]:
+        """Run directories under *root* — or *root* itself when it is a run.
+
+        A workspace root fans out to every run beneath it; anything else is
+        taken at face value, so a bare run directory works without the caller
+        having to know which it handed over.
+        """
+        if not any((root / marker).is_file() for marker in _WORKSPACE_MARKERS):
+            return [root]
+        workspace = _open_workspace(root)
+        runs: list[Path] = []
+        for project in workspace.list_projects():
+            for experiment in project.list_experiments():
+                runs.extend(Path(run.resolve()) for run in experiment.list_runs())
+        return runs
+
+    @staticmethod
+    def _scaffold_result(fn, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Run a scaffold helper; return structured errors instead of tracebacks."""
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — surface to the agent cleanly
+            return {
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+    # -- navigation ------------------------------------------------------
+
+    @tool(READ_ONLY)
+    def list_projects(self, workspace: str | None = None) -> list[dict[str, Any]]:
+        """Enumerate projects in the workspace."""
+        ws = self._get_workspace(workspace)
+        rows: list[dict[str, Any]] = []
+        for p in ws.list_projects():
+            rows.append(
+                {
+                    "project_id": p.id,
+                    "name": p.name,
+                    "path": str(p.resolve()),
+                }
+            )
+        return rows
+
+    @tool(READ_ONLY)
+    def list_experiments(
         self,
-        workspace: "Workspace | str | Path | None" = None,
-    ) -> None:
-        self._workspace_arg = workspace
-        self._cached_workspace: Workspace | None = None
+        project_id: str,
+        workspace: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List experiments under a project (read-only)."""
+        from .scaffold import list_experiments as _list_experiments
 
-    def _get_workspace(self) -> Workspace:
-        if self._cached_workspace is None:
-            self._cached_workspace = self._resolve_workspace()
-        return self._cached_workspace
+        ws = self._get_workspace(workspace)
+        return _list_experiments(ws.resolve(), project_id)
 
-    def _resolve_workspace(self) -> Workspace:
-        from molexp.workspace import Workspace
+    @tool(READ_ONLY)
+    def list_runs(
+        self,
+        scope_kind: Literal["workspace", "project", "experiment"] = "workspace",
+        scope_id: str = "",
+        status: str | None = None,
+        limit: int = 500,
+        workspace: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Query runs by scope.
 
-        arg = self._workspace_arg
-        if isinstance(arg, Workspace):
-            return arg
-        if arg is not None:
-            return _open_workspace(arg)
+        Args:
+            scope_kind: ``workspace``, ``project``, or ``experiment``.
+            scope_id: Project id (when ``scope_kind='project'``),
+                experiment id (when ``'experiment'``), or empty string
+                (when ``'workspace'``).
+            status: Optional status filter.
+            limit: Maximum rows to return. Default 500.
+        """
+        if scope_kind not in _ALLOWED_SCOPES:
+            raise ValueError(f"scope_kind must be one of {sorted(_ALLOWED_SCOPES)}")
+        ws = self._get_workspace(workspace)
+        rows: list[dict[str, Any]] = []
+        projects = ws.list_projects()
+        if scope_kind == "project":
+            projects = [ws.get_project(scope_id)]
+        for project in projects:
+            experiments = project.list_experiments()
+            if scope_kind == "experiment":
+                experiments = [
+                    e for e in experiments if e.id == scope_id or e.name == scope_id
+                ]
+            for exp in experiments:
+                for run in exp.list_runs():
+                    if status is not None and run.status != status:
+                        continue
+                    rows.append(
+                        {
+                            "run_id": run.id,
+                            "project_id": project.id,
+                            "experiment_id": exp.id,
+                            "status": run.status,
+                            "params": dict(run.parameters),
+                        }
+                    )
+                    if len(rows) >= limit:
+                        return rows
+        return rows
 
-        env_path = os.environ.get(_WORKSPACE_ENV_VAR)
-        if env_path:
-            return _open_workspace(env_path)
+    # -- layout ----------------------------------------------------------
 
-        cwd = Path.cwd()
-        if (cwd / "workspace.json").is_file():
-            return _open_workspace(cwd)
+    @tool(READ_ONLY)
+    def workspace_layout(self) -> dict[str, Any]:
+        """Canonical molexp workspace on-disk layout contract (OKF)."""
+        from .layout import layout_spec
 
-        raise RuntimeError(
-            "MolexpProvider could not resolve a workspace. Pass one to the "
-            "constructor, set the MOLEXP_WORKSPACE environment variable, or "
-            "run from a directory containing workspace.json."
+        return layout_spec()
+
+    @tool(READ_ONLY)
+    def check_layout(self, path: str) -> dict[str, Any]:
+        """Read-only lint of ``path`` against the layout contract."""
+        from .layout import validate_workspace
+
+        root = Path(path).expanduser().resolve()
+        findings = validate_workspace(root)
+        is_ws = (root / "workspace.json").is_file() or (root / "meta.yaml").is_file()
+        return {
+            "path": str(root),
+            "is_workspace": is_ws,
+            "ok": len(findings.items) == 0 and is_ws,
+            "violations": findings.items,
+        }
+
+    # -- scaffold (create-or-get) ----------------------------------------
+
+    @tool(IDEMPOTENT_WRITE)
+    def materialize_workspace(
+        self,
+        path: str,
+        name: str = "workspace",
+    ) -> dict[str, Any]:
+        """Create or open a top-level molexp Workspace at ``path`` (idempotent).
+
+        Do **not** use this to create a project under the session workspace —
+        use ``add_project`` instead. Nesting is rejected.
+        """
+        from .scaffold import materialize_workspace as _materialize_workspace
+
+        return self._scaffold_result(_materialize_workspace, path, name=name)
+
+    @tool(IDEMPOTENT_WRITE)
+    def add_project(
+        self,
+        name: str,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Create-or-get a project under the workspace (idempotent on slug).
+
+        Prefer this (or omit workspace to use MOLEXP_WORKSPACE) when the user
+        asks to create a project.
+        """
+        from .scaffold import add_project as _add_project
+
+        ws = self._get_workspace(workspace)
+        return self._scaffold_result(_add_project, ws.resolve(), name)
+
+    @tool(IDEMPOTENT_WRITE)
+    def add_experiment(
+        self,
+        project_id: str,
+        name: str,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Create-or-get an experiment under a project (idempotent on slug)."""
+        from .scaffold import add_experiment as _add_experiment
+
+        ws = self._get_workspace(workspace)
+        return self._scaffold_result(_add_experiment, ws.resolve(), project_id, name)
+
+    @tool(IDEMPOTENT_WRITE)
+    def create_run(
+        self,
+        project_id: str,
+        experiment_id: str,
+        params: dict[str, Any] | None = None,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Scaffold a pending run with params — does not drive the workflow."""
+        from .scaffold import create_run as _create_run
+
+        ws = self._get_workspace(workspace)
+        return self._scaffold_result(
+            _create_run, ws.resolve(), project_id, experiment_id, params=params
         )
 
-    def register(self, mcp: "FastMCP") -> None:
-        """Register molexp domain tools on the host MCP server."""
+    # -- adoption: legacy data directory → four-tier workspace -----------
 
+    @tool(READ_ONLY)
+    def plan_adoption(
+        self,
+        source: str,
+        target: str | None = None,
+        max_depth: int = 6,
+    ) -> dict[str, Any]:
+        """Survey a legacy data directory and propose an adoption mapping.
+
+        Read-only: nothing is created, copied, or written. Returns the
+        survey (what is there, plus oddities like broken symlinks) and a
+        ``Project → Experiment → Run`` proposal the operator can edit and
+        hand straight back to ``run_adoption(plan=…)``.
+
+        Args:
+            source: The existing data directory.
+            target: Where the workspace will live. Defaults to a sibling
+                ``<source>.molexp/``.
+            max_depth: Levels below *source* to walk. Default 6.
+
+        Returns:
+            ``{ok, survey, plan}``. A non-empty ``plan.conflicts`` must be
+            resolved by editing the plan before it can run.
+        """
+        from .adopt import build_plan, survey_source
+
+        root = Path(source).expanduser().resolve()
         try:
-            import molexp  # noqa: F401 — eager probe; surface the missing dep
-        except ImportError as exc:
-            raise RuntimeError(
-                "MolexpProvider requires the 'molcrafts-molexp' package. "
-                "Install with: pip install molcrafts-molexp"
-            ) from exc
+            found = survey_source(root, max_depth=max_depth)
+        except NotADirectoryError as exc:
+            return {"ok": False, "error": str(exc)}
+        proposal = build_plan(found, target=target)
+        return {
+            "ok": not proposal.conflicts,
+            "survey": found.to_dict(),
+            "plan": proposal.to_dict(),
+        }
 
-        from mcp.types import ToolAnnotations
+    @tool(LOCAL_MUTATION)
+    def run_adoption(
+        self,
+        source: str,
+        target: str | None = None,
+        mode: Literal["copy", "move"] = "copy",
+        plan: dict[str, Any] | None = None,
+        ingest: list[str] | None = None,
+        csv_step_column: str | None = None,
+        csv_series_columns: list[str] | None = None,
+        workspace_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Execute an adoption: materialize, transfer, ingest, verify.
 
-        read_only = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+        Every file is SHA-256 hashed on write and re-read before its
+        ledger entry flips. An existing destination with different bytes
+        is refused, never overwritten. Re-running with the same arguments
+        resumes from ``<target>/.molexp-migration.json``.
 
-        @mcp.tool(annotations=read_only)
-        def molexp_list_projects() -> list[dict[str, Any]]:
-            """Enumerate projects in the workspace."""
-            workspace = self._get_workspace()
-            return [
-                {
-                    "id": p.id,
-                    "name": getattr(p.metadata, "name", p.id),
-                    "description": getattr(p.metadata, "description", "") or "",
-                }
-                for p in workspace.list_projects()
-            ]
+        Deleting the source is **not** offered here — audit the ledger and
+        remove the original yourself.
 
-        @mcp.tool(annotations=read_only)
-        def molexp_list_runs(
-            scope_kind: Literal["workspace", "project", "experiment"],
-            scope_id: str = "",
-            status: str | None = None,
-            limit: int = 500,
-        ) -> list[dict[str, Any]]:
-            """Query runs by scope.
+        Args:
+            source: The existing data directory.
+            target: Workspace root. Defaults to ``<source>.molexp/``.
+            mode: ``copy`` leaves the source intact; ``move`` unlinks each
+                source file only after its copy verified.
+            plan: An edited plan from ``plan_adoption``. Omit to use the
+                freshly derived proposal.
+            ingest: Log formats to convert into each run's metrics buffer
+                (``lammps_log``, ``tensorboard``, ``csv``). Omit to ingest
+                nothing — the buffer is append-only, so this is never
+                implied.
+            csv_step_column: Step column for CSV ingestion.
+            csv_series_columns: Series columns for CSV ingestion.
+            workspace_name: Name for the workspace. Defaults to the target
+                directory name.
+        """
+        from .adopt import (
+            AdoptionBlocked,
+            AdoptionPlan,
+            build_plan,
+            survey_source,
+        )
+        from .adopt import run_adoption as _run_adoption
 
-            Args:
-                scope_kind: ``workspace``, ``project``, or ``experiment``.
-                scope_id: Project id (when ``scope_kind='project'``),
-                    experiment id (when ``'experiment'``), or empty string
-                    (when ``'workspace'``).
-                status: Optional status filter.
-                limit: Maximum rows to return. Default 500.
-            """
-            if scope_kind not in _ALLOWED_SCOPES:
-                return [{"error": f"Unknown scope_kind '{scope_kind}'"}]
-
-            workspace = self._get_workspace()
-            catalog = workspace.catalog
-            if scope_kind == "experiment":
-                rows = catalog.query_runs(
-                    experiment_id=scope_id or None,
-                    status=status,
-                    limit=limit,
-                )
+        root = Path(source).expanduser().resolve()
+        try:
+            if plan is not None:
+                approved = AdoptionPlan.from_dict(plan)
             else:
-                rows = catalog.query_runs(status=status, limit=limit)
+                approved = build_plan(survey_source(root), target=target)
+            outcome = _run_adoption(
+                approved,
+                mode=mode,
+                ingest_formats=frozenset(ingest) if ingest else None,
+                csv_mapping=_csv_mapping(csv_step_column, csv_series_columns),
+                workspace_name=workspace_name,
+            )
+        except (AdoptionBlocked, NotADirectoryError, KeyError) as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return outcome.to_dict()
 
-            out: list[dict[str, Any]] = []
-            for row in rows:
-                if scope_kind == "project" and row.get("project_id") != scope_id:
-                    continue
-                out.append(_enriched_run_row(workspace, row))
-                if len(out) >= limit:
-                    break
-            return out
+    @tool(READ_ONLY)
+    def adoption_status(self, target: str, verify: bool = False) -> dict[str, Any]:
+        """Read an adoption ledger: what is done, what is outstanding.
 
-        @mcp.tool(annotations=read_only)
-        def molexp_workspace_layout() -> dict[str, Any]:
-            """Canonical molexp workspace on-disk layout contract.
+        Args:
+            target: The workspace root holding
+                ``.molexp-migration.json``.
+            verify: Re-hash every transferred file and report divergence.
+                Off by default — it re-reads the whole workspace. Turn it
+                on for the deliberate audit before deleting a source.
+        """
+        from .adopt import read_ledger, verify_tree
 
-            Returns the frozen four-tier directory tree, the naming law
-            (container subdir, the mandatory ``run-`` prefix, and how
-            entity vs children-index filenames are derived), and the
-            authoritative-vs-derived file classification. Follow this when
-            restructuring an arbitrary data directory into a molexp
-            workspace; the ``mol:adopt-workspace`` skill or molexp's Python
-            API performs the actual, integrity-checked migration.
-            """
-            return layout.layout_spec()
+        root = Path(target).expanduser().resolve()
+        try:
+            ledger = read_ledger(root)
+        except (OSError, ValueError) as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        if ledger is None:
+            return {
+                "ok": False,
+                "error": f"no adoption ledger under {root}",
+                "target": str(root),
+            }
+        outstanding = [
+            entry.source
+            for entry in ledger.entries
+            if entry.kind == "file" and not entry.done
+        ]
+        payload: dict[str, Any] = {
+            "ok": True,
+            "source": ledger.source,
+            "target": ledger.target,
+            "mode": ledger.mode,
+            "complete": ledger.complete,
+            "counts": ledger.counts(),
+            "runs": [
+                {
+                    "source": entry.source,
+                    "run_id": entry.run_id,
+                    "run_dir": entry.target,
+                }
+                for entry in ledger.of_kind("run")
+            ],
+            "outstanding": outstanding[:50],
+            "outstanding_total": len(outstanding),
+        }
+        if verify:
+            pairs = [
+                (Path(entry.target), entry.sha256 or "")
+                for entry in ledger.entries
+                if entry.kind == "file" and entry.done
+            ]
+            problems = verify_tree(pairs)
+            payload["verified_files"] = len(pairs)
+            payload["problems"] = problems
+            payload["ok"] = not problems
+        return payload
 
-        @mcp.tool(annotations=read_only)
-        def molexp_check_layout(path: str) -> dict[str, Any]:
-            """Read-only check of ``path`` against the molexp layout spec.
+    @tool(APPEND_WRITE)
+    def ingest_metrics(
+        self,
+        path: str,
+        formats: list[str] | None = None,
+        csv_step_column: str | None = None,
+        csv_series_columns: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Convert a run's foreign logs into its host metrics buffer.
 
-            Reports whether ``path`` is already a molexp workspace, whether
-            it conforms to the naming law, the concrete violations, and —
-            for a directory that is not a workspace yet — a heuristic
-            project/experiment/run mapping to hand to ``mol:adopt-workspace``.
-            Writes nothing.
+        Additive and **not idempotent**: ``metrics/metrics.jsonl`` is
+        append-only, so ingesting the same run twice doubles its curves.
+        Undo by deleting ``<run>/metrics/``. Source logs are never
+        deleted, rewritten, moved, or truncated.
 
-            Args:
-                path: Absolute (or non-traversing relative) directory path
-                    to inspect.
-            """
-            return layout.check_layout(path)
+        Args:
+            path: A run directory, or a workspace root to ingest every run
+                under it.
+            formats: ``lammps_log`` / ``tensorboard`` / ``csv``. Omit to
+                ingest every format that has a converter (CSV only when a
+                column mapping is given).
+            csv_step_column: Step column name for CSV artifacts.
+            csv_series_columns: Series column names for CSV artifacts.
+        """
+        from .adopt import INGEST_FORMATS, molexp_ingest
+
+        selected = frozenset(formats) if formats else None
+        if selected is not None:
+            unknown = sorted(selected - INGEST_FORMATS)
+            if unknown:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"unknown format(s) {unknown}; "
+                        f"expected {sorted(INGEST_FORMATS)}"
+                    ),
+                }
+        root = Path(path).expanduser().resolve()
+        if not root.is_dir():
+            return {"ok": False, "error": f"not a directory: {root}"}
+        mapping = _csv_mapping(csv_step_column, csv_series_columns)
+        targets = self._ingest_targets(root)
+        results: dict[str, Any] = {}
+        problems: list[str] = []
+        for run_dir in targets:
+            try:
+                outcome = molexp_ingest(run_dir, selected, mapping)
+            except Exception as exc:  # noqa: BLE001 — report, never crash
+                problems.append(f"{run_dir}: {type(exc).__name__}: {exc}")
+                continue
+            results[str(run_dir)] = outcome.to_dict()
+        return {
+            "ok": not problems,
+            "path": str(root),
+            "runs": len(targets),
+            "results": results,
+            "problems": problems,
+        }
+
+    # -- workflow ---------------------------------------------------------
+
+    @tool(READ_ONLY)
+    def validate_workflow(self, source: str) -> dict[str, Any]:
+        """Compile-only validation of workflow source (no task bodies run).
+
+        Provide a Python snippet that builds a ``WorkflowCompiler`` as
+        ``wf`` (or any ``WorkflowCompiler`` instance) with ``@wf.task``
+        registrations. Returns ok/compiled without running science.
+        """
+        from .scaffold import validate_workflow_source
+
+        return validate_workflow_source(source)

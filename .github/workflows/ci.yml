@@ -25,19 +25,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-
-      - name: Install dev extras
+      - name: Install
         run: uv sync --extra dev
-
       - name: Lint
         run: |
           uv run ruff check src tests
           uv run ruff format --check src tests
-
       - name: Test
         run: uv run pytest -v

@@ -30,13 +30,20 @@ This catches the common case (`"../../../etc/passwd"`). It does **not** protect 
 
 ### Token blow-ups
 
-`ResponseLimitMiddleware` (256 KB default) truncates oversized text responses with a marker. Without this, a broad `molmcp_search_symbols` or `molmcp_outline` call against a large MolCrafts package could dump megabytes into the agent's context, eating the token budget.
+`ResponseLimitMiddleware` (256 KB default) truncates oversized text responses with a marker. Without this, a broad `search` or `outline` call against a large MolCrafts package could dump megabytes into the agent's context, eating the token budget.
 
 Configurable via `response_limit_bytes`. Disable per-server if you absolutely need to return large blobs (e.g., generated structure files), but consider streaming or pagination instead.
 
 ### Auto-approve confusion
 
-Every tool a MolCrafts Provider registers must declare `readOnlyHint` or `destructiveHint`. molmcp checks at server build time and refuses to start otherwise. This forces Provider authors to *think* about whether a tool mutates state, and gives MCP clients the signal they need to auto-approve safe calls without prompting on every invocation.
+Every tool must declare annotations, and molmcp refuses to build a server
+whose tools do not. They are picked from a shared vocabulary
+(`molmcp.providers.annotations`) rather than written inline, which is how
+the values drifted apart before: one plane's read-only tools omitted
+`open_world_hint` entirely, and a client reads an absent hint as *unknown*
+rather than *local*. Naming the six cases forces the author to pick one,
+and gives clients the signal they need to auto-approve safe calls instead
+of prompting on every invocation.
 
 ## What molmcp does *not* block (and how to handle it)
 
@@ -45,7 +52,7 @@ Every tool a MolCrafts Provider registers must declare `readOnlyHint` or `destru
 If your Provider shells out to an external tool — Packmol, LAMMPS, AmberTools, anything — **always** use `run_safe`:
 
 ```python
-from molmcp import run_safe
+from molmcp.helpers import run_safe
 
 result = run_safe(
     cmd=["packmol", "-i", input_file],   # list, never a string
@@ -67,7 +74,7 @@ What it **doesn't** check: that argv values themselves don't contain shell metac
 ### Path validation outside `_PATH_KEYS`
 
 ```python
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@tool(READ_ONLY)
 def load_data(target: str) -> dict:
     # PathSafetyMiddleware does NOT inspect "target" — it's not a recognized
     # path key. Validate manually:
@@ -88,9 +95,9 @@ If a tool returns a file's content into the LLM context, an attacker who control
 Wrap untrusted content with `fence_untrusted`:
 
 ```python
-from molmcp import fence_untrusted
+from molmcp.helpers import fence_untrusted
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@tool(READ_ONLY)
 def read_pdb_header(path: str) -> str:
     """Read the header section of a PDB file."""
     text = Path(path).read_text()
@@ -120,7 +127,7 @@ The middleware doesn't re-validate types your tool signature already declared. I
 | `enable_response_limit=True` | 256 KB cap on text content | `enable_response_limit=False` |
 | `validate_annotations=True` | server build fails on missing hints | `validate_annotations=False` |
 
-Don't disable these in production. The CLI exposes only `--no-discover` and `--no-validate-annotations` precisely because the security defaults shouldn't have a casual escape hatch.
+Don't disable these in production. The CLI exposes only `--no-discover` precisely because the security defaults shouldn't have a casual escape hatch.
 
 ## What the audit literature says
 

@@ -303,6 +303,10 @@ class PythonAnalyzer:
     ) -> None:
         qn = f"{parent_qn}.{stmt.name}" if parent_qn != "(root)" else stmt.name
         decorators = _decorator_names(stmt.decorator_list)
+        if any(d.split(".")[-1] == "overload" for d in decorators):
+            # @overload stub — the implementation def that follows carries the
+            # node; emitting stubs would collide on file#qualname#kind.
+            return
         dec_blob = " ".join(decorators)
         is_property = any(
             d.split(".")[-1] in {"property", "cached_property"} for d in decorators

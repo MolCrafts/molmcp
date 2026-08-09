@@ -36,17 +36,14 @@ DEFAULT_EXCLUDES: tuple[str, ...] = (
 
 
 def default_cache_dir() -> Path:
-    """Resolve the on-disk cache root.
+    """The on-disk cache root.
 
-    ``MOLMCP_CACHE_DIR`` wins; otherwise ``XDG_CACHE_HOME`` (or
-    ``~/.cache``) under ``molmcp/discovery``.
+    Override it with the ``cacheDir`` setting rather than the environment:
+    a variable that only exists in one shell cannot be reported by
+    ``molmcp config list``, and two plane servers launched by different
+    clients would silently disagree about where the cache lives.
     """
-    env = os.environ.get("MOLMCP_CACHE_DIR")
-    if env:
-        return Path(env).expanduser()
-    xdg = os.environ.get("XDG_CACHE_HOME")
-    base = Path(xdg).expanduser() if xdg else Path.home() / ".cache"
-    return base / "molmcp" / "discovery"
+    return Path.home() / ".cache" / "molmcp" / "discovery"
 
 
 @dataclass(slots=True)
@@ -62,6 +59,10 @@ class DiscoveryConfig:
     excludes: tuple[str, ...] = DEFAULT_EXCLUDES
     max_snapshots_per_spec: int = 3
     max_cache_age_days: int = 30
+    # Ceiling on the shared extraction cache. Retention by age does not bound
+    # it: an indexed environment of tens of thousands of files is all current,
+    # none of it stale, and left uncapped it reached gigabytes in normal use.
+    max_extract_cache_bytes: int = 512 * 1024 * 1024
     watch: bool = False
     watch_interval: float = 5.0
     github_token: str | None = None

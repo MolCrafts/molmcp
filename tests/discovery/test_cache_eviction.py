@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -54,7 +55,7 @@ def test_age_based_eviction(tmp_path):
 
     snapshot_id = engine.index(str(repo)).snapshot.snapshot_id
 
-    manifest_path = engine.cache.manifest_path(snapshot_id)
+    manifest_path = engine.cache.manifest_path(snapshot_id, engine.build_id)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["indexed_at"] = time.time() - 40 * 86400
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -72,3 +73,45 @@ def test_evict_is_noop_within_limits(tmp_path):
 
     summary = engine.cache.evict()
     assert summary["removed_count"] == 0
+
+
+def test_gc_reclaims_snapshot_directories_without_a_manifest(tmp_path):
+    """A directory with no readable manifest is invisible to every path.
+
+    Both evict() and the scope GC skip them, so they accumulate forever: a
+    real cache held 2305 snapshot directories for 19 usable graphs, one
+    orphan alone occupying 2 GB.
+    """
+    import time as _time
+
+    from molmcp.discovery.cache import SnapshotCache
+    from molmcp.discovery.config import DiscoveryConfig
+
+    config = DiscoveryConfig(cache_dir=tmp_path / "cache")
+    cache = SnapshotCache(config)
+    orphan = cache.snapshots_root / "orphan"
+    orphan.mkdir(parents=True)
+    (orphan / "graph.db").write_bytes(b"x" * 4096)
+    old = _time.time() - 7200
+    os.utime(orphan, (old, old))
+
+    report = cache.collect_out_of_scope(set())
+
+    assert not orphan.exists()
+    assert report["removed_orphans"] == 1
+
+
+def test_gc_leaves_a_snapshot_that_is_still_being_written(tmp_path):
+    """_persist writes graph.db before the manifest — do not race it."""
+    from molmcp.discovery.cache import SnapshotCache
+    from molmcp.discovery.config import DiscoveryConfig
+
+    cache = SnapshotCache(DiscoveryConfig(cache_dir=tmp_path / "cache"))
+    fresh = cache.snapshots_root / "in-flight"
+    fresh.mkdir(parents=True)
+    (fresh / "graph.db").write_bytes(b"x" * 4096)
+
+    report = cache.collect_out_of_scope(set())
+
+    assert fresh.exists()
+    assert report["removed_orphans"] == 0

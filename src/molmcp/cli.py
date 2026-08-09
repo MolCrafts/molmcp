@@ -1,493 +1,577 @@
-"""``molmcp`` CLI — run the MCP server or drive the discovery engine."""
+"""Plane-oriented MolMCP CLI — one MCP process per product plane."""
 
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
-import shutil
+import sqlite3
 import sys
-from collections import Counter
+import time
+from pathlib import Path
+from typing import Any
 
-from .server import create_server
-
-# MolCrafts sources discovery defaults to when no --source is given.
-# Each resolves to the locally installed copy (``pkg:``) when importable
-# in the active environment (uv / venv), otherwise to the upstream repo
-# (``github:``) — so discovery works whether or not a package is
-# installed, and core never imports a MolCrafts package.
-_GITHUB_OWNER = "MolCrafts"
-
-# Single-package sources: the import name doubles as the GitHub repo name.
-_DEFAULT_PACKAGES = ("molpy", "molpack", "molrs", "molq", "molexp")
-
-# Multi-package repos with no single import name — always indexed whole
-# from GitHub. molnex ships four packages (molix, molpot, molrep, molzoo),
-# so there is no ``molnex`` module to resolve a ``pkg:`` spec against.
-_DEFAULT_REPOS = ("molnex",)
-
-_SPEC_HELP = (
-    "source spec: a local path, 'pkg:<name>' for an installed package, "
-    "or 'github:owner/repo[@ref]'"
-)
+from . import settings
+from .client_config import render_client
+from .config import AppConfig, ConfigurationError, load_config
+from .planes import known_plane_ids, list_plane_infos, route_task
+from .runtime import build_collection
+from .server import create_plane
 
 
-def _is_importable(pkg: str) -> bool:
-    """Whether ``pkg`` is importable in the active environment."""
-    try:
-        return importlib.util.find_spec(pkg) is not None
-    except (ImportError, ValueError):
-        return False
-
-
-def _local_or_github(pkg: str) -> str:
-    """Local install spec when ``pkg`` is importable, else its GitHub repo."""
-    if _is_importable(pkg):
-        return f"pkg:{pkg}"
-    return f"github:{_GITHUB_OWNER}/{pkg}"
-
-
-def _source_for_package(pkg: str) -> str:
-    """Discovery source for one default package.
-
-    Multi-package repos (no single import name) are always taken whole
-    from GitHub; single packages prefer a local install and fall back to
-    their GitHub repo.
-    """
-    if pkg in _DEFAULT_REPOS:
-        return f"github:{_GITHUB_OWNER}/{pkg}"
-    return _local_or_github(pkg)
-
-
-def _available_default_sources() -> list[str]:
-    """Default discovery sources: every MolCrafts package, local-first."""
-    return [_source_for_package(pkg) for pkg in (*_DEFAULT_PACKAGES, *_DEFAULT_REPOS)]
-
-
-def _split_pkg_values(raw: list[str]) -> list[str]:
-    """Normalize ``--pkg`` values: split on commas, strip, drop empties.
-
-    ``--pkg molpy,molexp`` and ``--pkg molpy --pkg molexp`` are
-    equivalent. Order is preserved; duplicates collapse to first use.
-    """
-    seen: list[str] = []
-    for value in raw:
-        for token in value.split(","):
-            token = token.strip()
-            if token and token not in seen:
-                seen.append(token)
-    return seen
-
-
-def _resolve_serve_sources(pkgs: list[str], explicit_sources: list[str]) -> list[str]:
-    """Discovery sources for ``serve``.
-
-    An explicit ``--source`` wins outright; otherwise ``--pkg`` narrows
-    the defaults to the chosen packages; otherwise all defaults load.
-    """
-    if explicit_sources:
-        return explicit_sources
-    if pkgs:
-        return [_source_for_package(pkg) for pkg in pkgs]
-    return _available_default_sources()
-
-
-# -- molmcp serve --------------------------------------------------------
-
-
-def _build_serve_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
         prog="molmcp",
-        description="Start an MCP server exposing graph-based codebase "
-        "discovery tools and any registered domain providers. Run "
-        "'molmcp discovery --help' to drive the engine without a client.",
+        description=(
+            "MolCrafts multi-plane MCP: one product domain per connection. "
+            "Default: enable all planes in the client; use --disable / --enable."
+        ),
     )
-    p.add_argument(
-        "--name",
-        default="molmcp",
-        help="Server name advertised to MCP clients (default: molmcp).",
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    serve = commands.add_parser(
+        "serve",
+        help="Start one MCP plane (required plane id).",
     )
-    p.add_argument(
-        "--pkg",
-        action="append",
-        default=[],
-        metavar="NAME[,NAME...]",
-        help="Restrict to these MolCrafts packages (repeatable or "
-        "comma-separated). Narrows both the default discovery sources and "
-        "the entry-point-discovered providers. When omitted, every "
-        "package loads. Example: --pkg molpy,molexp.",
+    _config_argument(serve)
+    serve.add_argument(
+        "plane",
+        help=(
+            "Plane to serve: catalog | molcrafts | <provider> "
+            "(run `molmcp planes` for the list)."
+        ),
     )
-    p.add_argument(
-        "--source",
-        action="append",
-        default=[],
-        metavar="SPEC",
-        help="Discovery source: a local path, 'pkg:<name>' for an "
-        "installed package, or 'github:owner/repo[@ref]'. Repeatable. "
-        "Overrides the --pkg-derived default for discovery sources only "
-        "(provider filtering still honors --pkg). When both are omitted, "
-        "defaults to the MolCrafts packages (molpy, molpack, molrs, molq, "
-        "molexp, molnex) — each read from a local install when present, "
-        "and from GitHub otherwise.",
+    serve.add_argument(
+        "--transport",
+        choices=["stdio", "streamable-http"],
+        default=None,
+        help="Override the transport from molcrafts.json.",
     )
-    p.add_argument(
+    serve.add_argument("--host", default=None, help="Override the HTTP bind host.")
+    serve.add_argument("--port", type=int, default=None, help="Override the HTTP port.")
+    serve.add_argument(
         "--no-discover",
         action="store_true",
-        help="Do not auto-discover providers via the molmcp.providers entry point.",
+        help="Do not load molmcp.providers entry points (provider planes need inject).",
     )
-    p.add_argument(
-        "--no-validate-annotations",
+
+    planes = commands.add_parser(
+        "planes",
+        help="List connectable MCP planes (on-demand multi-link catalog).",
+    )
+    planes.add_argument(
+        "--json",
         action="store_true",
-        help="Skip startup-time check that all tools have ToolAnnotations.",
+        help="Emit machine-readable JSON.",
     )
-    p.add_argument(
-        "--transport",
-        "-t",
-        choices=["stdio", "streamable-http", "sse"],
-        default="stdio",
-        help="Transport protocol (default: stdio).",
+
+    route = commands.add_parser(
+        "route",
+        help="Suggest which plane(s) a task will use (routing hint only).",
     )
-    p.add_argument("--host", default="127.0.0.1", help="Bind address (HTTP/SSE).")
-    p.add_argument("--port", "-p", type=int, default=8787, help="Port (HTTP/SSE).")
-    return p
+    route.add_argument("task", help="User task description.")
+
+    client = commands.add_parser(
+        "client",
+        help=(
+            "Emit host MCP config. Default: all planes enabled; "
+            "use --disable / --enable to toggle."
+        ),
+    )
+    client.add_argument(
+        "host",
+        nargs="?",
+        default=None,
+        choices=["grok", "claude", "cursor"],
+        help=(
+            "Where the config is headed. The body is the same standard "
+            "mcpServers JSON for every host; this only picks the default "
+            "output path."
+        ),
+    )
+    client.add_argument(
+        "--enable",
+        action="append",
+        default=[],
+        metavar="PLANE",
+        help="Enable a plane (after --disable). Repeatable.",
+    )
+    client.add_argument(
+        "--disable",
+        action="append",
+        default=[],
+        metavar="PLANE",
+        help="Disable a plane. Repeatable. Default is all enabled.",
+    )
+    client.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        help="Write to this path (default: print to stdout).",
+    )
+
+    info = commands.add_parser("info", help="Show registry and index coverage.")
+    _config_argument(info)
+
+    search = commands.add_parser("search", help="Search the full collection.")
+    _config_argument(search)
+    search.add_argument("query")
+    search.add_argument("--kind", action="append", default=[])
+    search.add_argument("--namespace", action="append", default=[])
+    search.add_argument("--source", action="append", default=[])
+    search.add_argument("--limit", type=int, default=20)
+
+    explore = commands.add_parser("explore", help="Build a bounded task context pack.")
+    _config_argument(explore)
+    explore.add_argument("task")
+    explore.add_argument("--namespace", action="append", default=[])
+    explore.add_argument("--source", action="append", default=[])
+    explore.add_argument("--budget-chars", type=int, default=16_000)
+
+    index = commands.add_parser("index", help="Index configured sources.")
+    _config_argument(index)
+    index.add_argument(
+        "sources",
+        nargs="*",
+        metavar="SOURCE_NAME",
+        help="Configured source names; omit to index all.",
+    )
+    index.add_argument("--force", action="store_true")
+
+    config_cmd = commands.add_parser(
+        "config",
+        help="Read or edit molmcp settings (~/.molmcp/settings.json).",
+    )
+    config_actions = config_cmd.add_subparsers(dest="config_action", required=True)
+    config_actions.add_parser("list", help="Show the resolved settings.")
+    config_get = config_actions.add_parser("get", help="Read one key.")
+    config_get.add_argument("key")
+    config_set = config_actions.add_parser("set", help="Set one key.")
+    _scope_arguments(config_set)
+    config_set.add_argument("key")
+    config_set.add_argument("value")
+    config_add = config_actions.add_parser("add", help="Append to a list key.")
+    _scope_arguments(config_add)
+    config_add.add_argument("key")
+    config_add.add_argument("value")
+    config_remove = config_actions.add_parser("remove", help="Unset a key.")
+    _scope_arguments(config_remove)
+    config_remove.add_argument("key")
+    config_remove.add_argument("value", nargs="?", default=None)
+
+    cache = commands.add_parser(
+        "cache",
+        help="Inspect or reclaim the shared discovery cache.",
+    )
+    _config_argument(cache)
+    cache.add_argument(
+        "--prune",
+        action="store_true",
+        help="Drop extraction payloads past the retention window.",
+    )
+    cache.add_argument(
+        "--vacuum",
+        action="store_true",
+        help="Return freed pages to the filesystem (implies --prune).",
+    )
+    cache.add_argument(
+        "--gc",
+        action="store_true",
+        help="Drop cached snapshots for sources that are no longer configured.",
+    )
+
+    return parser
 
 
-def _serve_main(argv: list[str]) -> int:
-    args = _build_serve_parser().parse_args(argv)
-    pkgs = _split_pkg_values(args.pkg)
-    server = create_server(
-        name=args.name,
-        discovery_sources=_resolve_serve_sources(pkgs, args.source),
+def _scope_arguments(parser: argparse.ArgumentParser) -> None:
+    """Which settings file a `config` write targets.
+
+    Neither flag means the user file: a plane server's working directory is
+    whatever the MCP client that launched it happened to be started in, so
+    project scope has to be asked for.
+    """
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument(
+        "--project",
+        action="store_true",
+        help="Target ./.molmcp/settings.json instead of the user file.",
+    )
+    scope.add_argument(
+        "--local",
+        action="store_true",
+        help="Target ./.molmcp/settings.local.json (untracked).",
+    )
+
+
+def _config_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to a molcrafts.json (not auto-loaded from the working directory).",
+    )
+    parser.add_argument(
+        "--env",
+        metavar="LOCATOR",
+        default=None,
+        help=(
+            "Python environment to auto-discover MolCrafts packages from: a "
+            "virtualenv root, a python executable, or a site-packages directory "
+            "(default: the current environment)."
+        ),
+    )
+
+
+def _load(args: argparse.Namespace) -> AppConfig:
+    return load_config(args.config, env_locator=args.env)
+
+
+def _emit(value: Any) -> None:
+    print(json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True))
+
+
+def _optional(values: list[str]) -> list[str] | None:
+    return values or None
+
+
+def _serve(args: argparse.Namespace) -> int:
+    plane = args.plane.strip().lower()
+    known = known_plane_ids()
+    # Allow serving any discovered provider even if not in the static meta table.
+    if plane not in known and plane not in {p.name for p in _discover_safe()}:
+        raise ConfigurationError(
+            f"unknown plane {plane!r}. Run `molmcp planes` for the catalog."
+        )
+
+    config = _load(args) if plane == "molcrafts" else None
+    # Provider planes may still load config for HTTP auth settings.
+    if plane not in {"catalog", "molcrafts"}:
+        try:
+            config = _load(args)
+        except ConfigurationError:
+            config = None
+        except FileNotFoundError:
+            config = None
+
+    server = create_plane(
+        plane,
+        config=config,
         discover_entry_points=not args.no_discover,
-        provider_names=set(pkgs) or None,
-        validate_annotations=not args.no_validate_annotations,
     )
-    kwargs: dict = {"transport": args.transport}
-    if args.transport != "stdio":
-        kwargs["host"] = args.host
-        kwargs["port"] = args.port
+    transport = args.transport or (
+        config.server.transport if config is not None else "stdio"
+    )
+    kwargs: dict[str, Any] = {"transport": transport}
+    if transport == "stdio":
+        kwargs["show_banner"] = False
+        kwargs["log_level"] = "ERROR"
+    else:
+        host = args.host or (config.server.host if config is not None else "127.0.0.1")
+        port = args.port or (config.server.port if config is not None else 8787)
+        auth_env = config.server.auth_token_env if config is not None else None
+        if host not in {"127.0.0.1", "::1", "localhost"} and not auth_env:
+            raise ConfigurationError(
+                "non-loopback streamable HTTP requires server.auth_token_env"
+            )
+        kwargs.update(host=host, port=port)
     server.run(**kwargs)
     return 0
 
 
-# -- molmcp discovery ----------------------------------------------------
+def _discover_safe():
+    from .provider import discover_providers
+
+    return discover_providers()
 
 
-def _build_discovery_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        prog="molmcp discovery",
-        description="Inspect and drive the discovery engine without an MCP client.",
-    )
-    sub = p.add_subparsers(dest="command", required=True, metavar="SUBCOMMAND")
-
-    idx = sub.add_parser(
-        "index",
-        help="Index a source and print a summary.",
-        description="Index a source into a code graph and print a summary.",
-    )
-    idx.add_argument("source", metavar="SOURCE", help=_SPEC_HELP)
-
-    ver = sub.add_parser(
-        "verify",
-        help="Index a source and print a health report.",
-        description="Index a source and run a self-check — counts, FTS "
-        "status, and a sample query. Exits non-zero if discovery is not "
-        "working.",
-    )
-    ver.add_argument("source", metavar="SOURCE", help=_SPEC_HELP)
-
-    qry = sub.add_parser(
-        "query",
-        help="Search symbols in a source.",
-        description="Full-text search over a source's indexed symbols.",
-    )
-    qry.add_argument("source", metavar="SOURCE", help=_SPEC_HELP)
-    qry.add_argument("text", help="Search text.")
-    qry.add_argument(
-        "--kind",
-        default=None,
-        help="Filter by node kind (class, function, method, test, ...).",
-    )
-    qry.add_argument("--limit", type=int, default=20, help="Max results (default: 20).")
-
-    out = sub.add_parser(
-        "outline",
-        help="Print a source's structure.",
-        description="Print a source's packages/modules mapped to their symbols.",
-    )
-    out.add_argument("source", metavar="SOURCE", help=_SPEC_HELP)
-    out.add_argument("--path", default=None, help="Narrow to a file or subtree.")
-
-    dmp = sub.add_parser(
-        "dump",
-        help="Dump a source's graph as JSON.",
-        description="Dump a source's full code graph (nodes, edges, files, "
-        "unresolved references) as JSON.",
-    )
-    dmp.add_argument("source", metavar="SOURCE", help=_SPEC_HELP)
-    dmp.add_argument(
-        "--output",
-        metavar="FILE",
-        default=None,
-        help="Write JSON to a file instead of stdout.",
-    )
-
-    lnt = sub.add_parser(
-        "lint",
-        help="Report discoverability findings for a source.",
-        description="Measure a source's discoverability health: "
-        "undocumented exported symbols, untested public symbols, and "
-        "modules with a high unresolved-reference share. Advisory — "
-        "exits 0 even with findings; --strict exits 1 when any exist.",
-    )
-    lnt.add_argument(
-        "source", nargs="?", default=None, metavar="SOURCE", help=_SPEC_HELP
-    )
-    lnt.add_argument(
-        "--pkg",
-        action="append",
-        default=[],
-        metavar="NAME[,NAME...]",
-        help="Lint these MolCrafts packages (repeatable or "
-        "comma-separated); used when SOURCE is omitted.",
-    )
-    lnt.add_argument(
-        "--json",
-        action="store_true",
-        help="Emit a machine-readable JSON report.",
-    )
-    lnt.add_argument(
-        "--strict",
-        action="store_true",
-        help="Exit 1 when any finding exists (for upstream CI gates).",
-    )
-
-    cln = sub.add_parser(
-        "clean",
-        help="Prune old cached snapshots (or wipe with --all).",
-        description="Prune cached snapshots past the retention limits.",
-    )
-    cln.add_argument(
-        "--all",
-        action="store_true",
-        help="Remove the entire discovery cache instead of pruning.",
-    )
-    return p
-
-
-def _fmt_counter(counter: Counter, top: int = 8) -> str:
-    items = counter.most_common(top)
-    return ", ".join(f"{kind} {count}" for kind, count in items) or "(none)"
-
-
-def _cmd_index(engine, args) -> int:
-    result = engine.index(args.source, force=True)
-    snapshot = result.snapshot
-    print(f"indexed {args.source}")
-    print(f"  snapshot:  {snapshot.snapshot_id}")
-    print(f"  origin:    {snapshot.origin}")
-    print(f"  files:     {result.file_count}")
-    print(f"  nodes:     {result.node_count}")
-    print(f"  edges:     {result.edge_count}")
-    print(f"  cache:     {engine.cache.snapshot_dir(snapshot.snapshot_id)}")
-    return 0
-
-
-def _cmd_verify(engine, args) -> int:
-    from .discovery import DiscoveryQuery
-    from .discovery.store import GraphStore
-
-    print(f"verifying discovery for: {args.source}")
-    result = engine.index(args.source, force=True)
-    graph = result.graph
-    snapshot = result.snapshot
-
-    store = GraphStore(engine.cache.graph_db_path(snapshot.snapshot_id))
-    fts = store.fts_available()
-    sample = next((n for n in graph.nodes if n.kind in ("class", "function")), None)
-    sample_ok = True
-    sample_line = "  sample search: (skipped — no class/function nodes)"
-    if sample is not None:
-        hits = DiscoveryQuery(store, snapshot).search(sample.name, limit=10)
-        sample_ok = any(h.id == sample.id for h in hits)
-        sample_line = (
-            f"  sample search: '{sample.name}' -> {'ok' if sample_ok else 'MISMATCH'}"
-        )
-    store.close()
-
-    kinds = Counter(str(n.kind) for n in graph.nodes)
-    edges = Counter(str(e.kind) for e in graph.edges)
-    print(f"  snapshot:      {snapshot.snapshot_id}")
-    print(f"  origin:        {snapshot.origin} (freshness: {result.freshness})")
-    print(f"  files:         {result.file_count}")
-    print(f"  nodes:         {result.node_count}  [{_fmt_counter(kinds)}]")
-    print(f"  edges:         {result.edge_count}  [{_fmt_counter(edges)}]")
-    print(f"  unresolved:    {len(graph.unresolved)}")
-    print(f"  FTS5 index:    {'available' if fts else 'unavailable (LIKE fallback)'}")
-    print(sample_line)
-
-    problems: list[str] = []
-    if result.node_count == 0:
-        problems.append("no nodes were extracted")
-    if not sample_ok:
-        problems.append("search did not return a known symbol")
-    if problems:
-        print(f"  result:        FAILED — {'; '.join(problems)}")
-        return 1
-    print("  result:        OK — discovery is working")
-    return 0
-
-
-def _cmd_query(engine, args) -> int:
-    query = engine.query(args.source)
-    try:
-        results = query.search(args.text, kind=args.kind, limit=args.limit)
-        print(f"{len(results)} match(es) for {args.text!r} in {args.source}")
-        for node in results:
-            print(f"  {node.kind:10} {node.qualname}  ({node.file}:{node.start_line})")
-            if node.summary:
-                print(f"             {node.summary}")
-    finally:
-        query.store.close()
-    return 0
-
-
-def _cmd_outline(engine, args) -> int:
-    query = engine.query(args.source)
-    try:
-        outline = query.outline(path=args.path)
-        print(f"{outline['module_count']} module(s) in {args.source}")
-        for module in outline["modules"]:
-            print(f"  {module['kind']}: {module['qualname']}  ({module['file']})")
-            for symbol in module["symbols"]:
-                print(f"    {symbol['kind']:10} {symbol['name']}")
-                for member in symbol.get("members", []):
-                    print(f"      {member['kind']:10} {member['name']}")
-    finally:
-        query.store.close()
-    return 0
-
-
-def _cmd_dump(engine, args) -> int:
-    graph = engine.get_graph(args.source)
+def _planes(args: argparse.Namespace) -> int:
+    planes = [p.to_dict() for p in list_plane_infos()]
     payload = {
-        "nodes": [n.to_dict() for n in graph.nodes],
-        "edges": [e.to_dict() for e in graph.edges],
-        "files": [f.to_dict() for f in graph.files],
-        "unresolved": [u.to_dict() for u in graph.unresolved],
+        "ok": True,
+        "model": "multi-plane-default-all",
+        "planes": planes,
+        "hint": (
+            "Default: enable every plane in the client. "
+            "molmcp client grok                  # all on\n"
+            "molmcp client grok --disable molq   # all except molq\n"
+            "molmcp client grok --disable molq --enable molq  # re-enable"
+        ),
     }
-    text = json.dumps(payload, indent=2, ensure_ascii=False)
-    if args.output:
-        with open(args.output, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        print(f"wrote {args.output} ({len(graph.nodes)} nodes)")
-    else:
-        print(text)
-    return 0
-
-
-def _print_symbol_section(label: str, nodes) -> None:
-    print(f"  {label}: {len(nodes)}")
-    for node in nodes:
-        print(f"    {node.qualname}  ({node.file}:{node.start_line})")
-
-
-def _render_lint_report(source: str, report) -> None:
-    """Human-readable lint report: three sections plus counts."""
-    print(f"lint {source}")
-    _print_symbol_section("undocumented exports", report.undocumented_exports)
-    _print_symbol_section("untested public symbols", report.untested_public_symbols)
-    print(f"  high-unresolved modules: {len(report.high_unresolved_modules)}")
-    for stat in report.high_unresolved_modules:
-        print(
-            f"    {stat.file}  {stat.unresolved_count}/{stat.total_refs} "
-            f"unresolved ({stat.ratio:.0%})"
-        )
-    if report.total_findings == 0:
-        print("  OK — no discoverability findings")
-
-
-def _cmd_lint(engine, args) -> int:
-    """Lint one or more sources; advisory exit unless --strict."""
-    from .discovery.lint import lint_graph
-
-    if args.source:
-        sources = [args.source]
-    else:
-        sources = [_source_for_package(p) for p in _split_pkg_values(args.pkg)]
-    reports = []
-    total_findings = 0
-    for spec in sources:
-        report = lint_graph(engine.get_graph(spec))
-        total_findings += report.total_findings
-        reports.append((spec, report))
     if args.json:
-        payload = {
-            "reports": [
-                {"source": spec, **report.to_dict()} for spec, report in reports
-            ],
-            "total_findings": total_findings,
-        }
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-    else:
-        for spec, report in reports:
-            _render_lint_report(spec, report)
-    return 1 if args.strict and total_findings > 0 else 0
-
-
-def _cmd_clean(engine, args) -> int:
-    cache_dir = engine.config.cache_dir
-    if args.all:
-        if cache_dir.exists():
-            shutil.rmtree(cache_dir)
-            print(f"removed {cache_dir}")
-        else:
-            print(f"nothing to clean ({cache_dir} does not exist)")
+        _emit(payload)
         return 0
-    summary = engine.cache.evict()
-    print(f"pruned {summary['removed_count']} snapshot(s)")
-    for snapshot_id in summary["removed"]:
-        print(f"  - {snapshot_id}")
+    print("MolCrafts MCP planes (default: all enabled in client):\n")
+    for row in planes:
+        print(f"  {row['id']:12}  {row['serve_command']}")
+        print(f"               {row['purpose']}")
+        print(f"               when: {row['when_to_connect']}")
+        if row.get("tools_hint"):
+            print(f"               tools: {', '.join(row['tools_hint'])}")
+        print()
+    print(payload["hint"])
     return 0
 
 
-_DISCOVERY_COMMANDS = {
-    "index": _cmd_index,
-    "verify": _cmd_verify,
-    "query": _cmd_query,
-    "outline": _cmd_outline,
-    "dump": _cmd_dump,
-    "lint": _cmd_lint,
-    "clean": _cmd_clean,
-}
+def _route(args: argparse.Namespace) -> int:
+    _emit(route_task(args.task))
+    return 0
 
 
-def _discovery_main(argv: list[str]) -> int:
-    from .discovery import DiscoveryConfig, DiscoveryEngine
-    from .discovery.source import SourceError
+def _client(args: argparse.Namespace) -> int:
+    toggle, text = render_client(
+        args.host,
+        enable=args.enable,
+        disable=args.disable,
+    )
+    if args.output is not None:
+        path = args.output.expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        print(
+            f"wrote {path}  enabled={list(toggle.enabled)}  "
+            f"disabled={list(toggle.disabled)}",
+            file=sys.stderr,
+        )
+        return 0
+    # stderr summary so piping stdout stays clean
+    print(
+        f"# enabled: {', '.join(toggle.enabled)}"
+        + (f"  # disabled: {', '.join(toggle.disabled)}" if toggle.disabled else ""),
+        file=sys.stderr,
+    )
+    sys.stdout.write(text)
+    return 0
 
-    parser = _build_discovery_parser()
-    args = parser.parse_args(argv)
-    if args.command == "lint" and not args.source and not _split_pkg_values(args.pkg):
-        # No implicit default: linting every default source would
-        # trigger several GitHub fetches.
-        parser.error("lint requires SOURCE or --pkg")
-    engine = DiscoveryEngine(DiscoveryConfig())
+
+def _collection(args: argparse.Namespace):
+    config = _load(args)
+    return config, build_collection(config)
+
+
+def _info(args: argparse.Namespace) -> int:
+    _, collection = _collection(args)
+    _emit(collection.info())
+    return 0
+
+
+def _search(args: argparse.Namespace) -> int:
+    _, collection = _collection(args)
+    hits = collection.search(
+        args.query,
+        kinds=_optional(args.kind),
+        namespaces=_optional(args.namespace),
+        sources=_optional(args.source),
+        limit=args.limit,
+    )
+    _emit({"query": args.query, "results": [hit.to_dict() for hit in hits]})
+    return 0
+
+
+def _explore(args: argparse.Namespace) -> int:
+    _, collection = _collection(args)
+    pack = collection.explore(
+        args.task,
+        namespaces=_optional(args.namespace),
+        sources=_optional(args.source),
+        budget_chars=args.budget_chars,
+    )
+    _emit(pack.to_dict())
+    return 0
+
+
+def _index(args: argparse.Namespace) -> int:
+    _, collection = _collection(args)
+    selected = args.sources or [binding.name for binding in collection.sources]
+    unknown = sorted(set(selected) - {binding.name for binding in collection.sources})
+    if unknown:
+        raise ConfigurationError(f"unknown configured sources: {', '.join(unknown)}")
+    results: list[dict[str, Any]] = []
+    for binding in collection.sources:
+        if binding.name not in selected:
+            continue
+        result = binding.engine.index(binding.spec, force=args.force)
+        results.append(
+            {
+                "source": binding.name,
+                "spec": binding.spec,
+                "snapshot": result.snapshot.snapshot_id,
+                "cached": result.cached,
+                "files": result.file_count,
+                "nodes": result.node_count,
+                "edges": result.edge_count,
+            }
+        )
+    _emit({"indexed": results})
+    return 0
+
+
+def _config(args: argparse.Namespace) -> int:
+    """Read or edit the settings that decide what this install indexes.
+
+    Writes go to the user file unless ``--project``/``--local`` is given:
+    a plane server inherits its working directory from whichever MCP client
+    launched it, so a project-scoped default would make configuration
+    depend on an accident.
+    """
+    if args.config_action == "list":
+        _emit(settings.load_settings(Path.cwd()).to_dict())
+        return 0
+    if args.config_action == "get":
+        _emit(
+            settings.get_value(settings.load_settings(Path.cwd()).to_dict(), args.key)
+        )
+        return 0
+    if getattr(args, "project", False) or getattr(args, "local", False):
+        target = settings.project_settings_path(Path.cwd(), local=args.local)
+    else:
+        target = settings.user_settings_path()
+    if args.config_action == "set":
+        settings.set_value(target, args.key, args.value)
+    elif args.config_action == "add":
+        settings.add_value(target, args.key, args.value)
+    else:
+        settings.remove_value(target, args.key, args.value)
+    print(f"wrote {target}", file=sys.stderr)
+    _emit(settings.read_settings_file(target))
+    return 0
+
+
+def _cache_hint(
+    vacuum_report: dict[str, Any] | None, size: int, used: int
+) -> str | None:
+    """One actionable sentence, or nothing when there is nothing to say."""
+    if vacuum_report is not None and not vacuum_report["checkpointed"]:
+        return (
+            "a running `molmcp serve` process held the write-ahead log open, "
+            "so the rebuilt database could not be folded back — stop the "
+            "plane servers and re-run `molmcp cache --vacuum`"
+        )
+    if vacuum_report is None and size - used >= 64 * 1024 * 1024:
+        return (
+            "run `molmcp cache --vacuum` (with no plane server running) to "
+            "return the freed pages to the filesystem"
+        )
+    return None
+
+
+def _cache(args: argparse.Namespace) -> int:
+    """Report the shared cache, and optionally reclaim it.
+
+    Indexing prunes conservatively — once per process, never VACUUM — because
+    both are too expensive to repeat inside a tool call. Reclaiming a cache
+    that already grew large is therefore an explicit operator action.
+    """
+    from .discovery.cache import ExtractCache, SnapshotCache
+    from .discovery.config import DiscoveryConfig
+    from .discovery.schema import ANALYZER_VERSION
+
+    vacuum_report: dict[str, Any] | None = None
+    config = _load(args)
+    discovery = DiscoveryConfig(
+        cache_dir=config.cache_dir or DiscoveryConfig().cache_dir
+    )
+    gc_report: dict[str, Any] | None = None
+    if args.gc:
+        gc_report = SnapshotCache(discovery).collect_out_of_scope(
+            set(config.sources.values())
+        )
+    cache = ExtractCache(SnapshotCache(discovery).extract_db_path(), ANALYZER_VERSION)
     try:
-        return _DISCOVERY_COMMANDS[args.command](engine, args)
-    except SourceError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        if not cache.exists():
+            _emit(
+                {
+                    "extract_cache": {
+                        "path": str(cache.db_path),
+                        "exists": False,
+                        "entries": 0,
+                        "size_bytes": 0,
+                    },
+                    "pruned": None,
+                    "vacuumed": False,
+                }
+            )
+            return 0
+
+        pruned: int | None = None
+        try:
+            if args.prune or args.vacuum:
+                cutoff = time.time() - discovery.max_cache_age_days * 86400
+                pruned = cache.prune_older_than(cutoff)
+                # Indexing sheds one decile per process so a tool call stays
+                # cheap; an operator reclaiming wants it brought fully under.
+                while True:
+                    shed = cache.enforce_size_limit(discovery.max_extract_cache_bytes)
+                    if not shed:
+                        break
+                    pruned += shed
+            if args.vacuum:
+                vacuum_report = cache.vacuum()
+        except sqlite3.OperationalError as exc:
+            raise ConfigurationError(
+                f"cannot reclaim {cache.db_path}: {exc}. A running "
+                "`molmcp serve` process is holding the cache — stop the plane "
+                "servers (or close the MCP client) and retry."
+            ) from exc
+        # Live content and file size diverge after a prune: freed pages stay
+        # in the file for reuse. Reporting only the file size would read as
+        # "the prune did nothing".
+        size = cache.size_bytes()
+        used = cache.used_bytes()
+        _emit(
+            {
+                "extract_cache": {
+                    "path": str(cache.db_path),
+                    "exists": True,
+                    "entries": cache.entry_count(),
+                    "used_bytes": used,
+                    "size_bytes": size,
+                    "reclaimable_bytes": max(size - used, 0),
+                    "retention_days": discovery.max_cache_age_days,
+                    "limit_bytes": discovery.max_extract_cache_bytes,
+                },
+                "pruned": pruned,
+                "vacuumed": vacuum_report,
+                "gc": gc_report,
+                "hint": _cache_hint(vacuum_report, size, used),
+            }
+        )
+    finally:
+        cache.close()
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] == "discovery":
-        return _discovery_main(argv[1:])
-    if argv and argv[0] == "serve":
-        return _serve_main(argv[1:])
-    return _serve_main(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if not arguments:
+        arguments = ["planes"]
+    parser = _build_parser()
+    args = parser.parse_args(arguments)
+    handlers = {
+        "serve": _serve,
+        "planes": _planes,
+        "route": _route,
+        "client": _client,
+        "info": _info,
+        "search": _search,
+        "explore": _explore,
+        "index": _index,
+        "config": _config,
+        "cache": _cache,
+    }
+    try:
+        return handlers[args.command](args)
+    except (
+        ConfigurationError,
+        FileNotFoundError,
+        ValueError,
+        settings.SettingsError,
+        # A busy or corrupt cache is an operating condition, not a crash:
+        # the CLI owes the user a sentence, not a traceback.
+        sqlite3.Error,
+        OSError,
+    ) as exc:
+        print(f"molmcp: {exc}", file=sys.stderr)
+        return 2
 
 
-if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+__all__ = ["main"]

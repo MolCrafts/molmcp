@@ -1,10 +1,11 @@
-"""``molq`` MCP provider — read-only window onto the local molq jobs DB.
+"""``molq`` MCP provider — job-store dashboard + opt-in single-job submit.
 
-The single tool ``molq_list_jobs`` is documented in :mod:`.provider`;
-this module exists to keep the provider layout uniform across the
-``molmcp.providers`` package (every provider is a subpackage with its
-class re-exported at the top level).
+Tools are documented in :mod:`.provider`. This package layout matches
+other first-party providers (``molexp``, …): a subpackage with the
+class re-exported at the top level.
 """
+
+from __future__ import annotations
 
 from .provider import MolqProvider
 

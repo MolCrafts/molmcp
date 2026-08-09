@@ -1,35 +1,42 @@
-"""molmcp — the MCP foundation for the MolCrafts ecosystem."""
+"""MolMCP — multi-plane MCP for MolCrafts (one product per connection)."""
 
 from __future__ import annotations
 
-from .discovery import DiscoveryConfig, DiscoveryEngine
-from .discovery.provider import DiscoveryProvider
-from .helpers import SubprocessResult, fence_untrusted, run_safe
-from .middleware import (
-    MissingAnnotationsError,
-    PathSafetyMiddleware,
-    ResponseLimitMiddleware,
-    validate_tool_annotations,
+from .client_config import PlaneToggle, resolve_plane_toggles
+from .collection import CollectionIndex, ContextPack, SearchHit, SourceBinding
+from .config import AppConfig, ConfigurationError, load_config
+from .mcp_provider import MolCraftsContextProvider
+from .planes import PlaneInfo, known_plane_ids, list_plane_infos, route_task
+from .provider import (
+    PROVIDER_ENTRY_POINT_GROUP,
+    Provider,
+    discover_providers,
+    provider_available,
 )
-from .provider import ENTRY_POINT_GROUP, Provider, discover_providers
-from .server import create_server
+from .server import create_plane, create_server
 
-__version__ = "0.2.1"
+__version__ = "0.5.0"
 
 __all__ = [
-    "__version__",
-    "create_server",
+    "AppConfig",
+    "CollectionIndex",
+    "ConfigurationError",
+    "ContextPack",
+    "MolCraftsContextProvider",
+    "PROVIDER_ENTRY_POINT_GROUP",
+    "PlaneInfo",
+    "PlaneToggle",
     "Provider",
-    "DiscoveryProvider",
-    "DiscoveryEngine",
-    "DiscoveryConfig",
+    "SearchHit",
+    "SourceBinding",
+    "__version__",
+    "create_plane",
+    "create_server",
     "discover_providers",
-    "ENTRY_POINT_GROUP",
-    "PathSafetyMiddleware",
-    "ResponseLimitMiddleware",
-    "MissingAnnotationsError",
-    "validate_tool_annotations",
-    "run_safe",
-    "SubprocessResult",
-    "fence_untrusted",
+    "known_plane_ids",
+    "list_plane_infos",
+    "load_config",
+    "provider_available",
+    "resolve_plane_toggles",
+    "route_task",
 ]

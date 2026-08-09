@@ -1,12 +1,19 @@
-"""Graph-signal re-ranking for capability search.
+"""Signal re-ranking for capability search.
 
 Recall — the first-pass full-text search (FTS) over indexed symbols —
-produces candidates; this module re-orders them using graph evidence:
-caller counts, example/test coverage, export status, and a per-kind
-prior. Pure functions: no SQLite, no MCP (Model Context Protocol)
-imports. Weights are module constants so every ranking decision stays
-inspectable, and :func:`rank_signals` exposes each feature's value
-plus the total score for any candidate.
+produces candidates; this module re-orders them. The primary signal is
+retrieval quality: ``fts_rank`` is a *field-weighted* lexical position
+(a hit in the symbol name outweighs one in a docstring; see the bm25
+weights in ``graphstore.search``). Reliable structural signals refine
+it: resolved-only caller count, example/test coverage, export status,
+and a per-kind prior.
+
+``caller_count`` is fed from RESOLVED call edges only (see
+``DiscoveryQuery.caller_counts``): a guessed edge must never buy a symbol
+rank, so no unfiltered graph-degree reaches the score. Pure functions: no
+SQLite, no MCP (Model Context Protocol) imports. Weights are module
+constants so every ranking decision stays inspectable, and
+:func:`rank_signals` exposes each feature's value plus the total score.
 """
 
 from __future__ import annotations
@@ -21,15 +28,27 @@ from .schema import Node, NodeKind
 # first; FTS position still matters but decays instead of dictating
 # the order outright.
 W_EXPORTED = 1.0
-W_CALLERS = 0.6  # scaled by log1p(caller_count) to damp hub symbols
+# Resolved callers are supporting evidence, not the main signal — kept low
+# so field-weighted lexical relevance leads. Scaled by log1p to damp hubs.
+W_CALLERS = 0.3
 W_EXAMPLE = 0.8
 W_TEST = 0.8
 W_FTS = 1.5  # contributes W_FTS / (1 + fts_rank)
 
+# Modules, packages and namespaces are navigational: places to browse, not
+# answers to "how do I do this". They used to fall through to the default
+# prior *and* collect the full export bonus — every module is importable —
+# which on the golden fixture ranked `readers.top` above `read_gromacs_top`
+# for "read a gromacs topology file". The reply was the file to look in
+# rather than the function to call.
+NAVIGATIONAL_KINDS = frozenset({NodeKind.MODULE, NodeKind.PACKAGE, NodeKind.NAMESPACE})
+
 # Containers and callables are likelier capability entry points than
-# data members. Capability nodes bypass this ranker entirely (they are
-# surfaced by the capability-first stage in evidence.py).
+# data members.
 KIND_PRIOR: dict[str, float] = {
+    NodeKind.MODULE: 0.0,
+    NodeKind.PACKAGE: 0.0,
+    NodeKind.NAMESPACE: 0.0,
     NodeKind.CLASS: 1.0,
     NodeKind.STRUCT: 1.0,
     NodeKind.INTERFACE: 1.0,
@@ -49,9 +68,10 @@ _DEFAULT_PRIOR = 0.5
 class RankCandidate:
     """One recall hit plus the graph signals used to re-rank it.
 
-    ``fts_rank`` is the zero-based position in the FTS result list
-    (0 = best lexical match); the counts tally how many callers,
-    examples, and tests reference ``node`` in the graph.
+    ``fts_rank`` is the zero-based position in the field-weighted FTS
+    result list (0 = best lexical match); ``caller_count`` tallies only
+    RESOLVED callers (heuristic edges are excluded upstream), and the
+    other counts tally examples and tests referencing ``node``.
     """
 
     node: Node
@@ -65,7 +85,9 @@ def _score(candidate: RankCandidate) -> float:
     node = candidate.node
     score = W_FTS / (1 + candidate.fts_rank)
     score += KIND_PRIOR.get(node.kind, _DEFAULT_PRIOR)
-    if node.is_exported:
+    # Export status is evidence for a symbol and noise for a container: a
+    # module is importable by definition, so the flag distinguishes nothing.
+    if node.is_exported and node.kind not in NAVIGATIONAL_KINDS:
         score += W_EXPORTED
     score += W_CALLERS * math.log1p(candidate.caller_count)
     if candidate.example_count > 0:

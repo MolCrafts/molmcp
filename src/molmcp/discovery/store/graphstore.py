@@ -11,13 +11,18 @@ from __future__ import annotations
 
 import importlib.resources
 import json
+import os
 import re
 import sqlite3
-from contextlib import contextmanager
+import tempfile
+from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator
 
 from ..schema import CodeGraph, Edge, FileRecord, Node, UnresolvedRef
+
+#: SQLite caps host variables per statement; batch reads chunk to fit.
+_MAX_SQL_VARIABLES = 900
 
 _SCHEMA_SQL = (
     importlib.resources.files("molmcp.discovery.store")
@@ -32,9 +37,68 @@ def _dumps(value: object) -> str:
 
 def _fts_match(text: str) -> str:
     """Build a forgiving FTS5 prefix query from free text."""
-    tokens = re.findall(r"[A-Za-z0-9_]+", text)
-    terms = [f"{t}*" for t in tokens if len(t) >= 2]
+    # ``\w`` is Unicode-aware in Python.  The previous ASCII-only regex
+    # silently discarded Chinese scientific terms and made a multilingual
+    # collection impossible to search.
+    tokens = re.findall(r"\w+", text, flags=re.UNICODE)
+    terms = [f"{token}*" for token in tokens if len(token) >= 2 or not token.isascii()]
     return " OR ".join(terms)
+
+
+@contextmanager
+def _exclusive_file_lock(path: Path) -> Iterator[None]:
+    """Cross-process advisory lock for one graph destination.
+
+    The lock file deliberately survives the process.  Its contents are not
+    state; the OS lock is.  Keeping it avoids a create/unlink race between two
+    indexers targeting the same immutable snapshot.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as handle:
+        if os.name == "nt":  # pragma: no cover - exercised in Windows CI
+            import msvcrt
+
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:  # pragma: no branch - platform split
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _fsync_file(path: Path) -> None:
+    # "r+b", not "rb": Windows refuses to flush a read-only handle with
+    # OSError(EBADF), while POSIX allows it. "+" keeps the contents — the
+    # file is already fully written and is about to be replaced into place.
+    with path.open("r+b") as handle:
+        os.fsync(handle.fileno())
+
+
+def _fsync_directory(path: Path) -> None:
+    """Best-effort durability for the atomic directory entry replacement."""
+    if not hasattr(os, "O_DIRECTORY"):
+        return
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:  # pragma: no cover - filesystem dependent
+        return
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def _build_fts(conn: sqlite3.Connection) -> bool:
@@ -96,13 +160,43 @@ class GraphStore:
     # -- creation ----------------------------------------------------
 
     def create(self, graph: CodeGraph, meta: dict) -> None:
-        """Write ``graph`` to a fresh database, replacing any existing one."""
+        """Atomically build and publish ``graph``.
+
+        A complete database is created next to the destination, fsynced, and
+        moved into place while holding a per-destination process lock.  Readers
+        therefore observe either the previous complete graph or the new one,
+        never a partially populated database.
+        """
+        self.close()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        if self.db_path.exists():
-            self.db_path.unlink()
-        with self.connect() as conn:
+        lock_path = self.db_path.with_suffix(self.db_path.suffix + ".lock")
+        with _exclusive_file_lock(lock_path):
+            fd, raw_tmp = tempfile.mkstemp(
+                prefix=f".{self.db_path.name}.",
+                suffix=".tmp",
+                dir=self.db_path.parent,
+            )
+            os.close(fd)
+            tmp_path = Path(raw_tmp)
+            try:
+                self._create_at(tmp_path, graph, meta)
+                _fsync_file(tmp_path)
+                os.replace(tmp_path, self.db_path)
+                _fsync_directory(self.db_path.parent)
+            finally:
+                tmp_path.unlink(missing_ok=True)
+
+    def _create_at(self, path: Path, graph: CodeGraph, meta: dict) -> None:
+        # closing() as well as the transaction context: Connection.__exit__
+        # commits but does not close, and the caller immediately os.replace()s
+        # this file — which fails on Windows while any handle is still open.
+        with closing(sqlite3.connect(path, check_same_thread=False)) as conn, conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout=5000")
             conn.executescript(_SCHEMA_SQL)
-            conn.execute("PRAGMA journal_mode=WAL")
+            # The published graph is immutable.  WAL would leave sidecar files
+            # outside the atomic replacement boundary, so build in DELETE mode.
+            conn.execute("PRAGMA journal_mode=DELETE")
             self._insert_files(conn, graph.files)
             self._insert_nodes(conn, graph.nodes)
             self._insert_edges(conn, graph.edges)
@@ -142,7 +236,7 @@ class GraphStore:
     @staticmethod
     def _insert_nodes(conn: sqlite3.Connection, nodes: list[Node]) -> None:
         conn.executemany(
-            "INSERT OR IGNORE INTO nodes(id, kind, name, qualname, language, "
+            "INSERT INTO nodes(id, kind, name, qualname, language, "
             "file, start_line, end_line, signature, docstring, summary, "
             "decorators, bases, visibility, is_exported, is_async, "
             "is_abstract, metadata) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -243,6 +337,31 @@ class GraphStore:
         )
         return _row_to_node(row) if row else None
 
+    def get_nodes(self, node_ids: Iterable[str]) -> dict[str, Node]:
+        """Load many nodes per statement, keyed by id.
+
+        Callers almost always know every id up front — a module's children,
+        an edge list's endpoints — and issuing one ``WHERE id = ?`` apiece
+        cost ``outline`` 1312 round trips over 75 modules.
+
+        Chunked because SQLite caps host variables per statement; missing
+        ids are simply absent from the result.
+        """
+        unique = list(dict.fromkeys(node_ids))
+        if not unique:
+            return {}
+        found: dict[str, Node] = {}
+        conn = self._conn()
+        for start in range(0, len(unique), _MAX_SQL_VARIABLES):
+            chunk = unique[start : start + _MAX_SQL_VARIABLES]
+            placeholders = ",".join("?" for _ in chunk)
+            for row in conn.execute(
+                f"SELECT * FROM nodes WHERE id IN ({placeholders})", chunk
+            ):
+                node = _row_to_node(row)
+                found[node.id] = node
+        return found
+
     def nodes_by_qualname(self, qualname: str) -> list[Node]:
         return [
             _row_to_node(r)
@@ -284,20 +403,27 @@ class GraphStore:
             params = (node_id, str(kind))
         return [_row_to_edge(r) for r in self._conn().execute(sql, params)]
 
-    def incoming_edge_counts(self, node_ids: list[str], kind: str) -> dict[str, int]:
+    def incoming_edge_counts(
+        self, node_ids: list[str], kind: str, *, provenance: str | None = None
+    ) -> dict[str, int]:
         """Count incoming edges of ``kind`` per node id in one statement.
 
-        Ids with no matching in-edges are absent from the result.
+        When ``provenance`` is given, only edges with that provenance are
+        counted — callers use this to exclude guessed (heuristic) edges from
+        relevance signals. Ids with no matching in-edges are absent.
         """
         if not node_ids:
             return {}
         placeholders = ",".join("?" for _ in node_ids)
-        rows = self._conn().execute(
+        sql = (
             "SELECT target, COUNT(*) AS n FROM edges "
-            f"WHERE kind = ? AND target IN ({placeholders}) "
-            "GROUP BY target",
-            (str(kind), *node_ids),
+            f"WHERE kind = ? AND target IN ({placeholders})"
         )
+        params: tuple = (str(kind), *node_ids)
+        if provenance is not None:
+            sql += " AND provenance = ?"
+            params = (*params, str(provenance))
+        rows = self._conn().execute(sql + " GROUP BY target", params)
         return {row["target"]: row["n"] for row in rows}
 
     def search(
@@ -309,7 +435,12 @@ class GraphStore:
         are de-duplicated and capped at ``limit``.
         """
         conn = self._conn()
-        fetch = max(limit * 4, 40)
+        # The kind filter is part of the query, not a post-filter. Dropping
+        # wrong-kind rows after a fixed-size prefetch starved rare kinds:
+        # asking for the ten matching classes among forty matching functions
+        # returned whatever few classes happened to rank inside the window.
+        kind_clause = " AND n.kind = ?" if kind is not None else ""
+        kind_params: tuple = (str(kind),) if kind is not None else ()
         ids: list[str] = []
         if self.fts_available():
             match = _fts_match(query)
@@ -318,9 +449,17 @@ class GraphStore:
                     ids = [
                         r["node_id"]
                         for r in conn.execute(
-                            "SELECT node_id FROM nodes_fts WHERE nodes_fts "
-                            "MATCH ? ORDER BY rank LIMIT ?",
-                            (match, fetch),
+                            # Field-weighted bm25: a hit in the symbol NAME
+                            # far outweighs one buried in a docstring, so
+                            # `read_lammps_data` beats a reader that merely
+                            # mentions "frame" in prose. Column order is
+                            # (node_id, name, qualname, docstring, summary).
+                            "SELECT f.node_id FROM nodes_fts f "
+                            "JOIN nodes n ON n.id = f.node_id "
+                            f"WHERE nodes_fts MATCH ?{kind_clause} "
+                            "ORDER BY bm25(nodes_fts, 0.0, 10.0, 5.0, "
+                            "1.0, 2.0) LIMIT ?",
+                            (match, *kind_params, limit),
                         )
                     ]
                 except sqlite3.OperationalError:
@@ -330,22 +469,14 @@ class GraphStore:
             ids = [
                 r["id"]
                 for r in conn.execute(
-                    "SELECT id FROM nodes WHERE name LIKE ? OR qualname LIKE ? "
-                    "OR IFNULL(summary, '') LIKE ? ORDER BY qualname LIMIT ?",
-                    (like, like, like, fetch),
+                    "SELECT n.id FROM nodes n WHERE (n.name LIKE ? "
+                    "OR n.qualname LIKE ? OR IFNULL(n.summary, '') LIKE ?)"
+                    f"{kind_clause} ORDER BY n.qualname LIMIT ?",
+                    (like, like, like, *kind_params, limit),
                 )
             ]
-        out: list[Node] = []
-        for node_id in ids:
-            node = self.get_node(node_id)
-            if node is None:
-                continue
-            if kind is not None and node.kind != kind:
-                continue
-            out.append(node)
-            if len(out) >= limit:
-                break
-        return out
+        found = self.get_nodes(ids)
+        return [found[node_id] for node_id in ids if node_id in found]
 
 
 def _row_to_node(row: sqlite3.Row) -> Node:

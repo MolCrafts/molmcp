@@ -1,7 +1,7 @@
 [project]
 name = "molcrafts-molmcp"
-version = "0.2.1"
-description = "The MCP foundation for the MolCrafts ecosystem"
+version = "0.5.0"
+description = "Multi-plane on-demand MCP for MolCrafts: one product domain per connection"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "BSD-3-Clause"}
@@ -34,7 +34,15 @@ classifiers = [
 ]
 
 dependencies = [
-    "fastmcp>=3.0",
+    "fastmcp>=4.0.0b1,<5",
+    "jsonschema>=4.25,<5",
+    "packaging>=25,<27",
+    # <0.26: tree-sitter 0.26.0 segfaults walking large generated JS bundles
+    # (native regression; reproduced on Atomiverse docs assets, 2026-07-20).
+    "tree-sitter>=0.25,<0.26",
+    "tree-sitter-javascript>=0.25,<0.26",
+    "tree-sitter-rust>=0.24,<0.25",
+    "tree-sitter-typescript>=0.23,<0.24",
 ]
 
 [project.optional-dependencies]
@@ -42,27 +50,26 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.23.0",
     "ruff>=0.6",
+    "tox>=4.23",
 ]
 docs = [
-    "zensical>=0.0.37",
+    "zensical>=0.0.53",
+    "molcrafts-zensical-theme>=0.2.5",
 ]
 
 [project.scripts]
 molmcp = "molmcp.cli:main"
 
 [project.entry-points."molmcp.providers"]
-molexp  = "molmcp.providers.molexp:MolexpProvider"
-molq    = "molmcp.providers.molq:MolqProvider"
-lammps  = "molmcp.providers.lammps:LammpsProvider"
-molpy   = "molmcp.providers.molpy:MolpyProvider"
-molpack = "molmcp.providers.molpack:MolpackProvider"
+molexp = "molmcp.providers.molexp:MolexpProvider"
+molq = "molmcp.providers.molq:MolqProvider"
+molvis = "molmcp.providers.molvis:MolvisProvider"
 
 [project.urls]
 Homepage = "https://github.com/MolCrafts/molmcp"
-Documentation = "https://molcrafts.github.io/molmcp/"
+Documentation = "https://docs.molcrafts.org/molmcp/"
 Repository = "https://github.com/MolCrafts/molmcp.git"
 Issues = "https://github.com/MolCrafts/molmcp/issues"
-Changelog = "https://github.com/MolCrafts/molmcp/blob/master/CHANGELOG.md"
 
 [build-system]
 requires = ["setuptools>=42", "wheel"]
@@ -91,3 +98,55 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+# Isolated gates — prek + CI: uv run --extra dev tox -e lint|py
+[tool.tox]
+requires = ["tox>=4.23"]
+env_list = ["lint", "py"]
+
+[tool.tox.env.lint]
+description = "CI lint"
+skip_install = true
+base_python = ["python3.12"]
+deps = [
+  "ruff>=0.6",
+  "pytest>=7.0.0",
+  "pytest-asyncio>=0.23.0",
+]
+commands = [
+  ["ruff", "check", "src", "tests"],
+  ["ruff", "format", "--check", "src", "tests"],
+]
+
+[tool.tox.env.py]
+description = "CI test (non-editable package when package=wheel)"
+base_python = ["python3.12"]
+pass_env = [
+  "HOME",
+  "PATH",
+  "SSH_AUTH_SOCK",
+  "TERM",
+  "VIRTUAL_ENV",
+  "UV_*",
+]
+package = "wheel"
+extras = ["dev"]
+commands_pre = [
+  [
+    "{envpython}",
+    "-c",
+    "import pathlib, site; sps=site.getsitepackages(); print('site-packages', sps)",
+  ],
+]
+commands = [
+  ["{envpython}", "-m", "pytest", "-v"],
+]
+
+# FastMCP 4 (MCP 2026-07-28). The lower bound is a pre-release on purpose:
+# 4.x is still beta, and a bare `fastmcp` resolves to the newest *stable*,
+# which is 3.4.6 — silently off the 2026-07-28 protocol. Naming a pre-release
+# in the specifier is what lets 4.0.0bN and the eventual 4.0.0 both resolve.
+[tool.uv]
+constraint-dependencies = [
+    "fastmcp-slim>=4.0.0b1,<5",
+]

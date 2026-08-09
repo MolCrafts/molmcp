@@ -7,9 +7,14 @@ an :class:`ExtractCache` lets unchanged files skip the analyzer.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata
+import inspect
+import json
 import logging
+import sqlite3
 import time
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,6 +29,8 @@ from .source import Snapshot, SourceResolver
 from .store import GraphStore
 
 logger = logging.getLogger(__name__)
+
+RESOLVER_VERSION = 1
 
 try:
     ENGINE_VERSION = importlib.metadata.version("molcrafts-molmcp")
@@ -70,12 +77,19 @@ class DiscoveryEngine:
             self.cache.extract_db_path(), ANALYZER_VERSION
         )
         self.extractor = Extractor(self.extract_cache)
+        self._extract_pruned = False
+        self._issued_stores: weakref.WeakSet[GraphStore] = weakref.WeakSet()
         if overlays is None:
             from .overlay import load_overlays
 
             self._overlays = load_overlays()
         else:
             self._overlays = list(overlays)
+        self.build_id = _build_identity(self._overlays)
+        # Analyzer code/config changes must not reuse extraction payloads.  The
+        # full build identity is intentionally accepted here: a small amount of
+        # duplicate extraction is preferable to cross-profile contamination.
+        self.extract_cache.analyzer_version = f"{ANALYZER_VERSION}:{self.build_id}"
 
     def resolve(self, spec: str) -> Snapshot:
         """Resolve a spec to an immutable snapshot (no indexing)."""
@@ -168,14 +182,21 @@ class DiscoveryEngine:
     def query(self, spec: str, *, force: bool = False) -> DiscoveryQuery:
         """Index ``spec`` if needed and return a query handle over it."""
         result = self.index(spec, force=force)
-        store = GraphStore(self.cache.graph_db_path(result.snapshot.snapshot_id))
+        store = GraphStore(
+            self.cache.graph_db_path(result.snapshot.snapshot_id, self.build_id)
+        )
+        # Held weakly: a query the caller has dropped should not keep its read
+        # connection alive, but one still in use must be closed by close().
+        # Until this existed every query() leaked a handle until GC — invisible
+        # on POSIX, and on Windows it stops the cache directory being removed.
+        self._issued_stores.add(store)
         return DiscoveryQuery(
             store, snapshot=result.snapshot, freshness=result.freshness
         )
 
     def load_graph(self, snapshot_id: str) -> CodeGraph:
         """Load a previously indexed snapshot's graph from cache."""
-        store = GraphStore(self.cache.graph_db_path(snapshot_id))
+        store = GraphStore(self.cache.graph_db_path(snapshot_id, self.build_id))
         if not store.exists():
             raise FileNotFoundError(f"no cached graph for snapshot {snapshot_id!r}")
         try:
@@ -184,6 +205,9 @@ class DiscoveryEngine:
             store.close()
 
     def close(self) -> None:
+        for store in list(self._issued_stores):
+            store.close()
+        self._issued_stores.clear()
         self.extract_cache.close()
 
     # -- internals ---------------------------------------------------
@@ -192,6 +216,7 @@ class DiscoveryEngine:
         graph = self.extractor.extract(snapshot)
         graph = Resolver().resolve(graph)
         self._apply_overlays(snapshot, graph)
+        _dedupe_node_ids(graph)
         return graph
 
     def _apply_overlays(self, snapshot: Snapshot, graph: CodeGraph) -> None:
@@ -212,10 +237,15 @@ class DiscoveryEngine:
             graph.unresolved.extend(contribution.unresolved)
 
     def _cache_is_valid(self, snapshot_id: str) -> bool:
-        if not self.cache.has(snapshot_id):
+        if not self.cache.has(snapshot_id, self.build_id):
             return False
-        manifest = self.cache.read_manifest(snapshot_id) or {}
-        return manifest.get("schema_version") == SCHEMA_VERSION
+        manifest = self.cache.read_manifest(snapshot_id, self.build_id) or {}
+        return (
+            manifest.get("schema_version") == SCHEMA_VERSION
+            and manifest.get("analyzer_version") == ANALYZER_VERSION
+            and manifest.get("resolver_version") == RESOLVER_VERSION
+            and manifest.get("build_id") == self.build_id
+        )
 
     def _cached_github_snapshot(self, spec: str) -> Snapshot | None:
         """Rebuild a Snapshot for an already-indexed github spec, no network."""
@@ -225,7 +255,7 @@ class DiscoveryEngine:
         snapshot_id = ref.get("snapshot_id")
         if not snapshot_id or not self._cache_is_valid(snapshot_id):
             return None
-        manifest = self.cache.read_manifest(snapshot_id) or {}
+        manifest = self.cache.read_manifest(snapshot_id, self.build_id) or {}
         root = manifest.get("root_dir")
         return Snapshot(
             snapshot_id=snapshot_id,
@@ -246,7 +276,7 @@ class DiscoveryEngine:
         snapshot_id = ref.get("snapshot_id")
         if not snapshot_id:
             return None
-        db_path = self.cache.graph_db_path(snapshot_id)
+        db_path = self.cache.graph_db_path(snapshot_id, self.build_id)
         if not db_path.is_file():
             return None
         store = GraphStore(db_path)
@@ -257,12 +287,17 @@ class DiscoveryEngine:
 
     def _persist(self, snapshot: Snapshot, graph: CodeGraph) -> None:
         indexed_at = time.time()
-        store = GraphStore(self.cache.graph_db_path(snapshot.snapshot_id))
+        store = GraphStore(
+            self.cache.graph_db_path(snapshot.snapshot_id, self.build_id)
+        )
         store.create(
             graph,
             meta={
                 "snapshot_id": snapshot.snapshot_id,
                 "schema_version": SCHEMA_VERSION,
+                "analyzer_version": ANALYZER_VERSION,
+                "resolver_version": RESOLVER_VERSION,
+                "build_id": self.build_id,
                 "engine_version": ENGINE_VERSION,
                 "indexed_at": indexed_at,
             },
@@ -276,13 +311,16 @@ class DiscoveryEngine:
             "root_dir": str(snapshot.root_dir),
             "indexed_at": indexed_at,
             "schema_version": SCHEMA_VERSION,
+            "analyzer_version": ANALYZER_VERSION,
+            "resolver_version": RESOLVER_VERSION,
+            "build_id": self.build_id,
             "engine_version": ENGINE_VERSION,
             "file_count": len(graph.files),
             "node_count": len(graph.nodes),
             "edge_count": len(graph.edges),
             "unresolved_count": len(graph.unresolved),
         }
-        self.cache.write_manifest(snapshot.snapshot_id, manifest)
+        self.cache.write_manifest(snapshot.snapshot_id, manifest, self.build_id)
         self.cache.write_ref(
             snapshot.spec,
             {
@@ -292,3 +330,125 @@ class DiscoveryEngine:
             },
         )
         self.cache.evict()
+        self._prune_extract_cache()
+
+    def _prune_extract_cache(self) -> None:
+        """Bound the shared extraction cache, at most once per process.
+
+        ``SnapshotCache.evict`` only reclaims snapshot directories; the
+        extract table lives beside them and used to grow without limit —
+        every analyzer or overlay change re-keys it via ``build_id``, so each
+        edit orphaned a whole generation that nothing would ever read again.
+        Left alone this reached multiple gigabytes in normal use, which is
+        what made opening the cache slow enough to be felt in a tool call.
+
+        A full-table delete is too expensive to repeat per index, and the
+        window is measured in days, so once per process is enough.
+        ``max_cache_age_days = 0`` disables retention, matching ``evict``.
+        """
+        if self._extract_pruned:
+            return
+        self._extract_pruned = True
+        legacy = self.cache.discard_legacy_caches()
+        if legacy:
+            logger.info("removed legacy cache file(s): %s", ", ".join(legacy))
+        days = self.config.max_cache_age_days
+        try:
+            removed = 0
+            if days > 0:
+                removed = self.extract_cache.prune_older_than(
+                    time.time() - days * 86400
+                )
+            removed += self.extract_cache.enforce_size_limit(
+                self.config.max_extract_cache_bytes
+            )
+        except sqlite3.Error as exc:  # a cache chore must never fail an index
+            logger.warning("extract cache prune failed: %s", exc)
+            return
+        if removed:
+            logger.info("pruned %d extraction payload(s)", removed)
+
+
+def _source_digest(value: object) -> str:
+    """Stable code/content fingerprint for a build component."""
+    try:
+        source = inspect.getsource(value)
+    except (OSError, TypeError):
+        module = getattr(value, "__module__", "")
+        qualname = getattr(value, "__qualname__", type(value).__qualname__)
+        source = f"{module}:{qualname}"
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+def _overlay_identity(overlay: object) -> dict:
+    identity = {
+        "class": f"{type(overlay).__module__}.{type(overlay).__qualname__}",
+        "name": str(getattr(overlay, "name", "")),
+        "code": _source_digest(type(overlay)),
+    }
+    catalog_path = getattr(overlay, "catalog_path", None)
+    if catalog_path is not None:
+        try:
+            payload = Path(catalog_path).read_bytes()
+        except OSError:
+            identity["catalog"] = "unavailable"
+        else:
+            identity["catalog"] = hashlib.sha256(payload).hexdigest()
+    version = getattr(overlay, "version", None)
+    if version is not None:
+        identity["version"] = str(version)
+    return identity
+
+
+def _build_identity(overlays: list[object]) -> str:
+    from .analyzers import ANALYZER_REGISTRY
+
+    analyzer_types = sorted(
+        {
+            (
+                f"{type(analyzer).__module__}.{type(analyzer).__qualname__}"
+            ): _source_digest(type(analyzer))
+            for analyzer in ANALYZER_REGISTRY.values()
+        }.items()
+    )
+    payload = {
+        "schema": SCHEMA_VERSION,
+        "analyzer": ANALYZER_VERSION,
+        "resolver": RESOLVER_VERSION,
+        "resolver_code": _source_digest(Resolver),
+        "analyzers": analyzer_types,
+        "overlays": [_overlay_identity(item) for item in overlays],
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
+
+
+def _dedupe_node_ids(graph: CodeGraph) -> None:
+    """Resolve node-id collisions before persist (last definition wins).
+
+    Analyzer edge cases — property setter/deleter pairs, same-scope
+    redefinitions — can emit two nodes sharing one ``file#qualname#kind``
+    id. The sqlite ``nodes.id`` PRIMARY KEY would reject the whole
+    snapshot, so collisions are dropped here, keeping the last occurrence
+    to match Python's later-definition-wins semantics.
+    """
+    counts: dict[str, int] = {}
+    for node in graph.nodes:
+        counts[node.id] = counts.get(node.id, 0) + 1
+    dupes = sorted(i for i, c in counts.items() if c > 1)
+    if not dupes:
+        return
+    logger.warning(
+        "dropping %d duplicate node id(s), keeping last definition: %s",
+        len(dupes),
+        dupes[:5],
+    )
+    seen: set[str] = set()
+    kept = []
+    for node in reversed(graph.nodes):
+        if node.id in seen:
+            continue
+        seen.add(node.id)
+        kept.append(node)
+    kept.reverse()
+    graph.nodes[:] = kept

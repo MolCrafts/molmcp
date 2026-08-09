@@ -1,55 +1,272 @@
-# molmcp
+---
+title: molmcp
+description: Multi-plane MCP for MolCrafts — one product domain per connection, knowledge pages on demand, no mega-server.
+hide:
+  - navigation
+  - toc
+hero:
+  kicker: molmcp Manual
+  title: molmcp
+  description: "Multi-plane, on-demand MCP for MolCrafts. Connect only the planes you need — catalog routing, molcrafts knowledge pages, molvis live sessions, molq jobs, molexp workspaces. Science APIs stay in code; agents discover them, then call them elsewhere."
+  install:
+    label: Install
+    command: pip install molcrafts-molmcp
+  badges:
+    - img: https://img.shields.io/pypi/v/molcrafts-molmcp
+      href: https://pypi.org/project/molcrafts-molmcp/
+      alt: PyPI version
+    - img: https://img.shields.io/badge/python-3.12%2B-blue.svg
+      href: https://pypi.org/project/molcrafts-molmcp/
+      alt: Python 3.12+
+    - img: https://img.shields.io/badge/license-BSD--3--Clause-blue.svg
+      href: https://github.com/MolCrafts/molmcp/blob/master/LICENSE
+      alt: License BSD-3-Clause
+  actions:
+    - label: Get started
+      href: get-started/installation/
+      style: primary
+    - label: Architecture
+      href: concepts/architecture/
+    - label: MolVis workbench
+      href: guides/molvis-workbench/
+---
 
-**The MCP foundation for the MolCrafts ecosystem.**
+<h1 class="molcrafts-sr-only">molmcp</h1>
 
-molmcp is the Model Context Protocol layer that MolCrafts packages share. Instead of every package — `molpy`, `molcfg`, `molexp`, `molpack`, `mollog`, `molq`, `molrec`, `molvis` — authoring its own MCP server, they all build on molmcp: same graph-based discovery tools, same security defaults, same Provider plugin contract. molmcp itself is pure infrastructure — it imports nothing from MolCrafts packages, so any of them can adopt it without dragging in the others.
+<div class="molcrafts-manual-home" markdown>
 
-The design contract is **discovery-first**: agents resolve the MolCrafts API from a statically indexed code graph through generic discovery tools, then call it from Python or the package's CLI. molmcp adds a curated Provider only when the answer depends on runtime state discovery cannot see. See [Provider design](concepts/provider-design.md) for the four-condition rule that gates every tool.
+<!-- ────────────────────────────────────────────────────────────
+     FEATURES — direct product capabilities
+     ──────────────────────────────────────────────────────────── -->
 
-## What molmcp gives the MolCrafts ecosystem
+<section class="molcrafts-manual-section molcrafts-manual-section--stack" markdown>
 
-<div class="grid cards" markdown>
+<div class="molcrafts-manual-section__header" markdown>
 
-- :material-magnify: **Graph-based discovery**
+<span class="molcrafts-manual-eyebrow">Features</span>
 
-    Six read-only tools — `molmcp_find_capability`, `molmcp_search_symbols`, `molmcp_describe_symbol`, `molmcp_relations`, `molmcp_outline`, `molmcp_refresh` — over a code graph indexed from any MolCrafts source.
+## One plane per connection
 
-    [→ Quickstart](get-started/quickstart.md)
-
-- :material-puzzle: **Provider plugin contract**
-
-    A Provider may register a tool only when discovery cannot answer the question — typically a stateful query against a local DB or workspace. Two providers ship in-tree (`MolqProvider`, `MolexpProvider`); third-party packages plug in via the `molmcp.providers` entry-point group.
-
-    [→ Provider design](concepts/provider-design.md)
-
-- :material-shield-check: **Security defaults**
-
-    `..` traversal blocked. Responses capped at 256 KB. Tools without `readOnlyHint`/`destructiveHint` refuse to start. `run_safe` for shelling out to Packmol / LAMMPS / AmberTools.
-
-    [→ Security model](guides/security.md)
-
-- :material-layers: **Composition without coupling**
-
-    Auto-discovered Providers register through the `molmcp.providers` entry-point group; mount many in one server with `mcp.mount(prefix=...)`. molmcp itself depends on no MolCrafts package — they each adopt molmcp on their own schedule.
-
-    [→ Architecture](concepts/architecture.md)
+There is **no** mega-server that mounts every tool under `molmcp`. Clients
+link planes on demand. Tool ids look like `molvis__open` or
+`molcrafts__packages` — server name plus bare tool.
 
 </div>
 
-## A quick taste
+<div class="molcrafts-manual-grid molcrafts-manual-grid--cols-3">
+  <a href="concepts/architecture/">
+    <strong>catalog</strong>
+    <em>Bootstrap only: list_planes and route(task) so the agent knows which product planes to connect.</em>
+  </a>
+  <a href="concepts/discovery/">
+    <strong>molcrafts</strong>
+    <em>OKF-style knowledge pages — packages → outline → open → search / compose — over a content-addressed code graph.</em>
+  </a>
+  <a href="guides/molvis-workbench/">
+    <strong>molvis</strong>
+    <em>Live viewer session: open a browser stage, exec Python, poll human selection events, redraw.</em>
+  </a>
+  <a href="concepts/provider-design/">
+    <strong>molq / molexp</strong>
+    <em>Job store and experiment workspace planes — each its own connection, gated by the four-condition rule.</em>
+  </a>
+  <a href="concepts/discovery/">
+    <strong>Snapshot cache</strong>
+    <em>Index installed packages, local paths, or GitHub repos into SQLite graphs with FTS5; every answer carries a snapshot.</em>
+  </a>
+  <a href="concepts/provider-design/">
+    <strong>No invented science tools</strong>
+    <em>Science APIs stay in molpy/molrs/… Agents discover them on molcrafts, then call them in agent Python or molvis exec.</em>
+  </a>
+</div>
+
+</section>
+
+<!-- ────────────────────────────────────────────────────────────
+     THE TOOLS — six graph operations
+     ──────────────────────────────────────────────────────────── -->
+
+<section class="molcrafts-manual-section molcrafts-manual-section--stack" markdown>
+
+<div class="molcrafts-manual-section__header" markdown>
+
+<span class="molcrafts-manual-eyebrow">The molcrafts plane</span>
+
+## Knowledge pages, not a tool mega-menu
+
+On the **molcrafts** plane, tools are bare names (`packages`, `outline`,
+`open`, …). Clients see `molcrafts__packages`. Every page-style response is
+meant to be **injected into context** — not skimmed as a search hit list.
+
+</div>
+
+<dl class="molcrafts-feature-matrix">
+  <dt><code>packages</code></dt>
+  <dd>L0 directory of indexed packages and summaries — choose sources yourself.</dd>
+  <dt><code>outline</code></dt>
+  <dd>Module / symbol map for one source before you dive deeper.</dd>
+  <dt><code>open</code></dt>
+  <dd>Inject one symbol page (signature, docstring, examples, tests, optional source).</dd>
+  <dt><code>search</code> / <code>suggest</code></dt>
+  <dd>Index helpers — prefer after packages/outline, with an explicit <code>source=</code> when possible.</dd>
+  <dt><code>compose</code></dt>
+  <dd>Budgeted multi-page pack for a task (packages + suggest + open pages).</dd>
+  <dt><code>info</code></dt>
+  <dd>Ops / health view of the configured sources — not the main discovery path.</dd>
+</dl>
+
+</section>
+
+<!-- ────────────────────────────────────────────────────────────
+     THE DEMO — a plain-language question answered from the graph
+     ──────────────────────────────────────────────────────────── -->
+
+<section class="molcrafts-manual-section molcrafts-manual-section--stack" markdown>
+
+<div class="molcrafts-manual-section__header" markdown>
+
+<span class="molcrafts-manual-eyebrow">Example</span>
+
+## Ask in plain language, get back real symbols
+
+An agent describes a task. molmcp answers from indexed code: real qualnames,
+files and lines, examples that use the symbol, and tests that exercise it.
+Names that do not resolve come back as structured errors.
+
+</div>
+
+```text
+# catalog plane — which connections do I need?
+catalog.route("compute an RDF in molpy")
+→ connect molcrafts (knowledge) …
+
+# molcrafts plane — inject real API pages
+molcrafts.packages()                    # pick source "molpy"
+molcrafts.search("RDF", source="molpy")
+molcrafts.open("molpy.compute.rdf.RDF")
+→ signature, docstring, examples, tests, snapshot
+```
+
+</section>
+
+<!-- ────────────────────────────────────────────────────────────
+     INDEXED SOURCE MODEL
+     ──────────────────────────────────────────────────────────── -->
+
+<section class="molcrafts-manual-section molcrafts-manual-section--stack" markdown>
+
+<div class="molcrafts-manual-section__header" markdown>
+
+<span class="molcrafts-manual-eyebrow">Indexed source model</span>
+
+## Nodes, edges, provenance, snapshots
+
+molmcp parses source statically. Symbols become nodes; calls, imports,
+inheritance, tests, examples, and capability tags become edges. Each edge records
+whether it came from direct AST parsing, unique resolution, or a heuristic match.
+
+</div>
+
+<dl class="molcrafts-feature-matrix">
+  <dt>21 node kinds</dt>
+  <dd><code>package</code> · <code>module</code> · <code>class</code> · <code>function</code> · <code>method</code> · <code>property</code> · <code>field</code> · <code>constant</code> · <code>example</code> · <code>test</code> · <code>capability</code> · <code>convention</code> …</dd>
+  <dt>15 edge kinds</dt>
+  <dd><code>contains</code> · <code>calls</code> · <code>extends</code> · <code>imports</code> · <code>tests</code> · <code>exemplifies</code> · <code>provides_capability</code> · <code>governs</code> …</dd>
+  <dt>Content-addressed snapshots</dt>
+  <dd>Local sources are keyed by content hash; GitHub sources by resolved commit. A cached graph always points at exact source, never a floating branch name.</dd>
+</dl>
+
+```text
+source spec ─▶ snapshot ─▶ extract symbols ─▶ resolve names ─▶ graph.db
+ pkg:molpy      content      analyzers emit      calls/imports      SQLite +
+ ./path         hash or      shared nodes        linked to defs     FTS5
+ github:repo    commit
+```
+
+</section>
+
+<!-- ────────────────────────────────────────────────────────────
+     RUN IT — one command
+     ──────────────────────────────────────────────────────────── -->
+
+<section class="molcrafts-manual-section molcrafts-manual-section--compact" markdown>
+
+<div class="molcrafts-manual-section__header" markdown>
+
+<span class="molcrafts-manual-eyebrow">Run it</span>
+
+## One process per plane
+
+Install once, then serve **only** the planes your client should see. Use
+`molmcp planes` / `molmcp route "…"` to discover the catalog.
+
+</div>
 
 ```bash
 pip install molcrafts-molmcp
-python -m molmcp
+molmcp planes
+molmcp serve catalog          # list_planes / route
+molmcp serve molcrafts        # knowledge pages (needs at least one configured source)
+molmcp serve molvis           # live viewer session
+# Claude Code — one MCP entry per plane you connect:
+#   claude mcp add catalog -- molmcp serve catalog
+#   claude mcp add molcrafts -- molmcp serve molcrafts
 ```
 
-That's enough — six graph-based discovery tools online over MCP stdio against whichever of `{molpy, molpack, molrs, molq, molexp}` are installed in the active environment, plus the first-party `MolqProvider` / `MolexpProvider` tools when their packages are present. For the one-line `claude mcp add` recipe, multi-server setups, and per-client wiring, see [Deploy](get-started/deploy.md).
+</section>
 
-When a MolCrafts package has a stateful query that discovery genuinely cannot answer, it ships a Provider — see [Provider design](concepts/provider-design.md) for the rule and [Writing a Provider](guides/write-a-provider.md) for the mechanics.
+<!-- ────────────────────────────────────────────────────────────
+     MANUAL INDEX
+     ──────────────────────────────────────────────────────────── -->
 
-## Why this exists
+<section class="molcrafts-manual-section molcrafts-manual-section--stack" markdown>
 
-When LLM agents work on a MolCrafts project they need exact, current API knowledge — what's in `molpy.core.atomistic`, what `molpack.pack` accepts, what `molexp.Experiment` returns. Re-implementing code discovery per package is wasted work; the engine is identical regardless of which MolCrafts package it indexes. molmcp factors out the common layer, with security defaults that no one wants to maintain in N copies, so MolCrafts packages can focus on the *interesting* part: exposing the simulations, the parsers, the I/O — the things only they can do.
+<div class="molcrafts-manual-section__header" markdown>
 
-[Get started →](get-started/installation.md){ .md-button .md-button--primary }
-[See the architecture →](concepts/architecture.md){ .md-button }
+<span class="molcrafts-manual-eyebrow">Find your page</span>
+
+## The manual, front to back
+
+</div>
+
+<nav class="molcrafts-manual-index" aria-label="Manual chapters">
+  <a href="get-started/installation/">
+    <span>01</span>
+    <strong>Installation</strong>
+    <em>Install molmcp and list connectable planes.</em>
+  </a>
+  <a href="get-started/quickstart/">
+    <span>02</span>
+    <strong>Quickstart</strong>
+    <em>Serve catalog + molcrafts, wire multi-link MCP clients.</em>
+  </a>
+  <a href="concepts/architecture/">
+    <span>03</span>
+    <strong>Architecture</strong>
+    <em>One plane per connection — catalog, knowledge, providers.</em>
+  </a>
+  <a href="concepts/discovery/">
+    <span>04</span>
+    <strong>Discovery engine</strong>
+    <em>How the code graph is built, stored, and queried.</em>
+  </a>
+  <a href="guides/molvis-workbench/">
+    <span>05</span>
+    <strong>MolVis workbench</strong>
+    <em>open → exec → poll_events loop for a live stage.</em>
+  </a>
+  <a href="concepts/provider-design/">
+    <span>06</span>
+    <strong>Provider design</strong>
+    <em>Four-condition rule for every tool beyond knowledge pages.</em>
+  </a>
+  <a href="reference/cli/">
+    <span>07</span>
+    <strong>Reference</strong>
+    <em>CLI and plane API surface.</em>
+  </a>
+</nav>
+
+</section>
+
+</div>

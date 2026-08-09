@@ -12,3 +12,8 @@ dist/
 .coverage
 htmlcov/
 site/
+uv.lock
+
+.tox/
+.venv/
+.DS_Store

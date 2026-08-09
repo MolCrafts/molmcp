@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import sqlite3
+
+import pytest
+
 from molmcp.discovery.schema import CodeGraph, Node, NodeKind
 from molmcp.discovery.store import GraphStore
 from molmcp.discovery.store.graphstore import _build_fts
@@ -32,6 +36,17 @@ def _graph() -> CodeGraph:
                 end_line=10,
                 summary="A widget.",
             ),
+            Node(
+                id="m.py#m.rdf#function",
+                kind=NodeKind.FUNCTION,
+                name="径向分布函数",
+                qualname="m.rdf",
+                language="python",
+                file="m.py",
+                start_line=12,
+                end_line=16,
+                summary="计算径向分布函数。",
+            ),
         ]
     )
 
@@ -47,6 +62,30 @@ def test_fts_search_finds_symbol(tmp_path):
     store.create(_graph(), meta={"schema_version": 1})
     hits = store.search("lammps")
     assert "m.parse_lammps" in {n.qualname for n in hits}
+
+
+def test_fts_search_preserves_unicode_terms(tmp_path):
+    store = GraphStore(tmp_path / "graph.db")
+    store.create(_graph(), meta={"schema_version": 1})
+    hits = store.search("径向分布函数")
+    assert "m.rdf" in {n.qualname for n in hits}
+
+
+def test_failed_rebuild_preserves_previous_complete_graph(tmp_path):
+    db = tmp_path / "graph.db"
+    store = GraphStore(db)
+    store.create(_graph(), meta={"schema_version": 1})
+
+    duplicate = _graph().nodes[0]
+    with pytest.raises(sqlite3.IntegrityError):
+        store.create(
+            CodeGraph(nodes=[duplicate, duplicate]),
+            meta={"schema_version": 2},
+        )
+
+    reopened = GraphStore(db)
+    assert reopened.read_meta()["schema_version"] == 1
+    assert "m.Widget" in {node.qualname for node in reopened.search("widget")}
 
 
 def test_fts_index_rebuildable_from_nodes(tmp_path):

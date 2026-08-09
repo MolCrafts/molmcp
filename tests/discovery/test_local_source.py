@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from molmcp.discovery.config import DiscoveryConfig
-from molmcp.discovery.source.local import resolve_local_path
+from molmcp.discovery.source.local import resolve_local_path, resolve_pkg
 
 
 def _write(path: Path, text: str) -> None:
@@ -80,3 +80,15 @@ def test_package_directory_uses_parent_as_root(tmp_path):
     # rel paths include the package name because root is the parent
     assert "mypkg/__init__.py" in paths
     assert "mypkg/core.py" in paths
+
+
+def test_resolve_pkg_roots_snapshot_at_package_parent(tmp_path):
+    # fixture_pkg is importable via pyproject pythonpath = ["src", "tests"].
+    snap = resolve_pkg("fixture_pkg", "pkg:fixture_pkg", _config(tmp_path))
+    paths = {f.rel_path for f in snap.files}
+    # Root is the package parent, so rel paths (hence qualnames) carry the
+    # package name.
+    assert "fixture_pkg/__init__.py" in paths
+    assert "fixture_pkg/sub/__init__.py" in paths
+    assert snap.spec == "pkg:fixture_pkg"
+    assert snap.scope == "fixture_pkg"

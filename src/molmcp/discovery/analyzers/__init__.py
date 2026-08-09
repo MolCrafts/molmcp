@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 
 from .base import AnalyzerNotAvailable, AnalyzerResult, LanguageAnalyzer
+from .config import JsonAnalyzer, TomlAnalyzer
 from .cpp import CppAnalyzer
+from .markdown import MarkdownAnalyzer
 from .python import PythonAnalyzer
 from .rust import RustAnalyzer
 from .typescript import TypeScriptAnalyzer
@@ -14,6 +16,9 @@ _ANALYZERS: list[LanguageAnalyzer] = [
     PythonAnalyzer(),
     TypeScriptAnalyzer(),
     RustAnalyzer(),
+    MarkdownAnalyzer(),
+    JsonAnalyzer(),
+    TomlAnalyzer(),
     CppAnalyzer(),
 ]
 

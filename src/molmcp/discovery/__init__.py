@@ -1,7 +1,7 @@
 """molmcp discovery engine — graph-based codebase capability discovery.
 
-This package is MCP-free: it can be imported, exercised, and tested
-without FastMCP. The MCP interface lives in :mod:`molmcp.discovery.provider`.
+This package is MCP-free: it can be imported, exercised, and tested without
+FastMCP. The application layer composes it through :mod:`molmcp.collection`.
 """
 
 from __future__ import annotations

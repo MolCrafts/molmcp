@@ -5,8 +5,30 @@ on:
     tags: ['v*']
 
 jobs:
+  # A tag can point at any commit, including one that never reached master and
+  # never ran CI. Publishing is irreversible, so the gate runs against the
+  # tagged tree itself rather than trusting where the tag came from.
+  gate:
+    name: Lint + test the tagged commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.12'
+          enable-cache: true
+      - name: Install
+        run: uv sync --extra dev
+      - name: Lint
+        run: |
+          uv run ruff check src tests
+          uv run ruff format --check src tests
+      - name: Test
+        run: uv run pytest -v
+
   publish:
     name: Publish to PyPI
+    needs: gate
     runs-on: ubuntu-latest
     environment:
       name: pypi

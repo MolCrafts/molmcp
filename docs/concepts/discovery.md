@@ -6,8 +6,8 @@ or tool names. It does this by statically indexing a codebase into a
 **code graph** and answering structured queries against it.
 
 The engine lives in `molmcp.discovery` and is MCP-free — it can be
-imported, scripted, and tested without FastMCP. The MCP interface
-(`molmcp.discovery.provider`) is a thin shell on top.
+imported, scripted, and tested without FastMCP. The `molcrafts` plane is
+a thin shell on top of it.
 
 ## The pipeline
 
@@ -40,30 +40,100 @@ source spec ─► SourceResolver ─► Snapshot ─► Extractor ─► Resolv
 
 ## The graph
 
-Every analyzer emits the same language-agnostic schema:
+The whole design rests on one idea: **represent code as a graph of
+symbols and their relationships, under a single language-agnostic
+schema** (`molmcp.discovery.schema`, `SCHEMA_VERSION = 3`). Symbols are
+nodes; the relationships between them are edges. Every analyzer — for
+any language — emits *only* this schema, so the store, the queries, and
+the tools never learn a language.
 
-- **Nodes** — `file`, `package`, `module`, `class`, `function`,
-  `method`, `property`, `field`, `constant`, `example`, `test`,
-  `capability`, and more. Each carries kind, qualname, file, line span,
-  signature, docstring, and flags.
-- **Edges** — `contains`, `calls`, `extends`, `imports`, `exemplifies`,
-  `tests`, `provides_capability`, and more. Each carries a `provenance`
-  (`ast` / `heuristic` / `resolved`).
+The vocabulary is fixed: **21 node kinds** and **15 edge kinds**.
 
-`example` and `test` are first-class node kinds, so an agent can ask
-"show me usage of X" and "what tests X" as graph queries.
+**Node kinds.** The structural symbols an agent looks up:
+
+| Group | Kinds |
+|-------|-------|
+| Containers | `package`, `module`, `namespace`, `file` |
+| Types | `class`, `struct`, `interface`, `trait`, `enum` |
+| Callables & members | `function`, `method`, `property`, `field` |
+| Values & aliases | `constant`, `type_alias`, `import`, `export` |
+| Discovery-first extras | `example`, `test`, `capability`, `convention` |
+
+Each node carries its kind, qualname, file, line span, signature,
+docstring/summary, and flags (exported, async, abstract, visibility).
+
+**Edge kinds.** The relationships a query walks:
+
+| Group | Kinds |
+|-------|-------|
+| Structure | `contains`, `imports`, `exports` |
+| Behavior | `calls`, `extends`, `implements`, `overrides`, `references`, `returns`, `instantiates`, `decorates` |
+| Discovery-first | `exemplifies`, `tests`, `provides_capability`, `governs` |
+
+`example` and `test` being first-class **node** kinds — linked by the
+`exemplifies` and `tests` **edges** — is what makes *"show me usage of
+X"* and *"what tests X"* ordinary graph walks rather than text search.
+
+The schema is a forward-looking contract shared by every analyzer. With
+the Python analyzer live today, the kinds actually populated are the
+nodes `package, module, class, function, method, property, field,
+constant, test, example` plus the overlay-injected `capability` and
+`convention`, and the edges `contains, imports, calls, extends, tests,
+exemplifies, provides_capability, governs`. The rest are reserved for
+the other-language analyzers and later resolution passes — reserving
+them in the schema is what lets a new analyzer slot in without a store
+or tool change.
+
+**Provenance.** Every edge is tagged with how it was established —
+`ast` (parsed directly from syntax), `resolved` (uniquely linked to a
+definition in the snapshot), or `heuristic` (a best-guess match by
+name) — and every node span points at real source. References that stay
+genuinely dynamic are kept in a separate `unresolved` set rather than
+dropped, so the graph never fabricates a link and degrades gracefully.
+
+## How the graph is stored
+
+The graph is written once to a per-snapshot SQLite `graph.db` — four
+tables plus a search index:
+
+| Table | Holds |
+|-------|-------|
+| `nodes` | every symbol, keyed `file#qualname#kind`, with signature/docstring/flags; indexed on `kind`, `qualname`, `name`, `file` |
+| `edges` | `source → target` with `kind` and `provenance`; indexed on `(source, kind)` and `(target, kind)` |
+| `files` | one row per walked file with its language and content hash |
+| `unresolved` | references that could not be linked, kept for transparency |
+| `nodes_fts` | a derived FTS5 index over name/qualname/docstring/summary for symbol search |
+
+FTS5 powers `search`; where a SQLite build lacks FTS5 the store falls
+back to a `LIKE` scan automatically, so search always works. Because the
+`graph.db` is plain SQLite, you can open it in any browser and inspect
+the `nodes`, `edges`, and `files` tables directly.
 
 ## Snapshots, cache, and freshness
 
-The cache lives under `~/.cache/molmcp/discovery/` (override with
-`MOLMCP_CACHE_DIR`). Every snapshot gets its own directory, keyed on its
-snapshot id:
+The cache lives under `~/.cache/molmcp/discovery/` (override with the
+`cacheDir` setting). Every snapshot gets its own directory, keyed on its
+snapshot id, beside one shared code index:
 
 ```
+<cache>/code-index.db                       per-file extraction, shared
 <cache>/snapshots/<snapshot-slug>/
     manifest.json
-    graph.db
+    graph.db                                the resolved graph
+<cache>/refs/<spec-slug>.json
 ```
+
+`code-index.db` is the incremental half: extraction of one file is a pure
+function of its content and the analyzer version, so an unchanged file skips
+the analyzer entirely on re-index. Every plane process opens the same file, so
+it runs in WAL mode — under a rollback journal one indexing run took the write
+lock and every other process sat on the busy timeout, which was felt directly
+as multi-second tool calls.
+
+It is bounded by `maxCacheBytes` (512 MB by default) and `maxCacheAgeDays`.
+Age alone is not enough: an indexed environment of tens of thousands of files
+is all current and none of it stale, so without a ceiling the file simply grew.
+`molmcp cache` reports it and `--prune` / `--gc` / `--vacuum` reclaim it.
 
 Because the snapshot id is a content hash, a cached graph is always tied
 to exact source. When a file changes, the next index produces a new
@@ -74,8 +144,8 @@ is looking at.
 Re-indexing is **incremental**: a content-addressed `ExtractCache` lets
 unchanged files skip the analyzer, so only edited files are re-parsed.
 Local sources are re-resolved on every query (always fresh); GitHub
-sources are cache-first to respect API rate limits — call
-`molmcp_refresh` to pull a newer commit. The cache is bounded by
+sources are cache-first to respect API rate limits — re-run
+`molmcp index --force` to pull a newer commit. The cache is bounded by
 `max_snapshots_per_spec` and `max_cache_age_days`, pruned automatically.
 An optional `LocalWatcher` polls a local source and refreshes it on
 change.
@@ -140,13 +210,13 @@ for node in query.search("radial distribution function"):
     print(node.qualname, node.file, node.start_line)
 ```
 
-Or from the CLI:
+Or from the CLI, against the sources in your settings:
 
 ```bash
-molmcp discovery index pkg:molpy
-molmcp discovery outline pkg:molpy
-molmcp discovery query pkg:molpy "structure reader"
-molmcp discovery dump pkg:molpy --output graph.json
+molmcp index                     # index every configured source
+molmcp index molpy --force       # re-index one, ignoring the cache
+molmcp search "structure reader" # field-weighted search across the collection
+molmcp explore "read a PDB"      # bounded task context pack
 ```
 
 ## Verifying it works
@@ -154,13 +224,11 @@ molmcp discovery dump pkg:molpy --output graph.json
 There are four ways to confirm discovery is healthy, from quickest to
 most thorough.
 
-**1. The built-in self-check.** `molmcp discovery verify` indexes a
-source and prints a health report — counts, FTS status, and a sample
-query — exiting non-zero on failure, so it works in CI or a setup
-script:
+**1. Index coverage.** `molmcp info` reports what is indexed and how
+much of it — the quickest way to see whether a source landed:
 
 ```bash
-molmcp discovery verify pkg:molpy
+molmcp info
 ```
 
 **2. The test suite.** The engine ships with focused tests:
@@ -180,13 +248,16 @@ assert hits, "expected at least one match"
 print(hits[0].qualname, hits[0].file, hits[0].start_line)
 ```
 
-**4. The MCP tool path.** Run `python -m molmcp --source pkg:molpy` and
-call the tools — every response carries a `snapshot` block with a
-`freshness` status. The key property to check: an agent never invents a
-name. The flow is `molmcp_outline` → `molmcp_search_symbols` /
-`molmcp_find_capability` (which return real qualnames) →
-`molmcp_describe_symbol` / `molmcp_relations`; a wrong qualname yields a
-structured `{"error": …}`, never a hallucinated result.
+**4. The MCP tool path.** Serve the knowledge plane and call bare tools
+on the `molcrafts` server:
+
+```bash
+molmcp serve molcrafts   # sources from settings + auto-discovery
+```
+
+Client flow: `molcrafts__packages` → `molcrafts__outline` →
+`molcrafts__search` / `molcrafts__open`. Responses carry a `snapshot`
+block. A wrong ref yields a structured error, never a hallucinated symbol.
 
 The graph itself is plain SQLite — open
 `~/.cache/molmcp/discovery/snapshots/<slug>/graph.db` with any SQLite

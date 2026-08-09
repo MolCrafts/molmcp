@@ -42,7 +42,7 @@ create_server(..., enable_path_safety=False)
 
 **What it does:** caps tool responses at a configurable byte limit (default 256 KB). Text content over the limit is truncated and a marker message appended; structured content over the limit is replaced with a placeholder.
 
-**Why:** an unbounded `molmcp_describe_symbol` (with `include_source`) or `molmcp_outline` call against a large MolCrafts package can dump megabytes of source into the LLM context, blowing past token windows and inflating costs. The truncation marker tells the LLM *and* the user what happened so they can re-call with narrower arguments.
+**Why:** an unbounded `open` (with `include_source`) or `outline` call against a large MolCrafts package can dump megabytes of source into the LLM context, blowing past token windows and inflating costs. The truncation marker tells the LLM *and* the user what happened so they can re-call with narrower arguments.
 
 **Configure:**
 
@@ -62,7 +62,12 @@ The middleware operates on text content only — binary blocks (images, audio) a
 
 **Not a request-time middleware.** It runs once, synchronously, at the end of `create_server(...)`, after every Provider has registered its tools.
 
-**What it does:** walks every registered tool and checks that `ToolAnnotations.readOnlyHint` or `ToolAnnotations.destructiveHint` is set. If any tool is missing both, raises `MissingAnnotationsError` and the server build fails.
+**What it does:** walks every registered tool and checks that
+`read_only_hint` or `destructive_hint` is set. If any tool is missing both,
+raises `MissingAnnotationsError` and the server build fails. Providers on
+`ProviderBase` satisfy this by construction — a `@tool` declaration cannot
+omit its annotations — so the check now mostly guards tools registered by
+hand.
 
 **Why so strict:** MCP clients use these hints to decide *auto-approve vs. prompt user*. A read-only tool can be auto-approved; a destructive one must prompt. A tool with no hint forces the client into a defensive choice — usually "prompt every time," which destroys the agent UX. Forcing every MolCrafts Provider to declare intent at build time is the only mechanism that scales across the whole ecosystem.
 
@@ -89,9 +94,9 @@ Each addresses a documented class of MCP-server vulnerability:
 After `create_server(...)`, you can add any additional middleware your MolCrafts Provider needs:
 
 ```python
-from molmcp import create_server
+from molmcp import create_plane
 
-server = create_server("molpy", discovery_sources=["pkg:molpy"])
+server = create_plane("molcrafts")
 server.add_middleware(MyCustomMiddleware())
 server.run()
 ```
