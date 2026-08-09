@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.metadata
+
 from .client_config import PlaneToggle, resolve_plane_toggles
 from .collection import CollectionIndex, ContextPack, SearchHit, SourceBinding
 from .config import AppConfig, ConfigurationError, load_config
@@ -15,7 +17,7 @@ from .provider import (
 )
 from .server import create_plane, create_server
 
-__version__ = "0.5.0"
+__version__ = importlib.metadata.version("molcrafts-molmcp")
 
 __all__ = [
     "AppConfig",

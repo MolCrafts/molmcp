@@ -1,6 +1,6 @@
 [project]
 name = "molcrafts-molmcp"
-version = "0.5.1"
+version = "0.5.2"
 description = "Multi-plane on-demand MCP for MolCrafts: one product domain per connection"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -34,7 +34,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "fastmcp==4.0.0b2",
+    "fastmcp>=4.0.0b1,<5",
     "jsonschema>=4.25,<5",
     "packaging>=25,<27",
     # <0.26: tree-sitter 0.26.0 segfaults walking large generated JS bundles
@@ -142,20 +142,22 @@ commands = [
   ["{envpython}", "-m", "pytest", "-v"],
 ]
 
-# FastMCP 4 (MCP 2026-07-28), pinned exactly to 4.0.0b2.
+# FastMCP 4 only (MCP 2026-07-28). Never 3.x — it speaks the protocol this
+# repo was rebuilt off.
 #
-# A range whose lower bound is a pre-release (`>=4.0.0b1,<5`) installs fine
-# under pip but uv refuses it without `--prerelease=allow` — and this
-# ecosystem is uv-managed, so that is a wall on every install. An exact pin
-# on a pre-release is unambiguous to both.
+# The lower bound is a pre-release on purpose. A bare `fastmcp` resolves to
+# the newest *stable*, which is 3.4.6; and `>=4.0.0` resolves to nothing,
+# because PyPI's 4.x line is a1/a2/b1/b2 with no final yet.
 #
-# `>=4.0.0` is not an option: there is no 4.0.0. PyPI's 4.x line is a1, a2,
-# b1, b2 and the newest *stable* fastmcp is 3.4.6, which speaks the old
-# protocol this repo was rebuilt off.
+# uv will not install this from an index without `--prerelease=allow`: it
+# does not enable pre-releases for a transitive dependency. Measured: an
+# exact `==4.0.0b2` pin is refused for the same reason, so pinning buys
+# nothing and only freezes us a version behind. pip resolves either form.
+# See docs/get-started/installation.md.
 #
-# Lift the pin to `>=4.0.0,<5` the day 4.0.0 ships; the uv problem goes with
-# it, since a stable lower bound needs no pre-release opt-in.
+# Narrow this to `>=4.0.0,<5` the day 4.0.0 ships — a stable lower bound
+# needs no pre-release opt-in and the uv problem goes with it.
 [tool.uv]
 constraint-dependencies = [
-    "fastmcp-slim==4.0.0b2",
+    "fastmcp-slim>=4.0.0b1,<5",
 ]

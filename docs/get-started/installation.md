@@ -12,8 +12,26 @@ pip install molcrafts-molmcp
 ## With uv
 
 ```bash
-uv add molcrafts-molmcp
+uv add --prerelease=allow molcrafts-molmcp
 ```
+
+!!! note "Why the flag"
+
+    molmcp requires **FastMCP 4** for MCP 2026-07-28, and FastMCP 4 is still
+    in beta — PyPI's 4.x line is `4.0.0b2` with no final release yet. pip
+    installs it without ceremony, but uv does not enable pre-releases for a
+    dependency of a dependency, so it reports:
+
+    ```
+    Because only fastmcp<4.0.0b1 is available and molcrafts-molmcp
+    depends on fastmcp>=4.0.0b1 ... cannot be used.
+    ```
+
+    Pinning an exact `==4.0.0b2` does not help — uv refuses that for the same
+    reason. FastMCP 3.x is not an alternative: it speaks the older protocol,
+    and molmcp's planes are built on the new one.
+
+    The flag stops being necessary the day FastMCP 4.0.0 ships.
 
 ## What gets installed
 
