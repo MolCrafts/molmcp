@@ -568,3 +568,44 @@ def test_environment_report_is_frozen():
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         report.is_self = False  # type: ignore[misc]
+
+
+class TestEditableUrlToPath:
+    """PEP 610 records the checkout as a ``file://`` URL, not a path.
+
+    Stripping the seven characters of ``file://`` happens to work for a plain
+    POSIX path and for nothing else. A Windows URL is ``file:///D:/a/pkg`` —
+    stripping leaves ``/D:/a/pkg``, a leading slash before the drive letter,
+    so every editable MolCrafts install on Windows was silently undiscovered.
+    Percent-encoding is mishandled everywhere: a checkout under a directory
+    with a space in it never resolved on any platform.
+    """
+
+    def test_a_plain_path_round_trips(self, tmp_path):
+        checkout = tmp_path / "checkout"
+        checkout.mkdir()
+        assert environment._url_to_path(checkout.as_uri()) == checkout
+
+    def test_a_path_with_spaces_round_trips(self, tmp_path):
+        checkout = tmp_path / "dir with spaces" / "checkout"
+        checkout.mkdir(parents=True)
+        assert environment._url_to_path(checkout.as_uri()) == checkout, (
+            "percent-encoding from Path.as_uri() must be decoded"
+        )
+
+    def test_a_path_with_a_hash_round_trips(self, tmp_path):
+        checkout = tmp_path / "weird#name"
+        checkout.mkdir()
+        assert environment._url_to_path(checkout.as_uri()) == checkout
+
+    def test_a_bare_posix_path_is_still_accepted(self):
+        # Some tools write a plain path rather than a URL.
+        assert environment._url_to_path("/opt/src/pkg") == Path("/opt/src/pkg")
+
+    def test_a_non_file_url_is_refused(self):
+        assert environment._url_to_path("https://example.org/pkg") is None
+
+    def test_junk_is_refused(self):
+        assert environment._url_to_path("") is None
+        assert environment._url_to_path(None) is None
+        assert environment._url_to_path(42) is None

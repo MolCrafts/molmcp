@@ -25,6 +25,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 from .config import ConfigurationError
 
@@ -462,10 +464,18 @@ def _foreign_package_dir(
 
 
 def _url_to_path(url: object) -> Path | None:
+    """Convert a PEP 610 ``file://`` URL to a local path.
+
+    Slicing off ``file://`` only ever worked for an unencoded POSIX path. A
+    Windows URL is ``file:///D:/a/pkg``, where that leaves a slash in front of
+    the drive letter; and any checkout under a directory with a space in its
+    name arrives percent-encoded on every platform. ``url2pathname`` knows
+    both conventions.
+    """
     if not isinstance(url, str) or not url:
         return None
     if url.startswith(_FILE_URL_PREFIX):
-        return Path(url[len(_FILE_URL_PREFIX) :])
+        return Path(url2pathname(urlsplit(url).path))
     if url.startswith("/"):
         return Path(url)
     return None

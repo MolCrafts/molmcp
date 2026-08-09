@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
 import re
 import subprocess
 import sys
@@ -245,7 +246,11 @@ def _subprocess_imports_molq(snippet: str) -> bool:
         capture_output=True,
         text=True,
         check=True,
-        env={"PYTHONPATH": str(_REPO_SRC), "PATH": "/usr/bin:/bin"},
+        # Inherit the real environment and override PYTHONPATH: a stripped
+        # env cannot start python.exe on Windows (no SYSTEMROOT, no DLL
+        # path), and it bought no isolation anyway — whether molq is
+        # importable depends on the interpreter's site-packages, not PATH.
+        env={**os.environ, "PYTHONPATH": str(_REPO_SRC)},
     )
     return result.stdout.strip().endswith("True")
 
@@ -736,7 +741,10 @@ class TestSerialize:
         assert _serialize(FakeRecord(job_id="a"))["job_id"] == "a"
 
     def test_a_path_becomes_a_string(self):
-        assert _serialize(Path("/tmp/x")) == "/tmp/x"
+        # str(Path(...)) is what goes on the wire, so the expectation has
+        # to be the platform's own rendering — "/tmp/x" is "\\tmp\\x" on Windows.
+        path = Path("/tmp/x")
+        assert _serialize(path) == str(path)
 
     def test_an_enum_like_object_becomes_its_value(self):
         class State:
