@@ -756,7 +756,8 @@ class TestSerialize:
         assert _serialize((1, "a")) == [1, "a"]
 
     def test_nested_containers_are_walked(self):
-        assert _serialize({"a": [Path("/x")]}) == {"a": ["/x"]}
+        path = Path("/x")
+        assert _serialize({"a": [path]}) == {"a": [str(path)]}
 
     def test_primitives_pass_through(self):
         assert _serialize(None) is None

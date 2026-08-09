@@ -323,7 +323,11 @@ def test_foreign_report_to_dict_is_json_able(foreign_env):
     assert isinstance(payload, dict)
     blob = json.dumps(payload)  # must not raise: fully JSON-able
     foo = _by_distribution(report)["foo"]
-    assert foo.spec in blob  # specs survive the round-trip
+    # Parse back rather than substring-matching the encoded text: a Windows
+    # spec holds backslashes, which JSON escapes, so the raw string is never
+    # a substring of the blob even when the round-trip is perfect.
+    restored = {src["name"]: src["spec"] for src in json.loads(blob)["sources"]}
+    assert restored["foo"] == foo.spec
 
 
 def test_foreign_malformed_direct_url_is_skipped_others_enumerate(
