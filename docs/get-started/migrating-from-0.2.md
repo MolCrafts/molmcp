@@ -9,6 +9,12 @@ If you are upgrading from 0.2.1 — the last published release — this page is 
 whole list. There is no compatibility layer; each break is loud except where
 noted.
 
+## Installing 0.5 with uv
+
+`uv add molcrafts-molmcp` needs `--prerelease=allow` until FastMCP 4.0.0
+ships. See [Installation](installation.md#with-uv) for why; pip needs
+nothing extra.
+
 ## One server became five
 
 Before, `molmcp serve` started one process that mounted every provider and
