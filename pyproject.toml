@@ -1,6 +1,6 @@
 [project]
 name = "molcrafts-molmcp"
-version = "0.5.0"
+version = "0.5.1"
 description = "Multi-plane on-demand MCP for MolCrafts: one product domain per connection"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -34,7 +34,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "fastmcp>=4.0.0b1,<5",
+    "fastmcp==4.0.0b2",
     "jsonschema>=4.25,<5",
     "packaging>=25,<27",
     # <0.26: tree-sitter 0.26.0 segfaults walking large generated JS bundles
@@ -142,11 +142,20 @@ commands = [
   ["{envpython}", "-m", "pytest", "-v"],
 ]
 
-# FastMCP 4 (MCP 2026-07-28). The lower bound is a pre-release on purpose:
-# 4.x is still beta, and a bare `fastmcp` resolves to the newest *stable*,
-# which is 3.4.6 — silently off the 2026-07-28 protocol. Naming a pre-release
-# in the specifier is what lets 4.0.0bN and the eventual 4.0.0 both resolve.
+# FastMCP 4 (MCP 2026-07-28), pinned exactly to 4.0.0b2.
+#
+# A range whose lower bound is a pre-release (`>=4.0.0b1,<5`) installs fine
+# under pip but uv refuses it without `--prerelease=allow` — and this
+# ecosystem is uv-managed, so that is a wall on every install. An exact pin
+# on a pre-release is unambiguous to both.
+#
+# `>=4.0.0` is not an option: there is no 4.0.0. PyPI's 4.x line is a1, a2,
+# b1, b2 and the newest *stable* fastmcp is 3.4.6, which speaks the old
+# protocol this repo was rebuilt off.
+#
+# Lift the pin to `>=4.0.0,<5` the day 4.0.0 ships; the uv problem goes with
+# it, since a stable lower bound needs no pre-release opt-in.
 [tool.uv]
 constraint-dependencies = [
-    "fastmcp-slim>=4.0.0b1,<5",
+    "fastmcp-slim==4.0.0b2",
 ]
