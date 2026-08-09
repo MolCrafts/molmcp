@@ -80,7 +80,10 @@ def _exclusive_file_lock(path: Path) -> Iterator[None]:
 
 
 def _fsync_file(path: Path) -> None:
-    with path.open("rb") as handle:
+    # "r+b", not "rb": Windows refuses to flush a read-only handle with
+    # OSError(EBADF), while POSIX allows it. "+" keeps the contents — the
+    # file is already fully written and is about to be replaced into place.
+    with path.open("r+b") as handle:
         os.fsync(handle.fileno())
 
 

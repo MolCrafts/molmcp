@@ -105,6 +105,45 @@ class TestCreateLeavesNoOpenHandle:
         )
 
 
+class TestFsyncOpensForWriting:
+    """`os.fsync` needs a writable handle on Windows.
+
+    POSIX happily flushes a descriptor opened read-only, so `open("rb")`
+    looked fine for years. On Windows the same call is
+    ``OSError: [Errno 9] Bad file descriptor`` — 106 of them in one run, which
+    is what kept the discovery suite off the Windows matrix.
+    """
+
+    def test_the_file_is_opened_writable(self, tmp_path, monkeypatch):
+        from pathlib import Path as _Path
+
+        from molmcp.discovery.store import graphstore
+
+        target = tmp_path / "f.bin"
+        target.write_bytes(b"x")
+        modes: list[str] = []
+        real_open = _Path.open
+
+        def spy(self, mode="r", *args, **kwargs):
+            modes.append(mode)
+            return real_open(self, mode, *args, **kwargs)
+
+        monkeypatch.setattr(_Path, "open", spy)
+        graphstore._fsync_file(target)
+
+        assert modes, "_fsync_file did not open the file at all"
+        assert all("+" in m or "w" in m or "a" in m for m in modes), (
+            f"opened {modes} — os.fsync raises Bad file descriptor on Windows "
+            "unless the handle is writable"
+        )
+
+    def test_create_survives_the_fsync(self, tmp_path):
+        store = GraphStore(tmp_path / "graph.db")
+        store.create(_graph(), meta={"schema_version": 1})
+        assert store.exists()
+        store.close()
+
+
 class TestEngineCloseReleasesItsQueries:
     """`engine.query()` hands out a store; closing the engine must free it.
 
