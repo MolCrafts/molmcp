@@ -37,8 +37,11 @@ A **narrow** non-idempotent write tool may ship **only** for in-tree
 first-party providers (`src/molmcp/providers/<name>/`), and only when
 **all** of the following hold:
 
-1. **Explicit opt-in** — env and/or config gate; default off
-   (`MolqProvider(allow_submit=True)`).
+1. **Explicit opt-in** — a settings gate, default off
+   (`molmcp config set molq.allowSubmit true`). It must be *settings*: every
+   provider is built with `cls()`, so a constructor keyword is unreachable
+   from the CLI a client actually launches, and there are no environment
+   switches. A gate no client can open is the same as a tool that never works.
 2. **Frozen flat signature** — CLI-shaped primitives, not the full
    upstream object graph.
 3. **Path safety** — workdirs constrained by middleware / allowlist;
@@ -100,7 +103,16 @@ Never `molexp_list_projects` or `molexp_molexp_*`.
 | `list_runs` | Read-only | Runs by scope / status |
 | `workspace_layout` | Read-only | On-disk workspace contract |
 | `check_layout` | Read-only | Lint a path against that contract |
-| scaffold tools (`materialize_workspace`, `add_project`, …) | Idempotent create-or-get | Materialize tree nodes; never drive run batches or workflow runtime |
+| `validate_workflow` | Read-only | Check a workflow definition without running it |
+| `materialize_workspace`, `add_project`, `add_experiment`, `create_run` | Idempotent create-or-get | Materialize tree nodes; never drive run batches or workflow runtime |
+| `plan_adoption` | Read-only | Survey a legacy directory and propose a mapping; writes nothing |
+| `adoption_status` | Read-only | Progress of an in-flight adoption from its ledger |
+| `run_adoption` | **Controlled mutation** | Execute a plan. **In move mode it unlinks each source file after verifying its hash** — the one destructive tool on this plane. Resumable from the ledger |
+| `ingest_metrics` | Idempotent create-or-get | Convert a run's logs into a metrics buffer; writes nothing else into the run |
+
+Deleting an adopted source directory is deliberately **not** a tool. Every
+other step in that flow is provable and resumable; an irreversible bulk delete
+is neither, so it stays a human decision made with the ledger in hand.
 
 ### molq — `src/molmcp/providers/molq/`
 
@@ -207,14 +219,14 @@ the loop belongs to discovery.
 
 ### Other domain providers
 
-| Provider | Path | Role |
-|----------|------|------|
-| molpy | `providers/molpy/` | Call-time catalogs (`list_compute_ops`, `list_readers`) and path actions (`inspect_structure`) |
-| molpack | `providers/molpack/` | Live-module restraint/format catalogs; `inspect_script` |
-| lammps | `providers/lammps/` | Doc/DSL navigator over in-memory tables (no `lmp` binary required to register) |
+There are none. molq, molexp and molvis are the three in-tree planes, and each
+is here because it answers something a static index cannot: live job state, an
+on-disk workspace, an in-process viewer session.
 
-molrs is indexed by discovery only — no first-party provider entry point
-(Python API is fully importable).
+molpy, molpack, molrs and LAMMPS are reached through **discovery** instead —
+their Python APIs are importable, so an agent finds the real symbols and
+scripts them. Wrapping an importable API in named tools is the thing this page
+exists to refuse.
 
 ## Discovery-first workflow
 

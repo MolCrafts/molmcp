@@ -18,8 +18,8 @@ mol_project:
   ci:
     config: .github/workflows/ci.yml
     local: "uv run ruff check src tests && uv run ruff format --check src tests && uv run pytest -v"
-  notes_path: .Codex/notes/notes.md
-  specs_path: .Codex/specs/
+  notes_path: .claude/notes/notes.md
+  specs_path: .claude/specs/
 ---
 
 # AGENTS.md
@@ -30,26 +30,31 @@ mol_project:
 
 ## What this repo is
 
-molmcp is the MCP (Model Context Protocol) foundation for the MolCrafts
-ecosystem: a FastMCP server that exposes molecular-simulation packages
-(molpy, molpack, molq, molexp, lammps) as agent tools, plus a
-graph-indexed code-discovery engine (`molmcp.discovery`) that lets agents
-resolve capabilities from real code instead of guessing. Pure Python
-(>= 3.12), `src/` layout, managed with uv.
+molmcp is multi-plane MCP for MolCrafts: **one product domain per MCP
+connection** (`molmcp serve <plane>`). Planes include `catalog`,
+`molcrafts` (knowledge/discovery), `molvis`, `molq`, `molexp`. Science
+APIs are discovered via the knowledge plane and never mirrored as MCP
+tools. Pure Python (>= 3.12), `src/` layout, managed with uv.
+
+**Protocol:** MCP **2026-07-28** via FastMCP **4.0.0b1** + MCP Python SDK
+v2 (`mcp>=2`). Do not pin FastMCP back to 3.x without an explicit decision.
 
 ## Where things live
 
 - Source code: `src/molmcp/`
 - Tests: `tests/`
 - Public documentation: `docs/` (zensical site; concepts / guides / reference)
-- Passive project knowledge (notes, decisions, blueprint): `.Codex/notes/`
-- Active runtime specs (alive, deleted on completion): `.Codex/specs/`
+- Passive project knowledge (notes, decisions, blueprint): `.claude/notes/`
+- Active runtime specs (alive, deleted on completion): `.claude/specs/`
 - Codex runtime config: `.Codex/settings.local.json`
+
+One knowledge tree, two runtimes: notes and specs live under `.claude/` and
+are read by both. Only runtime config is per-runtime.
 
 ## Default workflow
 
 For non-trivial work, prefer:
-1. plan (`/mol:spec` or write to `.Codex/notes/`)
+1. plan (`/mol:spec` or write to `.claude/notes/`)
 2. implement (`/mol:impl` or `/mol:fix`)
 3. review (`/mol:review`)
 4. capture decisions (`/mol:note`)
@@ -60,7 +65,13 @@ For non-trivial work, prefer:
   providers against it.
 - The discovery cache on-disk format (`graph.db` schema, manifests);
   bump `SCHEMA_VERSION` / `ANALYZER_VERSION` in
-  `src/molmcp/discovery/schema.py` on any breaking change.
+  `src/molmcp/discovery/schema.py` on any breaking change. Renaming a cache
+  file means adding the old name to `LEGACY_EXTRACT_DB_NAMES` so nobody is
+  left with a stranded multi-gigabyte orphan.
+- Agent-facing `hint` and error strings name tools **bare**, as registered;
+  `tests/test_tool_hints.py` enforces it.
+- No environment variables — `tests/test_no_env_switches.py` fails the build
+  if a module reads one, with three listed exemptions.
 - CI parity: `.pre-commit-config.yaml` mirrors `.github/workflows/ci.yml`
   step-for-step; change both in the same commit.
 
@@ -70,20 +81,23 @@ For non-trivial work, prefer:
 
 Layered; dependencies point inward only:
 
-1. `cli.py` / `__main__.py` → `server.py` → providers + middleware.
-2. Providers (`providers/`, `discovery/provider.py`) are the only modules
-   that import MCP machinery; everything below them is MCP-free.
-3. `discovery/` is itself layered:
-   `provider.py` → `engine.py` → `extract.py` / `resolve.py` /
-   `query.py` → `store/`, `source/`, `cache/`.
+1. `cli.py` / `__main__.py` → `server.create_plane(plane)` → one plane
+   only (`planes.py` catalog + molcrafts knowledge + one provider).
+2. Multi-link on-demand: clients connect separate MCP servers
+   (`catalog`, `molcrafts`, `molvis`, …). No mega-mount.
+3. Providers (`providers/`) import MCP machinery; science packages stay
+   lazy optional. Bare tool names; server name is the plane id.
+4. `discovery/` is itself layered:
+   `engine.py` → `extract.py` / `resolve.py` / `query.py` →
+   `store/`, `source/`, `cache/`.
    `schema.py` is the language-agnostic contract: every analyzer in
    `analyzers/` emits this schema and nothing else.
-4. Domain content enters via overlays (`discovery/overlay/`), never by
+5. Domain content enters via overlays (`discovery/overlay/`), never by
    editing the core schema — the format is core, the content ships with
    a domain overlay package.
 
 <!-- Free-form additions below this line are preserved across re-runs.
-     If a section grows past a screen, promote to .Codex/notes/<topic>.md. -->
+     If a section grows past a screen, promote to .claude/notes/<topic>.md. -->
 
 ## Discovery ranking & the call graph
 
@@ -100,4 +114,4 @@ counts RESOLVED edges only, so a name-based guess can never inflate a symbol's
 rank. Without receiver-type inference an ambiguous `x.m()` is left unresolved
 rather than sunk onto an arbitrary same-name method. Real type inference
 (Jedi/PyCG/SCIP-style) is a future track — see
-`.Codex/notes/` if/when it lands.
+`.claude/notes/` if/when it lands.

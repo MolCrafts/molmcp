@@ -6,8 +6,8 @@ or tool names. It does this by statically indexing a codebase into a
 **code graph** and answering structured queries against it.
 
 The engine lives in `molmcp.discovery` and is MCP-free — it can be
-imported, scripted, and tested without FastMCP. The MCP interface
-(`molmcp.discovery.provider`) is a thin shell on top.
+imported, scripted, and tested without FastMCP. The `molcrafts` plane is
+a thin shell on top of it.
 
 ## The pipeline
 
@@ -144,8 +144,8 @@ is looking at.
 Re-indexing is **incremental**: a content-addressed `ExtractCache` lets
 unchanged files skip the analyzer, so only edited files are re-parsed.
 Local sources are re-resolved on every query (always fresh); GitHub
-sources are cache-first to respect API rate limits — call
-`molmcp_refresh` to pull a newer commit. The cache is bounded by
+sources are cache-first to respect API rate limits — re-run
+`molmcp index --force` to pull a newer commit. The cache is bounded by
 `max_snapshots_per_spec` and `max_cache_age_days`, pruned automatically.
 An optional `LocalWatcher` polls a local source and refreshes it on
 change.
@@ -210,13 +210,13 @@ for node in query.search("radial distribution function"):
     print(node.qualname, node.file, node.start_line)
 ```
 
-Or from the CLI:
+Or from the CLI, against the sources in your settings:
 
 ```bash
-molmcp discovery index pkg:molpy
-molmcp discovery outline pkg:molpy
-molmcp discovery query pkg:molpy "structure reader"
-molmcp discovery dump pkg:molpy --output graph.json
+molmcp index                     # index every configured source
+molmcp index molpy --force       # re-index one, ignoring the cache
+molmcp search "structure reader" # field-weighted search across the collection
+molmcp explore "read a PDB"      # bounded task context pack
 ```
 
 ## Verifying it works
@@ -224,13 +224,11 @@ molmcp discovery dump pkg:molpy --output graph.json
 There are four ways to confirm discovery is healthy, from quickest to
 most thorough.
 
-**1. The built-in self-check.** `molmcp discovery verify` indexes a
-source and prints a health report — counts, FTS status, and a sample
-query — exiting non-zero on failure, so it works in CI or a setup
-script:
+**1. Index coverage.** `molmcp info` reports what is indexed and how
+much of it — the quickest way to see whether a source landed:
 
 ```bash
-molmcp discovery verify pkg:molpy
+molmcp info
 ```
 
 **2. The test suite.** The engine ships with focused tests:

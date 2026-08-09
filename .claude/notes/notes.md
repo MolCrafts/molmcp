@@ -19,9 +19,13 @@ molvis 说话**。词汇表永远是 molpy/molvis 自己的公开 API;molmcp 只
    的**内部** wire 协议提升成公共 API;且 frame 编码仍需进程内 Python,
    回路闭合不了。
 
-拍板约束:**严禁环境变量开关;不设权限/opt-in 门控**(本地 workbench 信任
-模型,与 Jupyter kernel 同级,docs 一句话说明,不做机制)。molq 的
-`MOLMCP_MOLQ_SUBMIT` 属 legacy,不再扩散该模式。
+拍板约束:**严禁环境变量开关**;molvis workbench **不设权限/opt-in 门控**
+(本地信任模型,与 Jupyter kernel 同级,docs 一句话说明,不做机制)。
+
+molq 的受控写入是另一回事——`provider-design.md` 要求它默认关闭。环境变量
+那半已删,门保留但改由 settings 开:`molmcp config set molq.allowSubmit true`。
+必须是 settings:`discover_providers()` 一律 `cls()` 构造,构造函数关键字
+没有任何 MCP 客户端能传,开不了的门等于永远失效的工具。
 
 架构定型为**四方**(一个会话,两个表面,两个意志):**人操作**(浏览器
 UI,意志之一)、**canvas 显示**(molvis viewer,投影表面)、**agent 控制**
@@ -68,8 +72,8 @@ molq = "molmcp.providers.molq:MolqProvider"
 - Tools:
   - Read-only: `list_jobs`, `get_job`, `job_logs`, `list_destinations`,
     `list_queue`
-  - Opt-in mutate (`MOLMCP_MOLQ_SUBMIT=1` / `allow_submit=True`):
-    `submit_job` (argv, no block-wait), `cancel_job`
+  - Opt-in mutate (`molq.allowSubmit` 设置;`allow_submit=True` 仅供内嵌方
+    与测试): `submit_job` (argv, no block-wait), `cancel_job`
 - Cleanup/watch/daemon, full Submitor mirror, Nerve reverse-control, batch
   loops: out of MCP (CLI/script/molexp).
 

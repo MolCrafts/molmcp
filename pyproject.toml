@@ -34,7 +34,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "fastmcp==4.0.0b1",
+    "fastmcp>=4.0.0b1,<5",
     "jsonschema>=4.25,<5",
     "packaging>=25,<27",
     # <0.26: tree-sitter 0.26.0 segfaults walking large generated JS bundles
@@ -142,8 +142,11 @@ commands = [
   ["{envpython}", "-m", "pytest", "-v"],
 ]
 
-# FastMCP 4 (MCP 2026-07-28): pin slim transitively for uv prereleases
+# FastMCP 4 (MCP 2026-07-28). The lower bound is a pre-release on purpose:
+# 4.x is still beta, and a bare `fastmcp` resolves to the newest *stable*,
+# which is 3.4.6 — silently off the 2026-07-28 protocol. Naming a pre-release
+# in the specifier is what lets 4.0.0bN and the eventual 4.0.0 both resolve.
 [tool.uv]
 constraint-dependencies = [
-    "fastmcp-slim==4.0.0b1",
+    "fastmcp-slim>=4.0.0b1,<5",
 ]

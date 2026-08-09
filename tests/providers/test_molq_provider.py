@@ -395,6 +395,83 @@ class TestUpstreamContract:
 # ---------------------------------------------------------------------------
 
 
+class TestTheOptInIsReachableFromTheCli:
+    """`molmcp serve molq` must be able to turn the mutations on.
+
+    `discover_providers()` instantiates every provider with `cls()`, so a
+    constructor keyword is unreachable from the shipped CLI. Without a config
+    gate, `submit_job` and `cancel_job` are advertised on the wire and fail on
+    every call with a hint naming a Python argument no MCP client can pass —
+    the exact shape the bare-tool-name hint rule exists to prevent.
+    """
+
+    def _settings(self, monkeypatch, **molq_settings):
+        from molmcp import settings as settings_module
+
+        monkeypatch.setattr(
+            settings_module,
+            "load_settings",
+            lambda _root: settings_module.Settings(molq=molq_settings),
+        )
+
+    def test_the_setting_enables_a_default_constructed_provider(self, monkeypatch):
+        self._settings(monkeypatch, allowSubmit=True)
+        kit = harness()  # built exactly as discover_providers() builds it
+
+        # cancel_job runs entirely through the injected submitor, so reaching
+        # the fake proves the gate opened rather than that molq is installed.
+        kit.provider.cancel_job(job_id="job-1")
+
+        assert kit.submitor_factory.calls
+
+    def test_a_string_setting_also_counts(self, monkeypatch):
+        # `molmcp config set` takes text, so "true" must work like True.
+        self._settings(monkeypatch, allowSubmit="true")
+        kit = harness()
+
+        kit.provider.cancel_job(job_id="job-1")
+
+        assert kit.submitor_factory.calls
+
+    def test_absent_setting_still_refuses(self, monkeypatch):
+        self._settings(monkeypatch)
+
+        with pytest.raises(RuntimeError):
+            harness().provider.submit_job(argv=["echo", "hi"])
+
+    def test_an_explicit_false_still_refuses(self, monkeypatch):
+        self._settings(monkeypatch, allowSubmit=False)
+
+        with pytest.raises(RuntimeError):
+            harness().provider.cancel_job(job_id="job-1")
+
+    def test_an_unrecognised_value_does_not_enable_a_mutation(self, monkeypatch):
+        self._settings(monkeypatch, allowSubmit="yes-please")
+
+        with pytest.raises(RuntimeError):
+            harness().provider.cancel_job(job_id="job-1")
+
+    def test_the_constructor_still_wins_for_embedders(self, monkeypatch):
+        self._settings(monkeypatch, allowSubmit=False)
+        kit = harness(allow_submit=True)
+
+        kit.provider.cancel_job(job_id="job-1")
+
+        assert kit.submitor_factory.calls
+
+    def test_the_refusal_names_something_a_client_can_actually_set(self, monkeypatch):
+        self._settings(monkeypatch)
+
+        with pytest.raises(RuntimeError) as excinfo:
+            harness().provider.submit_job(argv=["echo"])
+
+        message = str(excinfo.value)
+        assert "molq.allowSubmit" in message
+        assert "allow_submit=True" not in message, (
+            "a Python constructor keyword is not an action an MCP client can take"
+        )
+
+
 class TestMutationGate:
     def test_submit_job_is_refused_without_the_opt_in(self):
         with pytest.raises(RuntimeError):
@@ -408,7 +485,7 @@ class TestMutationGate:
         with pytest.raises(RuntimeError) as excinfo:
             harness().provider.submit_job(argv=["echo"])
 
-        assert "allow_submit=True" in str(excinfo.value)
+        assert "molq.allowSubmit" in str(excinfo.value)
 
     def test_a_refused_submit_never_reaches_the_submitor(self):
         kit = harness()

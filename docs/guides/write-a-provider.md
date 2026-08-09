@@ -161,11 +161,9 @@ from molmcp import create_server
 @pytest.fixture
 def server():
     from molpack_mcp import MolpackProvider
-    return create_server(
-        "test",
-        providers=[MolpackProvider()],
-        discover_entry_points=False,  # skip entry-point lookup in tests
-    )
+
+    # The plane id must equal provider.name — one process, one product.
+    return create_plane("molpack", provider=MolpackProvider())
 
 
 async def test_list_pack_targets(server, tmp_path):
@@ -252,7 +250,7 @@ API/CLI rather than as a tool, per
 If your Provider has a legitimate reason to call an external CLI (Packmol, LAMMPS, AmberTools, …), **do not** use `subprocess.run` directly. Use molmcp's `run_safe`:
 
 ```python
-from molmcp import run_safe
+from molmcp.helpers import run_safe
 
 @tool(MUTATION)
 def run_packmol(self, input_file: str, workdir: str) -> dict:
@@ -274,5 +272,5 @@ def run_packmol(self, input_file: str, workdir: str) -> dict:
 ## Read next
 
 - **[Provider design](../concepts/provider-design.md)** — the four-condition rule that decides whether your tool should exist
-- **[Security](security.md)** — `run_safe`, `fence_untrusted`, what to validate
+- **[Security](security.md)** — `molmcp.helpers.run_safe`, `fence_untrusted`, what to validate
 - **[Middleware](../concepts/middleware.md)** — how molmcp's defaults wrap your tools

@@ -40,7 +40,7 @@ That is the whole pattern. Longer work is more turns of the same wheel, never a 
 
 ## Three facts the loop depends on
 
-Each of these is a contract you must respect, and each has exactly one authoritative source — a docstring you can pull into context with `molcrafts_search("<name>")` followed by `molcrafts_open(<ref>)`. Read them; do not take this page's word for them.
+Each of these is a contract you must respect, and each has exactly one authoritative source — a docstring you can pull into context with `molcrafts__search("<name>")` followed by `molcrafts__open(<ref>)`. Read them; do not take this page's word for them.
 
 - **`draw_frame` has stamp semantics** — it places a structure onto the canvas and never wipes what is already there, so a refresh is `clear()` and *then* `draw_frame(...)` (molvis drawing mixin docstring; `clear` is the only full wipe).
 - **`get_selected` returns a standalone sub-Frame** — a molpy `Frame`, meaning a table of atoms with their own elements and coordinates and bonds renumbered into the subset, not a list of indices into your `mol` (molvis selection mixin docstring).

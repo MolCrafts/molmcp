@@ -23,7 +23,7 @@ from .middleware import (
     assert_plane_tool_names,
     validate_tool_annotations,
 )
-from .planes import list_plane_infos, route_task
+from .planes import BUILTIN_PLANE_IDS, list_plane_infos, route_task
 from .provider import (
     PROVIDER_NAME_PATTERN,
     Provider,
@@ -93,6 +93,14 @@ def create_plane(
             raise ValueError("pass provider= or providers=[one], not both")
         if explicit_list:
             provider = explicit_list[0]
+
+    if provider is not None and plane_id in BUILTIN_PLANE_IDS:
+        # Silently dropping it would hand back a server that looks configured
+        # and is not — the caller's tools would simply never appear.
+        raise ValueError(
+            f"the {plane_id!r} plane is built in and takes no provider; "
+            f"serve {getattr(provider, 'name', 'it')!r} as its own plane"
+        )
 
     if plane_id == "catalog":
         mcp = _base_server(

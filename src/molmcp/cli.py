@@ -208,7 +208,7 @@ def _config_argument(parser: argparse.ArgumentParser) -> None:
         "--config",
         type=Path,
         default=None,
-        help="Path to molcrafts.json (default: ./molcrafts.json when present).",
+        help="Path to a molcrafts.json (not auto-loaded from the working directory).",
     )
     parser.add_argument(
         "--env",

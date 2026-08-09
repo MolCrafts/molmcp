@@ -52,7 +52,7 @@ of prompting on every invocation.
 If your Provider shells out to an external tool — Packmol, LAMMPS, AmberTools, anything — **always** use `run_safe`:
 
 ```python
-from molmcp import run_safe
+from molmcp.helpers import run_safe
 
 result = run_safe(
     cmd=["packmol", "-i", input_file],   # list, never a string
@@ -95,7 +95,7 @@ If a tool returns a file's content into the LLM context, an attacker who control
 Wrap untrusted content with `fence_untrusted`:
 
 ```python
-from molmcp import fence_untrusted
+from molmcp.helpers import fence_untrusted
 
 @tool(READ_ONLY)
 def read_pdb_header(path: str) -> str:
@@ -127,7 +127,7 @@ The middleware doesn't re-validate types your tool signature already declared. I
 | `enable_response_limit=True` | 256 KB cap on text content | `enable_response_limit=False` |
 | `validate_annotations=True` | server build fails on missing hints | `validate_annotations=False` |
 
-Don't disable these in production. The CLI exposes only `--no-discover` and `--no-validate-annotations` precisely because the security defaults shouldn't have a casual escape hatch.
+Don't disable these in production. The CLI exposes only `--no-discover` precisely because the security defaults shouldn't have a casual escape hatch.
 
 ## What the audit literature says
 

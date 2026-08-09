@@ -39,7 +39,7 @@ _NAME_LEADING_RE = re.compile(r"^[^a-z]+")
 # Distributions that are MolCrafts-family but **not** a public Python API
 # surface for agent discovery / codegraph. Their types are reached through
 # the higher-level package (e.g. ``molpy.Frame``, never ``import molrs``).
-# Explicit ``molcrafts.json`` sources and ``MOLMCP_DISCOVER=+…`` still win.
+# Explicit ``molcrafts.json`` sources and the ``discoverInclude`` setting still win.
 _NON_PYTHON_API_DISTRIBUTIONS: frozenset[str] = frozenset(
     {
         "molrs",
@@ -95,7 +95,7 @@ class EnvironmentReport:
             empty for a self pass.
         sources: The discovered sources, sorted by ``DiscoveredSource.name``.
         skipped: Diagnostic strings (name + reason) for fail-soft drops.
-        excluded: Distribution names force-excluded via ``MOLMCP_DISCOVER``.
+        excluded: Distribution names force-excluded via ``discoverExclude``.
     """
 
     locator: str | None

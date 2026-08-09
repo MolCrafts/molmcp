@@ -94,9 +94,9 @@ Each addresses a documented class of MCP-server vulnerability:
 After `create_server(...)`, you can add any additional middleware your MolCrafts Provider needs:
 
 ```python
-from molmcp import create_server
+from molmcp import create_plane
 
-server = create_server("molpy", discovery_sources=["pkg:molpy"])
+server = create_plane("molcrafts")
 server.add_middleware(MyCustomMiddleware())
 server.run()
 ```

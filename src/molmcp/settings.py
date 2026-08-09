@@ -53,6 +53,15 @@ _SCHEMA: dict[str, type] = {
     "molq": dict,
 }
 
+#: Members allowed inside each dict-valued setting whose keys are a fixed set.
+#: ``sources`` is deliberately absent — its members are user-chosen names.
+#: Without this, `config set molq.allowsubmit true` would be accepted, stored,
+#: echoed back by `config list`, and read by nothing.
+_NESTED_SCHEMA: dict[str, frozenset[str]] = {
+    "molq": frozenset({"database", "allowSubmit"}),
+    "molexp": frozenset({"workspace"}),
+}
+
 #: Keys whose layers combine instead of replacing one another.
 _MERGED_DICTS = ("sources", "molexp", "molq")
 _MERGED_LISTS = ("excludes", "knowledgeScope", "discoverInclude", "discoverExclude")
@@ -243,6 +252,17 @@ def _reject_unknown(data: dict[str, Any], path: Path) -> None:
             f"unknown setting(s) in {path}: {', '.join(unknown)}. "
             f"Known keys: {', '.join(sorted(_SCHEMA))}"
         )
+    for parent, allowed in _NESTED_SCHEMA.items():
+        section = data.get(parent)
+        if not isinstance(section, dict):
+            continue
+        strays = sorted(set(section) - allowed)
+        if strays:
+            raise SettingsError(
+                f"unknown setting(s) in {path}: "
+                f"{', '.join(f'{parent}.{k}' for k in strays)}. "
+                f"Known {parent} keys: {', '.join(sorted(allowed))}"
+            )
 
 
 def _resolve(
@@ -256,6 +276,12 @@ def _resolve(
         )
     if len(parts) > 2 or (len(parts) == 2 and _SCHEMA[parts[0]] is not dict):
         raise SettingsError(f"{key!r} is not a settable path")
+    allowed = _NESTED_SCHEMA.get(parts[0]) if len(parts) == 2 else None
+    if allowed is not None and parts[1] not in allowed:
+        raise SettingsError(
+            f"unknown setting {key!r}. "
+            f"Known {parts[0]} keys: {', '.join(sorted(allowed))}"
+        )
     root = read_settings_file(path)
     if len(parts) == 1:
         return root, parts[0], root

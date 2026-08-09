@@ -40,6 +40,11 @@ from ..base import ProviderBase, tool
 
 #: Settings key holding an override for the molq job database.
 _DB_SETTING = "molq.database"
+#: Settings key opting in to ``submit_job`` / ``cancel_job``. The provider
+#: spec asks controlled mutations for an explicit gate that is off by default;
+#: config is the only half of that a client can reach, because
+#: ``discover_providers()`` builds every provider with ``cls()``.
+_ALLOW_SUBMIT_SETTING = "molq.allowSubmit"
 _ALLOWED_SCHEDULERS = frozenset({"local", "slurm", "pbs", "lsf"})
 _LOG_STREAMS = frozenset({"stdout", "stderr", "both"})
 _LOG_KEYS = {"stdout": "molq.stdout_path", "stderr": "molq.stderr_path"}
@@ -84,6 +89,20 @@ def _resolve_db_path(arg: str | Path | None) -> Path | str:
     from molq.store import default_jobs_db_path
 
     return default_jobs_db_path()
+
+
+def _as_bool(value: Any) -> bool:
+    """Coerce a settings value to a flag.
+
+    Settings arrive from JSON, so a real bool is normal; strings are accepted
+    because `molmcp config set` takes text. Anything unrecognised stays off —
+    a misspelled value must not silently enable a mutation.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "yes", "1", "on"}
+    return False
 
 
 def _is_unsafe_path(value: str) -> bool:
@@ -291,12 +310,24 @@ class MolqProvider(ProviderBase):
         return super().probe()
 
     def _mutate_enabled(self) -> bool:
-        return self._allow_submit
+        """True when either the embedder or the operator opted in.
+
+        The constructor keyword serves embedders and tests; the setting serves
+        ``molmcp serve molq``, which is the only path a real client takes and
+        which cannot pass constructor arguments at all.
+        """
+        if self._allow_submit:
+            return True
+        from molmcp.settings import load_settings
+
+        return _as_bool(load_settings(Path.cwd()).molq.get("allowSubmit"))
 
     def _require_mutate(self, op: str) -> None:
         if not self._mutate_enabled():
             raise RuntimeError(
-                f"molq {op} is disabled. Opt in with MolqProvider(allow_submit=True)."
+                f"molq {op} is disabled. Enable it with "
+                f"`molmcp config set {_ALLOW_SUBMIT_SETTING} true`, then restart "
+                f"this server."
             )
 
     def _open_store(self) -> Any:

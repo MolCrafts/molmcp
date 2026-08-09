@@ -15,6 +15,7 @@ nav = [
     { "Tutorials" = [
         { "Installation" = "get-started/installation.md" },
         { "Quickstart" = "get-started/quickstart.md" },
+        { "Migrating from 0.2" = "get-started/migrating-from-0.2.md" },
         { "Deploy" = "get-started/deploy.md" },
         { "Architecture" = "concepts/architecture.md" },
         { "Discovery" = "concepts/discovery.md" },
