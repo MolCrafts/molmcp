@@ -483,8 +483,9 @@ class MolexpProvider(ProviderBase):
     ) -> dict[str, Any]:
         """Convert a run's foreign logs into its host metrics buffer.
 
-        Additive and **not idempotent**: ``metrics/metrics.jsonl`` is
-        append-only, so ingesting the same run twice doubles its curves.
+        Additive and **not idempotent**: the metrics WAL is append-only and
+        densified into ``metrics/zarr/`` on flush — ingesting the same run
+        twice doubles its curves.
         Undo by deleting ``<run>/metrics/``. Source logs are never
         deleted, rewritten, moved, or truncated.
 
