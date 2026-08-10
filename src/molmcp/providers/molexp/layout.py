@@ -7,7 +7,7 @@ CLAUDE.md for agent-facing layout queries and lint. Not a migration tool.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -140,14 +140,6 @@ def layout_spec() -> dict[str, Any]:
     }
 
 
-@dataclass
-class Findings:
-    items: list[dict[str, str]] = field(default_factory=list)
-
-    def add(self, path: str, rule: str, detail: str) -> None:
-        self.items.append({"path": path, "rule": rule, "detail": detail})
-
-
 def child_dirs(parent: Path) -> list[Path]:
     if not parent.is_dir():
         return []
@@ -156,47 +148,13 @@ def child_dirs(parent: Path) -> list[Path]:
     )
 
 
-def validate_workspace(root: Path) -> Findings:
-    """Lint *root* against naming + OKF layout laws (read-only)."""
-    found = Findings()
-    root = Path(root)
-    if not (root / "workspace.json").is_file() and not (root / META_YAML).is_file():
-        found.add(str(root), "workspace.marker", "missing workspace.json or meta.yaml")
-        return found
+def validate_workspace(root: Path) -> dict[str, Any]:
+    """Lint *root* via molexp's layout checker; return the agent-facing report.
 
-    projects_dir = root / "projects"
-    if projects_dir.is_dir():
-        for proj in child_dirs(projects_dir):
-            if not is_slug(proj.name):
-                found.add(
-                    str(proj),
-                    "project.slug",
-                    f"project dir {proj.name!r} is not kebab slug",
-                )
-            if not (proj / "project.json").is_file():
-                found.add(str(proj), "project.entity", "missing project.json")
-            experiments_dir = proj / "experiments"
-            if not experiments_dir.is_dir():
-                continue
-            for exp in child_dirs(experiments_dir):
-                if not is_slug(exp.name):
-                    found.add(
-                        str(exp),
-                        "experiment.slug",
-                        f"experiment dir {exp.name!r} is not kebab slug",
-                    )
-                if not (exp / "experiment.json").is_file():
-                    found.add(str(exp), "experiment.entity", "missing experiment.json")
-                runs_dir = exp / "runs"
-                if not runs_dir.is_dir():
-                    continue
-                for run in child_dirs(runs_dir):
-                    if not run.name.startswith("run-"):
-                        found.add(
-                            str(run),
-                            "run.prefix",
-                            f"run dir {run.name!r} must be prefixed 'run-'",
-                        )
-                    if not (run / "run.json").is_file():
-                        found.add(str(run), "run.entity", "missing run.json")
-    return found
+    Thin wrapper around :func:`molexp.workspace.validate_workspace`. The MCP
+    tool of the same name (``validate_workspace``) returns this dict so an
+    agent can see which errors need fixing.
+    """
+    from molexp.workspace import validate_workspace as _molexp_validate
+
+    return _molexp_validate(Path(root)).to_dict()

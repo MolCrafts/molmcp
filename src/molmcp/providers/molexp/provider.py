@@ -222,19 +222,32 @@ class MolexpProvider(ProviderBase):
         return layout_spec()
 
     @tool(READ_ONLY)
-    def check_layout(self, path: str) -> dict[str, Any]:
-        """Read-only lint of ``path`` against the layout contract."""
-        from .layout import validate_workspace
+    def validate_workspace(self, path: str) -> dict[str, Any]:
+        """Find layout/OKF **errors** in a workspace that need fixing.
+
+        Read-only. Returns a structured report (same shape as
+        ``molexp validate --json``). When ``ok`` is false the tree is wrong —
+        use each violation's ``hint`` (and ``next_actions``) to correct it,
+        then call again until ``ok`` is true.
+
+        * ``ok`` — no **error** severity findings (warnings like a never-run
+          run missing ``_ops/run.json`` still leave ``ok`` true).
+        * ``violations[]`` — ``path``, stable ``rule``, ``detail``,
+          ``severity``, actionable ``hint``.
+        * ``next_actions`` — deduplicated remediations, errors first.
+
+        Do not invent a layout by hand; fix what this report lists.
+        """
+        from molexp.workspace import validate_workspace as _validate
 
         root = Path(path).expanduser().resolve()
-        findings = validate_workspace(root)
-        is_ws = (root / "workspace.json").is_file() or (root / "meta.yaml").is_file()
-        return {
-            "path": str(root),
-            "is_workspace": is_ws,
-            "ok": len(findings.items) == 0 and is_ws,
-            "violations": findings.items,
-        }
+        report = _validate(root)
+        payload = report.to_dict()
+        payload["path"] = payload.get("root", str(root))
+        payload["is_workspace"] = (root / "workspace.json").is_file() or (
+            root / "meta.yaml"
+        ).is_file()
+        return payload
 
     # -- scaffold (create-or-get) ----------------------------------------
 

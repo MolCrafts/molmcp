@@ -101,8 +101,8 @@ Never `molexp_list_projects` or `molexp_molexp_*`.
 | `list_projects` | Read-only | Workspace project navigation |
 | `list_experiments` | Read-only | Experiments under a project |
 | `list_runs` | Read-only | Runs by scope / status |
-| `workspace_layout` | Read-only | On-disk workspace contract |
-| `check_layout` | Read-only | Lint a path against that contract |
+| `workspace_layout` | Read-only | On-disk workspace contract (the law) |
+| `validate_workspace` | Read-only | Report layout/OKF **errors that need fixing** (actionable hints) |
 | `validate_workflow` | Read-only | Check a workflow definition without running it |
 | `materialize_workspace`, `add_project`, `add_experiment`, `create_run` | Idempotent create-or-get | Materialize tree nodes; never drive run batches or workflow runtime |
 | `plan_adoption` | Read-only | Survey a legacy directory and propose a mapping; writes nothing |
