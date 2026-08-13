@@ -64,25 +64,29 @@ def _csv_mapping(step_column: str | None, series_columns: list[str] | None):
 
 
 def _open_workspace(path: str | Path):
-    from molexp.workspace import Workspace
+    """Open local or host-qualified (``Host:/abs``) workspace."""
+    from .resolve import open_workspace
 
-    return Workspace(Path(path).expanduser().resolve())
+    return open_workspace(path)
 
 
 def _resolve_workspace(workspace: str | None = None):
     from molexp.workspace import Workspace
 
+    from .resolve import open_workspace
+
     if workspace:
-        return Workspace(Path(workspace).expanduser().resolve())
+        return open_workspace(workspace)
     configured = _configured_workspace()
     if configured:
-        return Workspace(Path(configured).expanduser().resolve())
+        return open_workspace(configured)
     cwd = Path.cwd()
     if (cwd / "workspace.json").is_file() or (cwd / "meta.yaml").is_file():
         return Workspace(cwd)
     raise RuntimeError(
-        "MolexpProvider could not resolve a workspace. Pass workspace= path, "
-        "run `molmcp config set molexp.workspace <path>`, or run from a "
+        "MolexpProvider could not resolve a workspace. Pass workspace= path "
+        "(local or host-qualified like Arrhenius:/home/…), run "
+        "`molmcp config set molexp.workspace <path>`, or run from a "
         "directory containing workspace.json."
     )
 
@@ -95,7 +99,15 @@ class MolexpProvider(ProviderBase):
     import_name = "molexp"
 
     def __init__(self, workspace: str | Path | None = None) -> None:
-        self._workspace = Path(workspace).expanduser().resolve() if workspace else None
+        # Keep host-qualified labels as strings (Path would mangle Host:/abs).
+        from .resolve import is_host_qualified
+
+        if workspace is None:
+            self._workspace: str | Path | None = None
+        elif is_host_qualified(str(workspace)):
+            self._workspace = str(workspace).strip()
+        else:
+            self._workspace = Path(workspace).expanduser().resolve()
 
     # -- workspace resolution -------------------------------------------
 
@@ -161,7 +173,8 @@ class MolexpProvider(ProviderBase):
         from .scaffold import list_experiments as _list_experiments
 
         ws = self._get_workspace(workspace)
-        return _list_experiments(ws.resolve(), project_id)
+        # Pass the live Workspace so remote host-qualified roots keep their FS.
+        return _list_experiments(ws, project_id)
 
     @tool(READ_ONLY)
     def list_runs(
@@ -237,17 +250,14 @@ class MolexpProvider(ProviderBase):
         * ``next_actions`` — deduplicated remediations, errors first.
 
         Do not invent a layout by hand; fix what this report lists.
-        """
-        from molexp.workspace import validate_workspace as _validate
 
-        root = Path(path).expanduser().resolve()
-        report = _validate(root)
-        payload = report.to_dict()
-        payload["path"] = payload.get("root", str(root))
-        payload["is_workspace"] = (root / "workspace.json").is_file() or (
-            root / "meta.yaml"
-        ).is_file()
-        return payload
+        *path* may be a local absolute path or a host-qualified serve label
+        (``Arrhenius:/home/…`` / ``user@host:/data``) — same forms as
+        ``molexp validate -ws``.
+        """
+        from .resolve import validate_workspace_report
+
+        return validate_workspace_report(path)
 
     # -- scaffold (create-or-get) ----------------------------------------
 
@@ -275,12 +285,13 @@ class MolexpProvider(ProviderBase):
         """Create-or-get a project under the workspace (idempotent on slug).
 
         Prefer this (or omit workspace to use MOLEXP_WORKSPACE) when the user
-        asks to create a project.
+        asks to create a project. ``workspace`` may be local or host-qualified
+        (``Arrhenius:/home/…``).
         """
         from .scaffold import add_project as _add_project
 
         ws = self._get_workspace(workspace)
-        return self._scaffold_result(_add_project, ws.resolve(), name)
+        return self._scaffold_result(_add_project, ws, name)
 
     @tool(IDEMPOTENT_WRITE)
     def add_experiment(
@@ -293,7 +304,7 @@ class MolexpProvider(ProviderBase):
         from .scaffold import add_experiment as _add_experiment
 
         ws = self._get_workspace(workspace)
-        return self._scaffold_result(_add_experiment, ws.resolve(), project_id, name)
+        return self._scaffold_result(_add_experiment, ws, project_id, name)
 
     @tool(IDEMPOTENT_WRITE)
     def create_run(
@@ -308,7 +319,7 @@ class MolexpProvider(ProviderBase):
 
         ws = self._get_workspace(workspace)
         return self._scaffold_result(
-            _create_run, ws.resolve(), project_id, experiment_id, params=params
+            _create_run, ws, project_id, experiment_id, params=params
         )
 
     # -- adoption: legacy data directory → four-tier workspace -----------

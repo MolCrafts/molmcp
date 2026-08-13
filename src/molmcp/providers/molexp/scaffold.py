@@ -2,6 +2,9 @@
 
 All mutations are create-or-get via molexp public API. Never executes
 runs, sweeps, or science workflows.
+
+Workspace arguments accept a local path, a host-qualified serve label
+(``Arrhenius:/home/…``), or a live :class:`~molexp.workspace.Workspace`.
 """
 
 from __future__ import annotations
@@ -9,8 +12,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .resolve import as_workspace, is_host_qualified, open_workspace
+
 #: Settings key holding the default workspace path.
 _WORKSPACE_SETTING = "molexp.workspace"
+
+#: Accept path string, Path, or already-open Workspace.
+WorkspaceArg = str | Path | Any
 
 
 def _configured_workspace() -> str:
@@ -29,12 +37,31 @@ def materialize_workspace(
     at by ``MOLEXP_WORKSPACE`` (or under a path that already has a
     parent ``workspace.json``). "Create a project" is
     :func:`add_project`, not a nested workspace.
+
+    Host-qualified remote paths open via SSH and call ``materialize()``
+    on the remote filesystem (no local mkdir).
     """
     from molexp.workspace import Workspace
 
-    root = Path(path).expanduser().resolve()
+    raw = str(path).strip()
+    if is_host_qualified(raw):
+        ws = open_workspace(raw)
+        if name and name != "workspace":
+            # Name is fixed at construct time for local; remote open reuses root.
+            pass
+        ws.materialize()
+        return {
+            "path": raw,
+            "root": str(ws.resolve()),
+            "name": ws.name,
+            "id": getattr(ws, "id", ws.name),
+            "materialized": True,
+            "remote": True,
+        }
+
+    root = Path(raw).expanduser().resolve()
     session = _configured_workspace()
-    if session:
+    if session and not is_host_qualified(session):
         session_root = Path(session).expanduser().resolve()
         if root != session_root and _is_relative_to(root, session_root):
             raise RuntimeError(
@@ -60,6 +87,7 @@ def materialize_workspace(
         "name": ws.name,
         "id": getattr(ws, "id", ws.name),
         "materialized": True,
+        "remote": False,
     }
 
 
@@ -97,11 +125,9 @@ def _folder_path(folder: object) -> str:
     return str(path)
 
 
-def add_project(workspace: str | Path, name: str) -> dict[str, Any]:
+def add_project(workspace: WorkspaceArg, name: str) -> dict[str, Any]:
     """``ws.add_project(name)`` — idempotent on slug."""
-    from molexp.workspace import Workspace
-
-    ws = Workspace(Path(workspace).expanduser().resolve())
+    ws = as_workspace(workspace)
     ws.materialize()
     project = ws.add_project(name)
     return {
@@ -112,14 +138,12 @@ def add_project(workspace: str | Path, name: str) -> dict[str, Any]:
 
 
 def add_experiment(
-    workspace: str | Path,
+    workspace: WorkspaceArg,
     project_id: str,
     name: str,
 ) -> dict[str, Any]:
     """``project.add_experiment(name)`` — idempotent on slug."""
-    from molexp.workspace import Workspace
-
-    ws = Workspace(Path(workspace).expanduser().resolve())
+    ws = as_workspace(workspace)
     project = _require_project(ws, project_id)
     experiment = project.add_experiment(name)
     return {
@@ -130,11 +154,9 @@ def add_experiment(
     }
 
 
-def list_experiments(workspace: str | Path, project_id: str) -> list[dict[str, Any]]:
+def list_experiments(workspace: WorkspaceArg, project_id: str) -> list[dict[str, Any]]:
     """List experiments under a project (read-only)."""
-    from molexp.workspace import Workspace
-
-    ws = Workspace(Path(workspace).expanduser().resolve())
+    ws = as_workspace(workspace)
     project = _require_project(ws, project_id)
     return [
         {
@@ -147,15 +169,13 @@ def list_experiments(workspace: str | Path, project_id: str) -> list[dict[str, A
 
 
 def create_run(
-    workspace: str | Path,
+    workspace: WorkspaceArg,
     project_id: str,
     experiment_id: str,
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Scaffold ``add_run(params=…)`` only — leaves the run pending."""
-    from molexp.workspace import Workspace
-
-    ws = Workspace(Path(workspace).expanduser().resolve())
+    ws = as_workspace(workspace)
     project = _require_project(ws, project_id)
     try:
         experiment = project.get_experiment(experiment_id)

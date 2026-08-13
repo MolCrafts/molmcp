@@ -37,7 +37,7 @@ WORKSPACE_LAYOUT: tuple[LayoutLevel, ...] = (
         container="",
         dir_template=".",
         entity_file="workspace.json",
-        children_index_file="project.json",
+        children_index_file="projects.json",
         child_kind="project",
         id_rule="workspace root directory; no id in the path",
     ),
@@ -47,7 +47,7 @@ WORKSPACE_LAYOUT: tuple[LayoutLevel, ...] = (
         container="projects",
         dir_template="projects/<project_id>",
         entity_file="project.json",
-        children_index_file="experiment.json",
+        children_index_file="experiments.json",
         child_kind="experiment",
         id_rule="slug(name), kebab-case, no prefix",
     ),
@@ -57,7 +57,7 @@ WORKSPACE_LAYOUT: tuple[LayoutLevel, ...] = (
         container="experiments",
         dir_template="projects/<project_id>/experiments/<experiment_id>",
         entity_file="experiment.json",
-        children_index_file="run.json",
+        children_index_file="runs.json",
         child_kind="run",
         id_rule="slug(name) or explicit id, kebab-case, no prefix",
     ),
@@ -79,8 +79,9 @@ LAYOUT_RULES: tuple[str, ...] = (
     "Container subdir is the child kind pluralized: projects/, experiments/, runs/.",
     "Project/Experiment dir names are slugified ids with no prefix.",
     "Run dirs are always prefixed run- under runs/.",
-    "Entity metadata filename is the level's class name snake_case + .json.",
-    "Children-index filename in a parent is the *child* class name snake_case + .json.",
+    "Entity metadata filename is singular (project.json / experiment.json / run.json).",
+    "Children-index filename on the parent is plural "
+    "(projects.json / experiments.json / runs.json).",
     "Every concept dir has meta.yaml with a registered type.",
     "Run hot state lives in _ops/run.json (not in the run.json entity file).",
 )
@@ -95,16 +96,16 @@ def render_tree() -> str:
     return (
         "workspace_root/\n"
         "├── workspace.json\n"
-        "├── project.json              # children INDEX of projects (derived)\n"
+        "├── projects.json             # children INDEX of projects (derived, plural)\n"
         "├── meta.yaml\n"
         "└── projects/<project_id>/\n"
-        "    ├── project.json\n"
-        "    ├── experiment.json       # children INDEX\n"
+        "    ├── project.json          # entity (singular)\n"
+        "    ├── experiments.json      # children INDEX (plural)\n"
         "    └── experiments/<experiment_id>/\n"
-        "        ├── experiment.json\n"
-        "        ├── run.json          # children INDEX\n"
+        "        ├── experiment.json   # entity (singular)\n"
+        "        ├── runs.json         # children INDEX (plural)\n"
         "        └── runs/run-<run_id>/\n"
-        "            ├── run.json\n"
+        "            ├── run.json      # entity (singular)\n"
         "            ├── meta.yaml\n"
         "            └── _ops/run.json\n"
     )
@@ -148,13 +149,16 @@ def child_dirs(parent: Path) -> list[Path]:
     )
 
 
-def validate_workspace(root: Path) -> dict[str, Any]:
+def validate_workspace(root: Path | str) -> dict[str, Any]:
     """Lint *root* via molexp's layout checker; return the agent-facing report.
 
     Thin wrapper around :func:`molexp.workspace.validate_workspace`. The MCP
     tool of the same name (``validate_workspace``) returns this dict so an
     agent can see which errors need fixing.
-    """
-    from molexp.workspace import validate_workspace as _molexp_validate
 
-    return _molexp_validate(Path(root)).to_dict()
+    *root* may be a local path or a host-qualified serve label
+    (``Arrhenius:/home/…``).
+    """
+    from .resolve import validate_workspace_report
+
+    return validate_workspace_report(root)
