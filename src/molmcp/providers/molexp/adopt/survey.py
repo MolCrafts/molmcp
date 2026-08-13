@@ -40,6 +40,16 @@ DEFAULT_EXCLUDES: frozenset[str] = frozenset(
     }
 )
 
+
+def _has_metrics_surface(run_dir: Path) -> bool:
+    """True when a run already has metrics (JSONL WAL and/or dense Zarr)."""
+    metrics = run_dir / "metrics"
+    if (metrics / "metrics.jsonl").is_file():
+        return True
+    zarr_marker = metrics / "zarr" / "zarr.json"
+    return zarr_marker.is_file()
+
+
 #: Suffixes that make a file read as the output of a simulation run.
 _ARTIFACT_SUFFIXES: frozenset[str] = frozenset(
     {
@@ -304,9 +314,7 @@ def survey_source(
             files=files[rel],
             subdirs=children[rel],
             logs=tuple(detect(node_path(base, rel))) if kinds[rel] == RUN else (),
-            has_metrics_buffer=(
-                node_path(base, rel) / "metrics" / "metrics.jsonl"
-            ).is_file(),
+            has_metrics_buffer=_has_metrics_surface(node_path(base, rel)),
         )
         for rel in sorted(children)
     )

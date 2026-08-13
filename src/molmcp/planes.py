@@ -197,7 +197,7 @@ _PROVIDER_META: dict[str, tuple[str, str, tuple[str, ...]]] = {
             "list_experiments",
             "list_runs",
             "workspace_layout",
-            "check_layout",
+            "validate_workspace",
             "materialize_workspace",
             "add_project",
             "add_experiment",

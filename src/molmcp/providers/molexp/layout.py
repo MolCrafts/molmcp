@@ -7,7 +7,7 @@ CLAUDE.md for agent-facing layout queries and lint. Not a migration tool.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +37,7 @@ WORKSPACE_LAYOUT: tuple[LayoutLevel, ...] = (
         container="",
         dir_template=".",
         entity_file="workspace.json",
-        children_index_file="project.json",
+        children_index_file="projects.json",
         child_kind="project",
         id_rule="workspace root directory; no id in the path",
     ),
@@ -47,7 +47,7 @@ WORKSPACE_LAYOUT: tuple[LayoutLevel, ...] = (
         container="projects",
         dir_template="projects/<project_id>",
         entity_file="project.json",
-        children_index_file="experiment.json",
+        children_index_file="experiments.json",
         child_kind="experiment",
         id_rule="slug(name), kebab-case, no prefix",
     ),
@@ -57,7 +57,7 @@ WORKSPACE_LAYOUT: tuple[LayoutLevel, ...] = (
         container="experiments",
         dir_template="projects/<project_id>/experiments/<experiment_id>",
         entity_file="experiment.json",
-        children_index_file="run.json",
+        children_index_file="runs.json",
         child_kind="run",
         id_rule="slug(name) or explicit id, kebab-case, no prefix",
     ),
@@ -79,8 +79,9 @@ LAYOUT_RULES: tuple[str, ...] = (
     "Container subdir is the child kind pluralized: projects/, experiments/, runs/.",
     "Project/Experiment dir names are slugified ids with no prefix.",
     "Run dirs are always prefixed run- under runs/.",
-    "Entity metadata filename is the level's class name snake_case + .json.",
-    "Children-index filename in a parent is the *child* class name snake_case + .json.",
+    "Entity metadata filename is singular (project.json / experiment.json / run.json).",
+    "Children-index filename on the parent is plural "
+    "(projects.json / experiments.json / runs.json).",
     "Every concept dir has meta.yaml with a registered type.",
     "Run hot state lives in _ops/run.json (not in the run.json entity file).",
 )
@@ -95,16 +96,16 @@ def render_tree() -> str:
     return (
         "workspace_root/\n"
         "├── workspace.json\n"
-        "├── project.json              # children INDEX of projects (derived)\n"
+        "├── projects.json             # children INDEX of projects (derived, plural)\n"
         "├── meta.yaml\n"
         "└── projects/<project_id>/\n"
-        "    ├── project.json\n"
-        "    ├── experiment.json       # children INDEX\n"
+        "    ├── project.json          # entity (singular)\n"
+        "    ├── experiments.json      # children INDEX (plural)\n"
         "    └── experiments/<experiment_id>/\n"
-        "        ├── experiment.json\n"
-        "        ├── run.json          # children INDEX\n"
+        "        ├── experiment.json   # entity (singular)\n"
+        "        ├── runs.json         # children INDEX (plural)\n"
         "        └── runs/run-<run_id>/\n"
-        "            ├── run.json\n"
+        "            ├── run.json      # entity (singular)\n"
         "            ├── meta.yaml\n"
         "            └── _ops/run.json\n"
     )
@@ -140,14 +141,6 @@ def layout_spec() -> dict[str, Any]:
     }
 
 
-@dataclass
-class Findings:
-    items: list[dict[str, str]] = field(default_factory=list)
-
-    def add(self, path: str, rule: str, detail: str) -> None:
-        self.items.append({"path": path, "rule": rule, "detail": detail})
-
-
 def child_dirs(parent: Path) -> list[Path]:
     if not parent.is_dir():
         return []
@@ -156,47 +149,16 @@ def child_dirs(parent: Path) -> list[Path]:
     )
 
 
-def validate_workspace(root: Path) -> Findings:
-    """Lint *root* against naming + OKF layout laws (read-only)."""
-    found = Findings()
-    root = Path(root)
-    if not (root / "workspace.json").is_file() and not (root / META_YAML).is_file():
-        found.add(str(root), "workspace.marker", "missing workspace.json or meta.yaml")
-        return found
+def validate_workspace(root: Path | str) -> dict[str, Any]:
+    """Lint *root* via molexp's layout checker; return the agent-facing report.
 
-    projects_dir = root / "projects"
-    if projects_dir.is_dir():
-        for proj in child_dirs(projects_dir):
-            if not is_slug(proj.name):
-                found.add(
-                    str(proj),
-                    "project.slug",
-                    f"project dir {proj.name!r} is not kebab slug",
-                )
-            if not (proj / "project.json").is_file():
-                found.add(str(proj), "project.entity", "missing project.json")
-            experiments_dir = proj / "experiments"
-            if not experiments_dir.is_dir():
-                continue
-            for exp in child_dirs(experiments_dir):
-                if not is_slug(exp.name):
-                    found.add(
-                        str(exp),
-                        "experiment.slug",
-                        f"experiment dir {exp.name!r} is not kebab slug",
-                    )
-                if not (exp / "experiment.json").is_file():
-                    found.add(str(exp), "experiment.entity", "missing experiment.json")
-                runs_dir = exp / "runs"
-                if not runs_dir.is_dir():
-                    continue
-                for run in child_dirs(runs_dir):
-                    if not run.name.startswith("run-"):
-                        found.add(
-                            str(run),
-                            "run.prefix",
-                            f"run dir {run.name!r} must be prefixed 'run-'",
-                        )
-                    if not (run / "run.json").is_file():
-                        found.add(str(run), "run.entity", "missing run.json")
-    return found
+    Thin wrapper around :func:`molexp.workspace.validate_workspace`. The MCP
+    tool of the same name (``validate_workspace``) returns this dict so an
+    agent can see which errors need fixing.
+
+    *root* may be a local path or a host-qualified serve label
+    (``Arrhenius:/home/…``).
+    """
+    from .resolve import validate_workspace_report
+
+    return validate_workspace_report(root)

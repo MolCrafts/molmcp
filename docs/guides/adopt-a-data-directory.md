@@ -80,7 +80,8 @@ per-engine text.
 run_adoption(..., ingest=["lammps_log", "tensorboard"])
 ```
 
-Omit `ingest` and nothing is converted — `metrics/metrics.jsonl` is
+Omit `ingest` and nothing is converted — the metrics surface (`metrics/zarr/`
+dense SoT + optional `metrics/metrics.jsonl` WAL) is
 append-only, so ingestion is never implied by silence. The converters are
 molexp's own (`molexp.plugins.metrics_ingest`): LAMMPS thermo through molpy's
 log reader, tfevents through molexp's TensorBoard plugin, CSV through stdlib

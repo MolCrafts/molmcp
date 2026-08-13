@@ -357,7 +357,8 @@ def _entries(
     """Ledger entries in deterministic order: run node, its files, its ingest.
 
     The ingest entry is planned up front so a resumed adoption can see it is
-    already done — ``metrics.jsonl`` is append-only, and re-ingesting a run
+    already done — the metrics WAL is append-only (densified to Zarr on flush),
+    and re-ingesting a run
     would double every curve in it.
     """
     entries: list[Entry] = []
