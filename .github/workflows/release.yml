@@ -1,50 +1,62 @@
-name: Release
+name: release
 
+# A v* tag re-runs lint and the tests on the tagged tree, checks the tag
+# against pyproject.toml, builds, and publishes to PyPI (trusted publishing,
+# MolCrafts only). workflow_dispatch is the dry run: everything but the upload.
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  # A tag can point at any commit, including one that never reached master and
-  # never ran CI. Publishing is irreversible, so the gate runs against the
-  # tagged tree itself rather than trusting where the tag came from.
-  gate:
-    name: Lint + test the tagged commit
+  lint:
+    uses: ./.github/workflows/lint.yml
+
+  test:
+    uses: ./.github/workflows/test.yml
+
+  build:
+    name: release / build
+    needs: [lint, test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          python-version: '3.12'
-          enable-cache: true
-      - name: Install
-        run: uv sync --extra dev
-      - name: Lint
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-python
+      - name: Tag matches the packaged version
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          uv run ruff check src tests
-          uv run ruff format --check src tests
-      - name: Test
-        run: uv run pytest -v
+          version=$(uv version --short)
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match pyproject version ${version}"
+            exit 1
+          fi
+      - run: uv build
+      - run: uvx twine check --strict dist/*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
 
-  publish:
-    name: Publish to PyPI
-    needs: gate
+  pypi:
+    name: release / pypi
+    needs: build
+    if: github.repository_owner == 'MolCrafts' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/p/molcrafts-molmcp
     permissions:
       id-token: write
-
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/download-artifact@v8
         with:
-          python-version: '3.12'
-
-      - name: Build sdist + wheel
-        run: uv build
-
-      - name: Publish via Trusted Publisher
-        uses: pypa/gh-action-pypi-publish@release/v1
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

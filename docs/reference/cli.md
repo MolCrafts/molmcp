@@ -190,37 +190,6 @@ prune because SQLite reuses freed pages rather than shrinking, and only
 `--vacuum` closes the gap — with no plane server running, since it needs
 exclusive access. A blocked vacuum reports `skipped` and changes nothing.
 
-## `molmcp gate`
-
-Check this repository's **wiring contract**: that the pull-request job in
-`.github/workflows/official-gate.yml`, the scheduled job beside it, and the
-`official-gate` hook in `.pre-commit-config.yaml` still spell the same literal
-call, and that the pull-request job is still named after the required check.
-
-```bash
-molmcp gate
-```
-
-It takes **no flags**. There is one profile, so there is nothing to select, and
-a required check with an off switch is not a required check.
-
-| It checks | It does not |
-|-----------|-------------|
-| Both jobs exist, under the ids the gate expects and no others | Run ruff or pytest — `ci.yml`'s OS/Python matrix owns those |
-| The pull-request job's `name:` is the required check name | Spawn any process at all |
-| Every gate `run:` and the hook's `entry:` are the one literal, unwrapped | Read the environment, so a laptop and a runner reach the same verdict |
-| No `run:` hides behind a `${{ }}` expression and no job selects a profile with `env:` | Look outside the working directory it is run in |
-| The hook is `stages: [pre-push]`, and the commit stage still holds `ci-lint` | Edit anything — the report is the whole output |
-
-Exit code `0` when the contract holds, `1` with one line per disagreement —
-each naming the file and the offending token — when it does not. A missing
-file is one of those lines, not a traceback: a check that raises only reports
-that the check itself broke.
-
-The same command runs in all three places, which is the point: it is a
-pre-push hook locally, the `official/gate` job on a pull request, and a Monday
-timer that re-checks a week with no pull requests in it.
-
 ## Offline knowledge helpers
 
 These drive the collection index without an MCP client (they need at least one

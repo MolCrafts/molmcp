@@ -14,7 +14,6 @@ from . import __version__, settings
 from .client_config import render_init
 from .components import GitError
 from .config import AppConfig, ConfigurationError, load_config
-from .gate import run_gate
 from .harness_install import install_harness_components
 from .harness_sync import relocate_pointer, rollback_source, sync_source
 from .host import (
@@ -293,13 +292,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--gc",
         action="store_true",
         help="Drop cached snapshots for sources that are no longer configured.",
-    )
-
-    # No flags, deliberately. There is one profile, so there is nothing to
-    # select; a required check with an off switch is not a required check.
-    commands.add_parser(
-        "gate",
-        help="Check the wiring contract this repository's required check runs.",
     )
 
     return parser
@@ -863,33 +855,6 @@ def _cache(args: argparse.Namespace) -> int:
     return 0
 
 
-def _gate(args: argparse.Namespace) -> int:
-    """Report whether the working directory's wiring contract still holds.
-
-    The verdict has one owner, :func:`molmcp.gate.run_gate`. This handler
-    reads ``ok`` off the report instead of re-deriving it from ``failed``:
-    two derivations of one verdict are two things that can later disagree
-    about the single required check. Each reported disagreement already
-    names its file and its offending token, so they are printed as handed
-    over rather than reworded here.
-
-    Args:
-        args: Parsed ``gate`` arguments. The subcommand carries no flags,
-            so nothing is read from it; it is taken to keep every handler
-            one shape.
-
-    Returns:
-        ``0`` when the report is ok, ``1`` otherwise.
-    """
-    report = run_gate(root=Path.cwd())
-    for message in report.failed:
-        print(f"molmcp: {message}", file=sys.stderr)
-    if report.ok:
-        print("wiring contract holds")
-        return 0
-    return 1
-
-
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if not arguments:
@@ -908,7 +873,6 @@ def main(argv: list[str] | None = None) -> int:
         "config": _config,
         "harness": _harness,
         "cache": _cache,
-        "gate": _gate,
     }
     try:
         return handlers[args.command](args)

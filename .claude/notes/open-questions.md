@@ -18,5 +18,5 @@ diagnostic dating to `1fad8f6` (`HarnessSource(**entry)` — "Argument expressio
 `**` must be a mapping with `str` key type"). `mol_project.build.check`,
 `.pre-commit-config.yaml` and CI all passed around it silently for two links. The
 diagnostic is now fixed, but nothing would have caught the next one. Wiring `ty` into
-`check` is a CI-parity change: `.pre-commit-config.yaml` mirrors `.github/workflows/ci.yml`
+`check` is a CI-parity change: `.pre-commit-config.yaml` mirrors `.github/workflows/lint.yml` / `test.yml`
 step-for-step and both move in one commit.

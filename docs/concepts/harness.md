@@ -95,11 +95,7 @@ loading. A label is metadata *about* a commit and a catalog is the contents
 *of* one; the loader never sees the label at all.
 
 No module in `src/` looks any of these three up. They exist so that humans and
-CI jobs describing the same commit reach for the same word. (`molmcp gate`,
-which checks that this repository's required pull-request check is still wired
-the same way in all three places that call it, is unrelated: it validates
-molmcp's own CI wiring and knows nothing about harness commits. The label
-`official` is named after that check because the check is what earns it.)
+CI jobs describing the same commit reach for the same word.
 
 ## Two registries, and they are disjoint
 
