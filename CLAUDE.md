@@ -121,21 +121,25 @@ commit.
 
 ### CI
 
-One workflow per kind of work. A *feature* ref is any branch other than
-`dev`/`master`/`main`; an *integration* ref is one of those, or a pull request
-into one. A pull request from a branch of this repository does not re-run
-what its push already ran: lint and docs never, the full test tier only when
-the head is a feature branch (its push ran the fast tier).
+One workflow per kind of work, two test tiers (`test / tier` decides). The
+*fast* tier runs on a feature-branch push to MolCrafts; the *full* tier on every
+push to a fork (so a branch is proven before its pull request), on
+`dev`/`master`/`main` pushes to MolCrafts, on pull requests, tags and
+dispatches. A pull request inside a fork is skipped (its push already ran the
+full tier); a pull request on MolCrafts runs. Shared setup comes from
+`MolCrafts/molcrafts-ci/actions/<name>@master`.
 
-| workflow | feature branch (fork or MolCrafts) | integration ref (fork or MolCrafts) | MolCrafts only |
+| workflow | fast tier | full tier | MolCrafts only |
 |---|---|---|---|
 | `lint.yml` | `lint / hooks` (pre-commit stage, all files) | same | — |
-| `test.yml` | `test / py3.12 (ubuntu-latest)` | `test / py{3.12,3.13} ({ubuntu,macos,windows}-latest)` | — |
+| `test.yml` | `test / tier`, `test / python (ubuntu-latest, 3.12)` | `test / tier`, `test / python ({ubuntu,macos,windows}-latest, {3.12,3.13})` | — |
 | `docs.yml` | `docs / build` (`zensical build --strict`) | same | deploy: Cloudflare Pages, outside Actions |
-| `release.yml` | — | — | `v*` tag: lint + test + `release / build` + `release / pypi`; `workflow_dispatch` = dry run (no upload) |
+| `release.yml` | — | — | `v*` tag: `release / guard` + lint + test + `release / build` + `release / pypi`; `workflow_dispatch` = dry run (no upload) |
 
-The `protect-master` ruleset on `master` requires a pull request, blocks force
-pushes and deletion, and requires the integration-tier `lint /`, `test /` and `docs /` checks.
+The `protect-master` ruleset on `master` requires a pull request and blocks
+force pushes and deletion. Its required checks (`test / tier` plus the
+full-tier `lint /`, `test /` and `docs /` jobs) are added once they have gone
+green on a pull request into `master`.
 
 ## First-party providers
 
