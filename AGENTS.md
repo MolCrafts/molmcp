@@ -16,7 +16,7 @@ mol_project:
   science:
     required: false
   ci:
-    config: .github/workflows/ci.yml
+    config: .github/workflows/test.yml
     local: "uv run ruff check src tests && uv run ruff format --check src tests && uv run pytest -v"
   notes_path: .claude/notes/notes.md
   specs_path: .claude/specs/
@@ -73,8 +73,8 @@ For non-trivial work, prefer:
   `tests/test_tool_hints.py` enforces it.
 - No environment variables — `tests/test_no_env_switches.py` fails the build
   if a module reads one, with three listed exemptions.
-- CI parity: `.pre-commit-config.yaml` mirrors `.github/workflows/ci.yml`
-  step-for-step; change both in the same commit.
+- CI parity: `.pre-commit-config.yaml` mirrors `lint.yml` / `test.yml`
+  (see "CI" below); change both in the same commit.
 
 <!-- mol:bootstrap:managed end -->
 
@@ -100,24 +100,30 @@ Layered; dependencies point inward only:
 <!-- Free-form additions below this line are preserved across re-runs.
      If a section grows past a screen, promote to .claude/notes/<topic>.md. -->
 
-## CI parity: two pairs, both in one commit
+## CI parity
 
-`.pre-commit-config.yaml` is the local half of two workflows, and each pair is
-one string copied into two files. Change one side without the other and the
-copies drift, so change both in the same commit.
+`.pre-commit-config.yaml` is the local half of CI: `lint.yml` runs its
+pre-commit stage (hygiene + `ci-lint`), and the `ci-test` hook runs the same
+`uv run pytest -v` as `test.yml`. Change one side with the other, in the same
+commit.
 
-1. **Package matrix.** The `ci-lint` / `ci-test` hooks run the same shell
-   commands as the Lint / Test `run:` steps of `.github/workflows/ci.yml`. That
-   workflow stays the OS/Python matrix, and `mol_project.ci.config` keeps
-   pointing at it.
-2. **Required check.** The `official-gate` hook's `entry:` is the same literal
-   as the `run:` of the `official-gate` pull-request job in
-   `.github/workflows/official-gate.yml` — both `uv run molmcp gate`, bare.
-   `uv sync --extra dev` is a prior Install step, not part of the compared
-   token, and no wrapper goes around either side. `src/molmcp/gate.py` owns
-   that literal (`GATE_RUN`) and the two files are its serialized copies;
-   `molmcp gate` is what checks they still agree. The GitHub required check is
-   named `official/gate`, which is that job's `name:`, not its id.
+### CI
+
+One workflow per kind of work. A *feature* ref is any branch other than
+`dev`/`master`/`main`; an *integration* ref is one of those, or a pull request
+into one. A pull request from a branch of this repository does not re-run
+what its push already ran: lint and docs never, the full test tier only when
+the head is a feature branch (its push ran the fast tier).
+
+| workflow | feature branch (fork or MolCrafts) | integration ref (fork or MolCrafts) | MolCrafts only |
+|---|---|---|---|
+| `lint.yml` | `lint / hooks` (pre-commit stage, all files) | same | — |
+| `test.yml` | `test / py3.12 (ubuntu-latest)` | `test / py{3.12,3.13} ({ubuntu,macos,windows}-latest)` | — |
+| `docs.yml` | `docs / build` (`zensical build --strict`) | same | deploy: Cloudflare Pages, outside Actions |
+| `release.yml` | — | — | `v*` tag: lint + test + `release / build` + `release / pypi`; `workflow_dispatch` = dry run (no upload) |
+
+The `protect-master` ruleset on `master` requires a pull request, blocks force
+pushes and deletion, and requires the integration-tier `lint /`, `test /` and `docs /` checks.
 
 ## Discovery ranking & the call graph
 

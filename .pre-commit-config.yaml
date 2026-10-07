@@ -1,9 +1,6 @@
 # Managed by prek: `prek install`
-# CI parity, pair 1: ci-lint / ci-test are the same shell commands as
-# .github/workflows/ci.yml's Lint / Test steps (no tox wrapper).
-# CI parity, pair 2: official-gate's entry: is the same literal as the
-# official-gate job's run: in .github/workflows/official-gate.yml — bare, so
-# that the two are equal character for character.
+# CI parity: lint.yml runs the pre-commit stage of this file; test.yml runs
+# the ci-test command (no tox wrapper).
 # tox remains in [project.optional-dependencies] dev for optional local isolation.
 
 default_install_hook_types: [pre-commit, pre-push]
@@ -26,7 +23,7 @@ repos:
   - repo: local
     hooks:
       - id: ci-lint
-        name: "CI lint (same as ci.yml)"
+        name: "CI lint (lint.yml)"
         entry: bash -c 'uv sync --extra dev && uv run ruff check src tests && uv run ruff format --check src tests'
         language: system
         pass_filenames: false
@@ -34,20 +31,8 @@ repos:
         stages: [pre-commit, pre-push]
 
       - id: ci-test
-        name: "CI test (same as ci.yml)"
+        name: "CI test (test.yml)"
         entry: bash -c 'uv sync --extra dev && uv run pytest -v'
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-push]
-
-      # The bare literal, on purpose: not `entry: uv` plus `args:`, and not
-      # the `bash -c 'uv sync && …'` wrapper the two hooks above carry. It has
-      # to equal the official-gate job's `run:` as a string, and a wrapper is
-      # a different string. Push tier only — the commit tier stays fast.
-      - id: official-gate
-        name: "official/gate (same as official-gate.yml)"
-        entry: uv run molmcp gate
         language: system
         pass_filenames: false
         always_run: true

@@ -100,7 +100,19 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+# PLW1514 (a preview rule; explicit-preview-rules keeps every other preview
+# rule off): text-mode file I/O names its encoding. Unnamed, Python decodes
+# with the locale -- cp1252 on Windows -- so a read that passes every Linux
+# hook fails only on CI's Windows leg.
+select = ["E", "F", "I", "PLW1514"]
+preview = true
+explicit-preview-rules = true
+
+[tool.ruff.lint.per-file-ignores]
+# PEP 562 façades: every name in __all__ resolves through __getattr__, which
+# preview F822 cannot see. tests/test_init.py pins __all__ against the lazy map.
+"src/molmcp/__init__.py" = ["F822"]
+"src/molmcp/provider_worker/__init__.py" = ["F822"]
 
 # Isolated gates — prek + CI: uv run --extra dev tox -e lint|py
 [tool.tox]

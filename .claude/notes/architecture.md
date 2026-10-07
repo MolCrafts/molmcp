@@ -159,12 +159,6 @@ _Generated 2026-09-08 by /mol:map._
   `CHILD_SCRIPT`; `protocol` freezes `PROTOCOL_VERSION = 1` plus the encode/decode
   and signature-fact helpers; `proxy.bind_tools(mcp, hello, invoke)`;
   `child.main(argv)` launched by path, never `python -m`.
-- **`molmcp.gate`** — `CHECK_NAME` (`"official/gate"`, the required check's
-  name), `PR_JOB_ID` (`"official-gate"`; `release.yml` already owns `gate`),
-  `SCHEDULE_JOB_ID`, `GATE_RUN` (`"uv run molmcp gate"`, the one call literal),
-  `GateReport`, `run_gate(*, root)`. Verifies the wiring contract — that the
-  workflow and the pre-push hook still spell `GATE_RUN` — and nothing else; the
-  lint and test matrix stays in `ci.yml`.
 - **`molmcp.evolution`** — `evaluate`, `EvaluationReport`, `EvaluationError`,
   `EvalCase`, `Metrics`, `Challenger`, `ContractOutcome`, `ContractRunner`,
   `ReplayFn`, `DEFAULT_SEEDS`, the seven reason constants (`ACCEPTED`,
