@@ -131,7 +131,7 @@ full tier); a pull request on MolCrafts runs. Shared setup comes from
 
 | workflow | fast tier | full tier | MolCrafts only |
 |---|---|---|---|
-| `lint.yml` | `lint / hooks` (pre-commit stage, all files) | same | — |
+| `lint.yml` | `lint / hooks` (pre-commit stage, all files), `lint / workflows` (`actions/check-workflows`) | same | — |
 | `test.yml` | `test / context`, `test / python (ubuntu-latest, 3.12)` | `test / context`, `test / python ({ubuntu,macos,windows}-latest, {3.12,3.13})` | — |
 | `docs.yml` | `docs / build` (`zensical build --strict`) | same | deploy: Cloudflare Pages, outside Actions |
 | `release.yml` | — | — | `v*` tag: `release / guard` + lint + test + `release / build` + `release / pypi`; `workflow_dispatch` = dry run (no upload) |
