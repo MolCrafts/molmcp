@@ -19,9 +19,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Where this run happens, decided once: MolCrafts/molcrafts-ci/actions/ci-context.
+  context:
+    name: release / context
+    runs-on: ubuntu-latest
+    outputs:
+      tier: ${{ steps.context.outputs.tier }}
+      upstream: ${{ steps.context.outputs.upstream }}
+      integration: ${{ steps.context.outputs.integration }}
+      skip-pr: ${{ steps.context.outputs.skip-pr }}
+      cancel: ${{ steps.context.outputs.cancel }}
+    steps:
+      - id: context
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@master
+
   guard:
     name: release / guard
-    if: github.event_name == 'workflow_dispatch' || github.repository_owner == 'MolCrafts'
+    needs: context
+    if: github.event_name == 'workflow_dispatch' || needs.context.outputs.upstream == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -55,8 +70,8 @@ jobs:
 
   pypi:
     name: release / pypi
-    needs: build
-    if: github.event_name == 'push' && github.repository_owner == 'MolCrafts'
+    needs: [context, build]
+    if: github.event_name == 'push' && needs.context.outputs.upstream == 'true'
     runs-on: ubuntu-latest
     environment: ${{ github.event_name == 'push' && 'pypi' || '' }}
     permissions:
