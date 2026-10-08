@@ -55,9 +55,7 @@ jobs:
     needs: build
     if: github.event_name == 'push' && github.repository_owner == 'MolCrafts'
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/molcrafts-molmcp
+    environment: ${{ github.event_name == 'push' && 'pypi' || '' }}
     permissions:
       id-token: write
     steps:
